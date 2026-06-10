@@ -7,14 +7,21 @@ const STORES = {
   assets: "assets"
 };
 
-const DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/";
+const DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/{model}:generateContent/";
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_FOLDER_NAME = "未分类素材";
 const USER_TEMPLATES_KEY = "imageStudio.userTemplates";
 const AUTH_TOKEN_KEY = "imageStudio.authToken";
 const IMAGE_SIZE_MULTIPLE = 16;
 const REFERENCE_STRATEGY_KEY = "imageStudio.referenceStrategy";
-const PROMPT_CONFIG_DEFAULTS_URL = "./prompt-config-defaults.json?v=20260610-prompt-config";
+const PROMPT_CONFIG_DEFAULTS_URL = "./prompt-config-defaults.json?v=20260610-prompt-display-label";
+const SUITE_STYLE_DISPLAY_LABELS = {
+  premium: "清爽质感",
+  tech: "现代冷调",
+  warm: "自然生活",
+  bold: "活动吸睛",
+  minimal: "纯净白底"
+};
 const STRICT_PRODUCT_REFERENCE_RULE = [
   "强限制：商品主体必须以随请求提供的参考图、用户上传的原图、当前基图或上一轮生成结果为唯一外观参考，必须做到 1:1 还原。",
   "只允许改变背景、场景、光线、构图、拍摄角度、留白和后期排版区域；不得重新设计商品本体。",
@@ -371,6 +378,7 @@ const state = {
   videoScenes: [],
   videoJob: null,
   videoJobTimer: null,
+  activeAuthMode: "login",
   auth: {
     token: "",
     user: null,
@@ -419,11 +427,11 @@ function legacyPromptConfig() {
     },
     suite: {
       visualStyles: [
-        { id: "premium", label: "高级简洁" },
-        { id: "tech", label: "科技冷感" },
-        { id: "warm", label: "温暖生活" },
-        { id: "bold", label: "强促销视觉" },
-        { id: "minimal", label: "极简白底" }
+        { id: "premium", label: "高级简洁", displayLabel: "清爽质感" },
+        { id: "tech", label: "科技冷感", displayLabel: "现代冷调" },
+        { id: "warm", label: "温暖生活", displayLabel: "自然生活" },
+        { id: "bold", label: "强促销视觉", displayLabel: "活动吸睛" },
+        { id: "minimal", label: "极简白底", displayLabel: "纯净白底" }
       ],
       contextFallbacks: {
         productLabel: "商品基图中的产品",
@@ -560,7 +568,7 @@ function renderSuiteSelectOptions() {
     els.suitePresetInput.value = selectedPreset;
   }
   els.suiteStyleInput.innerHTML = (config.suite.visualStyles || [])
-    .map((style) => `<option value="${escapeAttr(style.id)}">${escapeHtml(style.label)}</option>`)
+    .map((style, index) => `<option value="${escapeAttr(style.id)}">${escapeHtml(suiteStyleDisplayLabel(style, index))}</option>`)
     .join("");
   if ((config.suite.visualStyles || []).some((style) => style.id === selectedStyle)) {
     els.suiteStyleInput.value = selectedStyle;
@@ -569,6 +577,16 @@ function renderSuiteSelectOptions() {
 
 function promptText(template, values = {}) {
   return String(template || "").replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => values[key] ?? "");
+}
+
+function suiteStyleDisplayLabel(style, index = 0) {
+  const displayLabel = typeof style?.displayLabel === "string" ? style.displayLabel.trim() : "";
+  return displayLabel || SUITE_STYLE_DISPLAY_LABELS[style?.id] || `风格 ${index + 1}`;
+}
+
+function selectedSuiteVisualStyle() {
+  const styles = currentPromptConfig().suite.visualStyles || [];
+  return styles.find((style) => style.id === els.suiteStyleInput.value);
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -707,11 +725,12 @@ function cacheElements() {
     closeSettingsModalBtn: document.getElementById("closeSettingsModalBtn"),
     cancelSettingsBtn: document.getElementById("cancelSettingsBtn"),
     authModal: document.getElementById("authModal"),
+    authTypeInput: document.getElementById("authTypeInput"),
+    authModeTabs: document.querySelectorAll("[data-auth-mode]"),
+    authNameLabel: document.getElementById("authNameLabel"),
     authNameInput: document.getElementById("authNameInput"),
-    authEmailInput: document.getElementById("authEmailInput"),
     authPasswordInput: document.getElementById("authPasswordInput"),
-    loginBtn: document.getElementById("loginBtn"),
-    registerBtn: document.getElementById("registerBtn"),
+    authSubmitBtn: document.getElementById("authSubmitBtn"),
     toast: document.getElementById("toast")
   });
 }
@@ -726,8 +745,11 @@ function bindEvents() {
   els.connectionState.addEventListener("click", openSettingsModal);
   els.singleConnectionState.addEventListener("click", openSettingsModal);
   els.openAuthBtn.addEventListener("click", () => openAuthModal({ locked: false }));
-  els.loginBtn.addEventListener("click", () => handleAuth("login"));
-  els.registerBtn.addEventListener("click", () => handleAuth("register"));
+  els.authSubmitBtn.addEventListener("click", handleAuth);
+  els.authModeTabs.forEach((button) => {
+    button.addEventListener("click", () => switchAuthMode(button.dataset.authMode));
+  });
+  els.authTypeInput.addEventListener("change", updateAuthTypeUi);
   els.logoutBtn.addEventListener("click", handleLogout);
   els.suitePresetInput.addEventListener("change", () => {
     resetSuiteShotSettings();
@@ -951,22 +973,23 @@ function portMismatchMessage() {
   return "点踩接口未在当前后端生效；请重启 server.py 后再试。";
 }
 
-async function handleAuth(mode) {
-  const email = els.authEmailInput.value.trim();
-  const password = els.authPasswordInput.value;
+async function handleAuth() {
+  const mode = state.activeAuthMode;
+  const authType = els.authTypeInput.value === "email" ? "email" : "username";
   const name = els.authNameInput.value.trim();
-  if (!email || !password) {
-    showToast("请输入邮箱和密码", true);
+  const password = els.authPasswordInput.value;
+  if (!name || !password) {
+    showToast(authType === "email" ? "请输入邮箱和密码" : "请输入用户名和密码", true);
     return;
   }
   if (mode === "register" && password.length < 8) {
     showToast("注册密码至少 8 位", true);
     return;
   }
-  const button = mode === "register" ? els.registerBtn : els.loginBtn;
+  const button = els.authSubmitBtn;
   setBusy(true, button, mode === "register" ? "注册中" : "登录中");
   try {
-    const requestBody = { email, password, name };
+    const requestBody = authType === "email" ? { authType, email: name, password } : { authType, name, password };
     if (mode === "register") requestBody.source = collectUserSource();
     const payload = await apiFetch(mode === "register" ? "/auth/register" : "/auth/login", {
       method: "POST",
@@ -1018,17 +1041,37 @@ function clearAuthSession() {
 function renderAuthState() {
   const user = state.auth.user;
   els.accountTitle.textContent = user ? "当前账号" : "未登录";
-  els.accountNameText.textContent = user ? user.name || user.email : "注册后使用工具";
-  els.accountMetaText.textContent = user ? user.email : "登录后由管理员配置 API Key";
+  els.accountNameText.textContent = user ? user.name || "已登录账号" : "注册后使用工具";
+  els.accountMetaText.textContent = "登录后由管理员配置 API Key";
   els.logoutBtn.style.display = user ? "inline-flex" : "none";
   els.openAuthBtn.textContent = user ? "切换账号" : "登录 / 注册";
 }
 
+function updateAuthTypeUi() {
+  const authType = els.authTypeInput.value === "email" ? "email" : "username";
+  els.authNameLabel.textContent = authType === "email" ? "邮箱" : "用户名";
+  els.authNameInput.type = authType === "email" ? "email" : "text";
+  els.authNameInput.autocomplete = authType === "email" ? "email" : "username";
+  els.authNameInput.placeholder = authType === "email" ? "you@example.com" : "例如：AIECO Studio";
+}
+
+function switchAuthMode(mode) {
+  state.activeAuthMode = mode === "register" ? "register" : "login";
+  els.authModeTabs.forEach((button) => {
+    const active = button.dataset.authMode === state.activeAuthMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  els.authSubmitBtn.textContent = state.activeAuthMode === "register" ? "注册并进入" : "登录";
+}
+
 function openAuthModal({ locked = false } = {}) {
+  switchAuthMode("login");
+  updateAuthTypeUi();
   els.authModal.dataset.locked = locked ? "true" : "false";
   els.authModal.classList.add("active");
   els.authModal.setAttribute("aria-hidden", "false");
-  window.setTimeout(() => els.authEmailInput.focus(), 0);
+  window.setTimeout(() => els.authNameInput.focus(), 0);
 }
 
 function closeAuthModal() {
@@ -1773,7 +1816,7 @@ function suiteContext() {
   const productName = els.suiteProductNameInput.value.trim() || state.suiteReference?.name || "";
   const category = els.suiteCategoryInput.value.trim();
   const sellingPoints = els.suiteSellingPointsInput.value.trim();
-  const styleText = els.suiteStyleInput.options[els.suiteStyleInput.selectedIndex]?.text || fallbacks.styleText || "高级简洁";
+  const styleText = selectedSuiteVisualStyle()?.label || fallbacks.styleText || "高级简洁";
   return {
     productName,
     productLabel: productName || fallbacks.productLabel || "商品基图中的产品",

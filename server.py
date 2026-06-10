@@ -27,7 +27,8 @@ DB_PATH = Path(os.environ.get("IMAGE_STUDIO_DB", str(STORAGE_DIR / "image_studio
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "14"))
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip().lower()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
-DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
+OLD_DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
+DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/{model}:generateContent/"
 DEFAULT_MODEL = "gemini-2.5-flash-image"
 UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "120"))
 PROMPT_CONFIG_KEY = "prompt_config_json"
@@ -97,13 +98,82 @@ def ensure_sessions_schema(conn: sqlite3.Connection) -> None:
         )
 
 
+def ensure_users_schema(conn: sqlite3.Connection) -> None:
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='users'").fetchone()
+    schema = " ".join(str(row_value(row, "sql", "") or "").upper().split())
+    if "EMAIL TEXT NOT NULL UNIQUE" not in schema:
+        return
+
+    # The C端 account flow no longer uses email. Rebuild only this table to
+    # remove the historical unique email constraint while preserving user data.
+    conn.commit()
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("PRAGMA legacy_alter_table = ON")
+    conn.execute("ALTER TABLE users RENAME TO users_legacy")
+    conn.execute(
+        """
+        CREATE TABLE users (
+          id TEXT PRIMARY KEY,
+          email TEXT NOT NULL DEFAULT '',
+          name TEXT NOT NULL,
+          password_salt TEXT NOT NULL,
+          password_hash TEXT NOT NULL,
+          disabled INTEGER NOT NULL DEFAULT 0,
+          role TEXT NOT NULL DEFAULT 'user',
+          source TEXT NOT NULL DEFAULT 'direct',
+          referrer TEXT NOT NULL DEFAULT '',
+          utm_source TEXT NOT NULL DEFAULT '',
+          utm_medium TEXT NOT NULL DEFAULT '',
+          utm_campaign TEXT NOT NULL DEFAULT '',
+          source_path TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL,
+          last_login_at TEXT
+        )
+        """
+    )
+    columns = [
+        "id",
+        "email",
+        "name",
+        "password_salt",
+        "password_hash",
+        "disabled",
+        "role",
+        "source",
+        "referrer",
+        "utm_source",
+        "utm_medium",
+        "utm_campaign",
+        "source_path",
+        "created_at",
+        "last_login_at",
+    ]
+    column_sql = ", ".join(columns)
+    conn.execute(f"INSERT INTO users ({column_sql}) SELECT {column_sql} FROM users_legacy")
+    conn.execute("DROP TABLE users_legacy")
+    conn.commit()
+    conn.execute("PRAGMA legacy_alter_table = OFF")
+    conn.execute("PRAGMA foreign_keys = ON")
+
+
+def migrate_default_endpoint(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "UPDATE app_settings SET value=?, updated_at=? WHERE key='default_endpoint' AND value=?",
+        (DEFAULT_ENDPOINT, now_iso(), OLD_DEFAULT_ENDPOINT),
+    )
+    conn.execute(
+        "UPDATE user_settings SET endpoint=?, updated_at=? WHERE endpoint=?",
+        (DEFAULT_ENDPOINT, now_iso(), OLD_DEFAULT_ENDPOINT),
+    )
+
+
 def init_db() -> None:
     with connect() as conn:
         conn.executescript(
             """
             CREATE TABLE IF NOT EXISTS users (
               id TEXT PRIMARY KEY,
-              email TEXT NOT NULL UNIQUE,
+              email TEXT NOT NULL DEFAULT '',
               name TEXT NOT NULL,
               password_salt TEXT NOT NULL,
               password_hash TEXT NOT NULL,
@@ -133,6 +203,7 @@ def init_db() -> None:
               endpoint TEXT NOT NULL DEFAULT '',
               model TEXT NOT NULL DEFAULT '',
               video_api_key TEXT NOT NULL DEFAULT '',
+              video_model TEXT NOT NULL DEFAULT '',
               video_endpoint_primary TEXT NOT NULL DEFAULT '',
               video_endpoint_secondary TEXT NOT NULL DEFAULT '',
               size TEXT NOT NULL DEFAULT '1024x1024',
@@ -196,9 +267,12 @@ def init_db() -> None:
         ensure_column(conn, "users", "utm_campaign", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "source_path", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "last_login_at", "TEXT")
+        ensure_users_schema(conn)
         ensure_column(conn, "user_settings", "video_api_key", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "user_settings", "video_model", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "user_settings", "video_endpoint_primary", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "user_settings", "video_endpoint_secondary", "TEXT NOT NULL DEFAULT ''")
+        migrate_default_endpoint(conn)
         ensure_sessions_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, role)")
         seed_setting(conn, "default_endpoint", DEFAULT_ENDPOINT)
@@ -342,8 +416,10 @@ def row_user(
     api_key_configured: bool = False,
     api_key_masked: str = "",
     image_endpoint: str = "",
+    image_model: str = "",
     video_api_key_configured: bool = False,
     video_api_key_masked: str = "",
+    video_model: str = "",
     video_endpoint_primary: str = "",
     video_endpoint_secondary: str = "",
 ) -> dict:
@@ -369,8 +445,10 @@ def row_user(
         "imageApiKeyConfigured": api_key_configured,
         "imageApiKeyMasked": api_key_masked,
         "imageEndpoint": image_endpoint,
+        "imageModel": image_model,
         "videoApiKeyConfigured": video_api_key_configured,
         "videoApiKeyMasked": video_api_key_masked,
+        "videoModel": video_model,
         "videoEndpointPrimary": video_endpoint_primary,
         "videoEndpointSecondary": video_endpoint_secondary,
         "usage": usage
@@ -393,6 +471,50 @@ def row_value(row: sqlite3.Row, key: str, default=""):
 def normalize_user_role(value) -> str:
     role = str(value or USER_ROLE).strip().lower()
     return role if role in VALID_USER_ROLES else USER_ROLE
+
+
+def auth_type(body: dict) -> str:
+    value = str(body.get("authType") or body.get("auth_type") or "").strip().lower()
+    if value in {"email", "username"}:
+        return value
+    identifier = str(body.get("email") or body.get("username") or body.get("name") or "").strip()
+    return "email" if "@" in identifier else "username"
+
+
+def auth_identifier(body: dict) -> str:
+    value = body.get("username") or body.get("name") or body.get("email") or ""
+    return trim_text(str(value).strip(), 120)
+
+
+def auth_email(body: dict) -> str:
+    return trim_text(str(body.get("email") or body.get("name") or body.get("username") or "").strip().lower(), 120)
+
+
+def find_user_by_name(conn: sqlite3.Connection, name: str):
+    if not name:
+        return None
+    return conn.execute("SELECT * FROM users WHERE lower(name)=lower(?) LIMIT 1", (name,)).fetchone()
+
+
+def find_user_by_email(conn: sqlite3.Connection, email: str):
+    if not email:
+        return None
+    return conn.execute("SELECT * FROM users WHERE email<>'' AND lower(email)=lower(?) LIMIT 1", (email,)).fetchone()
+
+
+def find_user_by_auth_identifier(conn: sqlite3.Connection, identifier: str):
+    if not identifier:
+        return None
+    return conn.execute(
+        """
+        SELECT * FROM users
+        WHERE lower(name)=lower(?)
+           OR (email<>'' AND lower(email)=lower(?))
+        ORDER BY CASE WHEN lower(name)=lower(?) THEN 0 ELSE 1 END
+        LIMIT 1
+        """,
+        (identifier, identifier, identifier),
+    ).fetchone()
 
 
 class AppError(Exception):
@@ -574,11 +696,17 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_register(self) -> None:
         body = self.read_json()
-        email = str(body.get("email") or "").strip().lower()
-        name = str(body.get("name") or "").strip() or email.split("@")[0]
+        selected_auth_type = auth_type(body)
+        email = auth_email(body) if selected_auth_type == "email" else ""
+        name = email.split("@", 1)[0] if selected_auth_type == "email" else auth_identifier(body)
         password = str(body.get("password") or "")
-        if "@" not in email:
-            raise AppError(HTTPStatus.BAD_REQUEST, "请输入有效邮箱")
+        if selected_auth_type == "email":
+            if "@" not in email:
+                raise AppError(HTTPStatus.BAD_REQUEST, "请输入有效邮箱")
+        elif not name:
+            raise AppError(HTTPStatus.BAD_REQUEST, "请输入用户名")
+        elif "@" in name:
+            raise AppError(HTTPStatus.BAD_REQUEST, "这是邮箱格式，请选择邮箱登录/注册")
         if len(password) < 8:
             raise AppError(HTTPStatus.BAD_REQUEST, "密码至少 8 位")
         source = normalize_source(body.get("source"))
@@ -586,6 +714,10 @@ class Handler(SimpleHTTPRequestHandler):
         user_id = make_id("user")
         try:
             with connect() as conn:
+                if selected_auth_type == "email" and find_user_by_email(conn, email):
+                    raise AppError(HTTPStatus.CONFLICT, "邮箱已注册")
+                if selected_auth_type == "username" and find_user_by_name(conn, name):
+                    raise AppError(HTTPStatus.CONFLICT, "用户名已注册")
                 conn.execute(
                     """
                     INSERT INTO users
@@ -619,19 +751,20 @@ class Handler(SimpleHTTPRequestHandler):
                     (user_id, settings["defaultEndpoint"], settings["defaultModel"], now_iso()),
                 )
         except sqlite3.IntegrityError:
-            raise AppError(HTTPStatus.CONFLICT, "邮箱已注册")
+            raise AppError(HTTPStatus.CONFLICT, "邮箱已注册" if selected_auth_type == "email" else "用户名已注册")
         token = self.create_session(user_id, "user")
         user = connect().execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         self.json_response({"token": token, "user": row_user(user)})
 
     def handle_login(self) -> None:
         body = self.read_json()
-        email = str(body.get("email") or "").strip().lower()
+        selected_auth_type = auth_type(body)
+        identifier = auth_email(body) if selected_auth_type == "email" else auth_identifier(body)
         password = str(body.get("password") or "")
         with connect() as conn:
-            user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            user = find_user_by_email(conn, identifier) if selected_auth_type == "email" else find_user_by_name(conn, identifier)
             if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
-                raise AppError(HTTPStatus.UNAUTHORIZED, "邮箱或密码错误")
+                raise AppError(HTTPStatus.UNAUTHORIZED, "邮箱或密码错误" if selected_auth_type == "email" else "用户名或密码错误")
             if user["disabled"]:
                 raise AppError(HTTPStatus.FORBIDDEN, "账号已被禁用")
             conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
@@ -839,15 +972,16 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_admin_login(self) -> None:
         body = self.read_json()
-        email = str(body.get("email") or "").strip().lower()
+        selected_auth_type = auth_type(body)
+        identifier = (auth_email(body) if selected_auth_type == "email" else auth_identifier(body)).lower()
         password = str(body.get("password") or "")
-        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+        if (selected_auth_type == "email" or "@" in identifier) and identifier == ADMIN_EMAIL and password == ADMIN_PASSWORD:
             token = self.create_session(None, ADMIN_ROLE)
             self.json_response({"token": token, "admin": {"email": ADMIN_EMAIL, "role": ADMIN_ROLE, "source": "builtin"}})
             return
 
         with connect() as conn:
-            user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            user = find_user_by_email(conn, identifier) if selected_auth_type == "email" else find_user_by_name(conn, identifier)
             if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
                 raise AppError(HTTPStatus.UNAUTHORIZED, "B 端账号或密码错误")
             if user["disabled"]:
@@ -900,7 +1034,7 @@ class Handler(SimpleHTTPRequestHandler):
             ).fetchall()
             settings_rows = conn.execute(
                 """
-                SELECT user_id, api_key, endpoint, video_api_key,
+                SELECT user_id, api_key, endpoint, model, video_api_key, video_model,
                        video_endpoint_primary, video_endpoint_secondary
                 FROM user_settings
                 """
@@ -925,8 +1059,10 @@ class Handler(SimpleHTTPRequestHandler):
                         bool(row_value(settings_by_user.get(row["id"]), "api_key", "")),
                         mask_api_key(row_value(settings_by_user.get(row["id"]), "api_key", "")),
                         row_value(settings_by_user.get(row["id"]), "endpoint", ""),
+                        row_value(settings_by_user.get(row["id"]), "model", ""),
                         bool(row_value(settings_by_user.get(row["id"]), "video_api_key", "")),
                         mask_api_key(row_value(settings_by_user.get(row["id"]), "video_api_key", "")),
+                        row_value(settings_by_user.get(row["id"]), "video_model", ""),
                         row_value(settings_by_user.get(row["id"]), "video_endpoint_primary", ""),
                         row_value(settings_by_user.get(row["id"]), "video_endpoint_secondary", ""),
                     )
@@ -960,8 +1096,16 @@ class Handler(SimpleHTTPRequestHandler):
                     user_id,
                     api_key="",
                     endpoint=body.get("imageEndpoint") if "imageEndpoint" in body else body.get("endpoint"),
+                    model=body.get("imageModel") if "imageModel" in body else body.get("model"),
                 )
-            elif "apiKey" in body or "imageApiKey" in body or "imageEndpoint" in body or "endpoint" in body:
+            elif (
+                "apiKey" in body
+                or "imageApiKey" in body
+                or "imageEndpoint" in body
+                or "endpoint" in body
+                or "imageModel" in body
+                or "model" in body
+            ):
                 self.upsert_user_image_config(
                     conn,
                     user_id,
@@ -969,17 +1113,20 @@ class Handler(SimpleHTTPRequestHandler):
                     if "imageApiKey" in body or "apiKey" in body
                     else None,
                     endpoint=body.get("imageEndpoint") if "imageEndpoint" in body else body.get("endpoint"),
+                    model=body.get("imageModel") if "imageModel" in body else body.get("model"),
                 )
             if body.get("clearVideoApiKey"):
                 self.upsert_user_video_config(
                     conn,
                     user_id,
                     api_key="",
+                    model=body.get("videoModel"),
                     endpoint_primary=body.get("videoEndpointPrimary"),
                     endpoint_secondary=body.get("videoEndpointSecondary"),
                 )
             elif (
                 "videoApiKey" in body
+                or "videoModel" in body
                 or "videoEndpointPrimary" in body
                 or "videoEndpointSecondary" in body
             ):
@@ -987,6 +1134,7 @@ class Handler(SimpleHTTPRequestHandler):
                     conn,
                     user_id,
                     api_key=str(body.get("videoApiKey") or "").strip() if "videoApiKey" in body else None,
+                    model=body.get("videoModel"),
                     endpoint_primary=body.get("videoEndpointPrimary"),
                     endpoint_secondary=body.get("videoEndpointSecondary"),
                 )
@@ -998,12 +1146,15 @@ class Handler(SimpleHTTPRequestHandler):
         user_id: str,
         api_key: str | None = None,
         endpoint: str | None = None,
+        model: str | None = None,
     ) -> None:
         settings = app_settings(conn)
         row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
         next_api_key = row_value(row, "api_key", "") if api_key is None else api_key
         next_endpoint = row_value(row, "endpoint", settings["defaultEndpoint"]) if endpoint is None else str(endpoint or "").strip()
         next_endpoint = trim_text(next_endpoint or settings["defaultEndpoint"], 800)
+        next_model = row_value(row, "model", settings["defaultModel"]) if model is None else str(model or "").strip()
+        next_model = trim_text(next_model or settings["defaultModel"], 160)
         conn.execute(
             """
             INSERT INTO user_settings (user_id, api_key, endpoint, model, size, updated_at)
@@ -1011,9 +1162,10 @@ class Handler(SimpleHTTPRequestHandler):
             ON CONFLICT(user_id) DO UPDATE SET
               api_key=excluded.api_key,
               endpoint=excluded.endpoint,
+              model=excluded.model,
               updated_at=excluded.updated_at
             """,
-            (user_id, next_api_key, next_endpoint, settings["defaultModel"], now_iso()),
+            (user_id, next_api_key, next_endpoint, next_model, now_iso()),
         )
 
     def upsert_user_video_config(
@@ -1021,12 +1173,14 @@ class Handler(SimpleHTTPRequestHandler):
         conn: sqlite3.Connection,
         user_id: str,
         api_key: str | None = None,
+        model: str | None = None,
         endpoint_primary: str | None = None,
         endpoint_secondary: str | None = None,
     ) -> None:
         settings = app_settings(conn)
         row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
         next_api_key = row_value(row, "video_api_key", "") if api_key is None else api_key
+        next_model = row_value(row, "video_model", "") if model is None else trim_text(str(model or "").strip(), 160)
         next_primary = (
             row_value(row, "video_endpoint_primary", "")
             if endpoint_primary is None
@@ -1040,11 +1194,12 @@ class Handler(SimpleHTTPRequestHandler):
         conn.execute(
             """
             INSERT INTO user_settings
-              (user_id, api_key, endpoint, model, video_api_key,
+              (user_id, api_key, endpoint, model, video_api_key, video_model,
                video_endpoint_primary, video_endpoint_secondary, size, updated_at)
-            VALUES (?, '', ?, ?, ?, ?, ?, '1024x1024', ?)
+            VALUES (?, '', ?, ?, ?, ?, ?, ?, '1024x1024', ?)
             ON CONFLICT(user_id) DO UPDATE SET
               video_api_key=excluded.video_api_key,
+              video_model=excluded.video_model,
               video_endpoint_primary=excluded.video_endpoint_primary,
               video_endpoint_secondary=excluded.video_endpoint_secondary,
               updated_at=excluded.updated_at
@@ -1054,6 +1209,7 @@ class Handler(SimpleHTTPRequestHandler):
                 settings["defaultEndpoint"],
                 settings["defaultModel"],
                 next_api_key,
+                next_model,
                 next_primary,
                 next_secondary,
                 now_iso(),

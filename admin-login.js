@@ -51,10 +51,10 @@ function showRouteMessage() {
 }
 
 async function handleAdminLogin() {
-  const email = els.adminEmailInput.value.trim();
+  const account = els.adminEmailInput.value.trim();
   const password = els.adminPasswordInput.value;
-  if (!email || !password) {
-    showToast("请输入管理员邮箱和密码", true);
+  if (!account || !password) {
+    showToast("请输入管理员账号和密码", true);
     return;
   }
 
@@ -62,7 +62,7 @@ async function handleAdminLogin() {
   try {
     const payload = await adminFetch("/login", {
       method: "POST",
-      body: JSON.stringify({ email, password }),
+      body: JSON.stringify({ name: account, password }),
       skipAuth: true
     });
     state.token = payload.token || "";

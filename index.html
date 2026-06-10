@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260610-video-merge" />
+    <link rel="stylesheet" href="./styles.css?v=20260610-auth-tabs" />
   </head>
   <body>
     <div class="app-shell">
@@ -130,11 +130,11 @@
                 <label class="field">
                   <span>视觉风格</span>
                   <select id="suiteStyleInput">
-                    <option value="premium">高级简洁</option>
-                    <option value="tech">科技冷感</option>
-                    <option value="warm">温暖生活</option>
-                    <option value="bold">强促销视觉</option>
-                    <option value="minimal">极简白底</option>
+                    <option value="premium">清爽质感</option>
+                    <option value="tech">现代冷调</option>
+                    <option value="warm">自然生活</option>
+                    <option value="bold">活动吸睛</option>
+                    <option value="minimal">纯净白底</option>
                   </select>
                 </label>
               </div>
@@ -590,14 +590,21 @@
             <h3 id="authModalTitle">注册或登录后使用</h3>
           </div>
         </div>
+        <div class="auth-tabs" role="tablist" aria-label="账号操作">
+          <button class="auth-tab active" id="authLoginTab" type="button" role="tab" aria-selected="true" data-auth-mode="login">登录</button>
+          <button class="auth-tab" id="authRegisterTab" type="button" role="tab" aria-selected="false" data-auth-mode="register">注册</button>
+        </div>
         <div class="modal-body">
           <label class="field">
-            <span>昵称 / 团队名</span>
-            <input id="authNameInput" type="text" autocomplete="name" placeholder="例如：AIECO Studio" />
+            <span>登录方式</span>
+            <select id="authTypeInput">
+              <option value="username">用户名登录</option>
+              <option value="email">邮箱登录</option>
+            </select>
           </label>
           <label class="field">
-            <span>邮箱</span>
-            <input id="authEmailInput" type="email" autocomplete="email" placeholder="you@example.com" />
+            <span id="authNameLabel">用户名</span>
+            <input id="authNameInput" type="text" autocomplete="username" placeholder="例如：AIECO Studio" />
           </label>
           <label class="field">
             <span>密码</span>
@@ -605,12 +612,10 @@
           </label>
           <div class="auth-note">
             <strong>账号用于绑定管理员配置的 API Key 和生成日志。</strong>
-            <span>这里没有充值和配额概念，生成请求由后端代理调用模型。</span>
           </div>
         </div>
         <div class="modal-actions">
-          <button class="ghost-button" id="loginBtn" type="button">登录</button>
-          <button class="primary-button" id="registerBtn" type="button">注册并进入</button>
+          <button class="primary-button" id="authSubmitBtn" type="button">登录</button>
         </div>
       </div>
     </div>
@@ -619,6 +624,6 @@
     <script src="./video-constraints.js?v=20260610-video-merge" defer></script>
     <script src="./video-planner.js?v=20260610-video-merge" defer></script>
     <script src="./video-mock-service.js?v=20260610-video-merge" defer></script>
-    <script src="./app.js?v=20260610-video-merge" defer></script>
+    <script src="./app.js?v=20260610-auth-tabs" defer></script>
   </body>
 </html>

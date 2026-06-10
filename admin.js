@@ -75,6 +75,10 @@ function cacheElements() {
     adminApiKeyInput: document.getElementById("adminApiKeyInput"),
     adminImageEndpointField: document.getElementById("adminImageEndpointField"),
     adminImageEndpointInput: document.getElementById("adminImageEndpointInput"),
+    adminImageModelField: document.getElementById("adminImageModelField"),
+    adminImageModelInput: document.getElementById("adminImageModelInput"),
+    adminVideoModelField: document.getElementById("adminVideoModelField"),
+    adminVideoModelInput: document.getElementById("adminVideoModelInput"),
     adminVideoEndpointPrimaryField: document.getElementById("adminVideoEndpointPrimaryField"),
     adminVideoEndpointPrimaryInput: document.getElementById("adminVideoEndpointPrimaryInput"),
     adminVideoEndpointSecondaryField: document.getElementById("adminVideoEndpointSecondaryField"),
@@ -417,9 +421,22 @@ function renderSuitePromptConfig(config) {
     promptSection(
       "视觉风格与套图拼接文案",
       [
-        `<div class="admin-prompt-grid two">${config.suite.visualStyles
-          .map((style, index) => promptField(`suite.visualStyles.${index}.label`, `${style.id} 显示名`, style.label, { type: "input" }))
-          .join("")}</div>`,
+        config.suite.visualStyles
+          .map(
+            (style, index) => `
+              <article class="admin-prompt-subcard">
+                <div class="admin-prompt-card-head">
+                  <strong>${escapeHtml(style.id)}</strong>
+                  <span>视觉风格</span>
+                </div>
+                <div class="admin-prompt-grid two">
+                  ${promptField(`suite.visualStyles.${index}.label`, "内部提示词", style.label, { type: "input" })}
+                  ${promptField(`suite.visualStyles.${index}.displayLabel`, "前台显示", style.displayLabel || style.label, { type: "input" })}
+                </div>
+              </article>
+            `
+          )
+          .join(""),
         `<div class="admin-prompt-grid two">
           ${promptField("suite.contextFallbacks.productLabel", "默认商品称呼", config.suite.contextFallbacks.productLabel, { type: "input" })}
           ${promptField("suite.contextFallbacks.category", "默认品类", config.suite.contextFallbacks.category, { type: "input" })}
@@ -535,6 +552,14 @@ function setPromptConfigValue(path, value) {
   target[Number.isNaN(Number(key)) ? key : Number(key)] = value;
 }
 
+function userDisplayName(user) {
+  return user?.name || user?.email || "未命名用户";
+}
+
+function userMetaText(user) {
+  return user?.email || "邮箱未设置";
+}
+
 function renderUsers() {
   if (!state.users.length) {
     els.adminUserTable.innerHTML = `<tr><td colspan="11">暂无注册用户</td></tr>`;
@@ -545,8 +570,8 @@ function renderUsers() {
       (user) => `
         <tr>
           <td>
-            <strong>${escapeHtml(user.name)}</strong>
-            <small>${escapeHtml(user.email)}</small>
+            <strong>${escapeHtml(userDisplayName(user))}</strong>
+            <small>${escapeHtml(userMetaText(user))}</small>
           </td>
           <td>
             <strong>${escapeHtml(sourceLabel(user.source))}</strong>
@@ -557,11 +582,13 @@ function renderUsers() {
           <td>
             <span class="status-chip ${(user.imageApiKeyConfigured ?? user.apiKeyConfigured) ? "ready" : "danger"}">${(user.imageApiKeyConfigured ?? user.apiKeyConfigured) ? "已配置" : "未配置"}</span>
             <small>${escapeHtml(user.imageApiKeyMasked || user.apiKeyMasked || "未设置")}</small>
+            <small>模型：${escapeHtml(user.imageModel || "默认模型")}</small>
             <small>地址：${escapeHtml(user.imageEndpoint || "未设置")}</small>
           </td>
           <td>
             <span class="status-chip ${user.videoApiKeyConfigured ? "ready" : "danger"}">${user.videoApiKeyConfigured ? "已配置" : "未配置"}</span>
             <small>${escapeHtml(user.videoApiKeyMasked || "未设置")}</small>
+            <small>模型：${escapeHtml(user.videoModel || "未设置")}</small>
             <small>地址1：${escapeHtml(user.videoEndpointPrimary || "未设置")}</small>
             <small>地址2：${escapeHtml(user.videoEndpointSecondary || "未设置")}</small>
           </td>
@@ -626,7 +653,7 @@ async function toggleUserRole(userId) {
   const user = state.users.find((entry) => entry.id === userId);
   if (!user) return;
   const role = user.role === "admin" ? "user" : "admin";
-  const ok = window.confirm(`${role === "admin" ? "授予" : "撤销"} ${user.email} 的 B 端管理员权限？`);
+  const ok = window.confirm(`${role === "admin" ? "授予" : "撤销"} ${userDisplayName(user)} 的 B 端管理员权限？`);
   if (!ok) return;
   try {
     await adminFetch(`/users/${encodeURIComponent(userId)}`, {
@@ -649,11 +676,11 @@ function openUserKeyModal(userId, mode = "image") {
   delete els.clearUserKeyBtn.dataset.originalText;
   const isVideo = state.selectedKeyMode === "video";
   const imageKeyConfigured = user.imageApiKeyConfigured ?? user.apiKeyConfigured;
-  els.adminKeyUserText.textContent = `${user.name} / ${user.email}`;
+  els.adminKeyUserText.textContent = `${userDisplayName(user)} / ${userMetaText(user)}`;
   els.adminKeyModalTitle.textContent = isVideo ? "配置视频 Key" : "配置图片 Key";
   els.adminKeyHelpText.textContent = isVideo
-    ? "视频配置仅在 B 端保存，普通用户不能查看明文 Key。"
-    : "图片生成请求由后端使用该用户的图片 Key 和图片地址调用模型。";
+    ? "视频配置仅在 B 端保存，普通用户不能查看明文 Key、模型和地址。"
+    : "图片生成请求由后端使用该用户的图片 Key、模型和 Base URL 调用模型。";
   els.adminKeyInputLabel.textContent = isVideo ? "视频 API Key" : "图片 API Key";
   els.adminApiKeyInput.value = "";
   els.adminApiKeyInput.placeholder = isVideo
@@ -664,9 +691,13 @@ function openUserKeyModal(userId, mode = "image") {
       ? "粘贴新的图片 Key，留空不修改"
       : "粘贴图片 Key";
   els.adminImageEndpointField.hidden = isVideo;
+  els.adminImageModelField.hidden = isVideo;
+  els.adminVideoModelField.hidden = !isVideo;
   els.adminVideoEndpointPrimaryField.hidden = !isVideo;
   els.adminVideoEndpointSecondaryField.hidden = !isVideo;
   els.adminImageEndpointInput.value = user.imageEndpoint || "";
+  els.adminImageModelInput.value = user.imageModel || "";
+  els.adminVideoModelInput.value = user.videoModel || "";
   els.adminVideoEndpointPrimaryInput.value = user.videoEndpointPrimary || "";
   els.adminVideoEndpointSecondaryInput.value = user.videoEndpointSecondary || "";
   els.clearUserKeyBtn.disabled = isVideo ? !user.videoApiKeyConfigured : !imageKeyConfigured;
@@ -682,6 +713,8 @@ function closeUserKeyModal() {
   state.selectedKeyMode = "image";
   els.adminApiKeyInput.value = "";
   els.adminImageEndpointInput.value = "";
+  els.adminImageModelInput.value = "";
+  els.adminVideoModelInput.value = "";
   els.adminVideoEndpointPrimaryInput.value = "";
   els.adminVideoEndpointSecondaryInput.value = "";
   els.adminKeyModal.classList.remove("active");
@@ -695,10 +728,12 @@ async function saveUserKey() {
   if (!userId) return;
   const body = isVideo
     ? {
+        videoModel: els.adminVideoModelInput.value.trim(),
         videoEndpointPrimary: els.adminVideoEndpointPrimaryInput.value.trim(),
         videoEndpointSecondary: els.adminVideoEndpointSecondaryInput.value.trim()
       }
     : {
+        imageModel: els.adminImageModelInput.value.trim(),
         imageEndpoint: els.adminImageEndpointInput.value.trim()
       };
   if (apiKey) {
@@ -730,18 +765,20 @@ async function clearUserKey() {
   if (!userId) return;
   const user = state.users.find((entry) => entry.id === userId);
   const isVideo = state.selectedKeyMode === "video";
-  const ok = window.confirm(`清空 ${user?.email || "该用户"} 的${isVideo ? "视频" : "图片"} Key？`);
+  const ok = window.confirm(`清空 ${userDisplayName(user)} 的${isVideo ? "视频" : "图片"} Key？`);
   if (!ok) return;
   setBusy(els.clearUserKeyBtn, "清空中", true);
   try {
     const body = isVideo
       ? {
           clearVideoApiKey: true,
+          videoModel: els.adminVideoModelInput.value.trim(),
           videoEndpointPrimary: els.adminVideoEndpointPrimaryInput.value.trim(),
           videoEndpointSecondary: els.adminVideoEndpointSecondaryInput.value.trim()
         }
       : {
           clearImageApiKey: true,
+          imageModel: els.adminImageModelInput.value.trim(),
           imageEndpoint: els.adminImageEndpointInput.value.trim()
         };
     await adminFetch(`/users/${encodeURIComponent(userId)}`, {

@@ -140,11 +140,11 @@
   },
   "suite": {
     "visualStyles": [
-      { "id": "premium", "label": "高级简洁" },
-      { "id": "tech", "label": "科技冷感" },
-      { "id": "warm", "label": "温暖生活" },
-      { "id": "bold", "label": "强促销视觉" },
-      { "id": "minimal", "label": "极简白底" }
+      { "id": "premium", "label": "高级简洁", "displayLabel": "清爽质感" },
+      { "id": "tech", "label": "科技冷感", "displayLabel": "现代冷调" },
+      { "id": "warm", "label": "温暖生活", "displayLabel": "自然生活" },
+      { "id": "bold", "label": "强促销视觉", "displayLabel": "活动吸睛" },
+      { "id": "minimal", "label": "极简白底", "displayLabel": "纯净白底" }
     ],
     "contextFallbacks": {
       "productLabel": "商品基图中的产品",

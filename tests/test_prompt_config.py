@@ -21,6 +21,8 @@ class PromptConfigTests(unittest.TestCase):
         self.assertEqual(config["version"], 1)
         self.assertEqual(config["single"]["templates"][0]["id"], "main-white")
         self.assertEqual(config["suite"]["presets"][0]["id"], "amazon-aplus")
+        self.assertEqual(config["suite"]["visualStyles"][0]["label"], "高级简洁")
+        self.assertEqual(config["suite"]["visualStyles"][0]["displayLabel"], "清爽质感")
         self.assertIn("强限制", config["reference"]["strictRule"])
 
     def test_app_settings_returns_saved_prompt_config(self):
@@ -54,6 +56,7 @@ class PromptConfigTests(unittest.TestCase):
         config["single"]["templates"][0]["id"] = "changed-id"
         config["single"]["templates"][0]["category"] = "changed-category"
         config["single"]["templates"][0]["title"] = "可编辑标题"
+        config["suite"]["visualStyles"][0]["displayLabel"] = "前台可见名称"
         config["suite"]["contextFallbacks"]["category"] = "可编辑默认品类文案"
 
         normalized = server.normalize_prompt_config(config)
@@ -61,6 +64,7 @@ class PromptConfigTests(unittest.TestCase):
         self.assertEqual(normalized["single"]["templates"][0]["id"], "main-white")
         self.assertEqual(normalized["single"]["templates"][0]["category"], "main")
         self.assertEqual(normalized["single"]["templates"][0]["title"], "可编辑标题")
+        self.assertEqual(normalized["suite"]["visualStyles"][0]["displayLabel"], "前台可见名称")
         self.assertEqual(normalized["suite"]["contextFallbacks"]["category"], "可编辑默认品类文案")
 
     def test_invalid_prompt_config_size_is_rejected(self):

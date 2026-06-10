@@ -1,5 +1,39 @@
 # Public Interface Changes
 
+## 2026-06-10 - C端 username/email auth modes
+
+C端 registration and login now let users choose username plus password or email plus password.
+
+### C端 HTTP API
+
+- `POST /api/auth/register` accepts `authType: "username"` with `name`/`username`, or `authType: "email"` with `email`.
+- Username-mode registrations keep `email` empty. Email-mode registrations store the supplied email and derive the display name from the email prefix when no separate name is provided.
+- Username-mode registration rejects email-formatted identifiers and asks the user to switch to email auth, preventing accidental duplicate accounts for existing email users.
+- `POST /api/auth/login` accepts the same auth modes. Requests without `authType` remain compatible: identifiers containing `@` are treated as email, otherwise username.
+- Registered users promoted to B端 admin can log into `POST /api/admin/login` with username or email; the built-in `ADMIN_EMAIL` login remains unchanged.
+
+### C端 UI
+
+- The registration/login modal splits `登录` and `注册` into tabs, keeps only one submit action visible, and includes a `登录方式` selector for `用户名登录` or `邮箱登录`.
+
+### Storage Contract
+
+- The historical unique constraint on `users.email` is removed during initialization so username-mode users can have empty email values. Email-mode duplicate checks are enforced in application code.
+
+## 2026-06-10 - C端 suite style display labels
+
+Suite visual style configuration now separates the internal prompt wording from the customer-facing label.
+
+### Prompt Config Contract
+
+- `suite.visualStyles[]` now includes editable `displayLabel`.
+- C端 suite style selectors display `displayLabel` when present, falling back to built-in safe display names instead of internal prompt labels.
+- Suite prompt composition continues to use the internal `label`, so B端 can keep prompt-specific style wording hidden from customers.
+
+### B端 UI
+
+- 提示词配置 > 套图生成 > 视觉风格与套图拼接文案 now edits each style as separate `内部提示词` and `前台显示` fields.
+
 ## 2026-06-10 - B端 image and video user credentials
 
 B端 user credential configuration now distinguishes image and video model settings per registered user.
@@ -7,20 +41,22 @@ B端 user credential configuration now distinguishes image and video model setti
 ### B端 HTTP API
 
 - `GET /api/admin/users` now returns image-specific fields `imageApiKeyConfigured`, `imageApiKeyMasked`, and `imageEndpoint`, while keeping legacy `apiKeyConfigured` and `apiKeyMasked` for compatibility.
+- `GET /api/admin/users` now returns image-specific `imageModel` and video-specific `videoModel`.
 - `GET /api/admin/users` now returns video-specific fields `videoApiKeyConfigured`, `videoApiKeyMasked`, `videoEndpointPrimary`, and `videoEndpointSecondary`.
-- `PATCH /api/admin/users/:id` now accepts `imageApiKey`, `imageEndpoint`, `clearImageApiKey`, `videoApiKey`, `videoEndpointPrimary`, `videoEndpointSecondary`, and `clearVideoApiKey`.
+- `PATCH /api/admin/users/:id` now accepts `imageApiKey`, `imageEndpoint`, `imageModel`, `clearImageApiKey`, `videoApiKey`, `videoModel`, `videoEndpointPrimary`, `videoEndpointSecondary`, and `clearVideoApiKey`.
 - Existing `apiKey` and `clearApiKey` payloads remain compatible aliases for the image key.
 - `GET /api/settings` and backend image generation now use the user's configured image address when present, falling back to the B端 default endpoint.
+- The built-in AOKAPI image endpoint default now uses `{model}`: `https://aokapi.com/v1beta/models/{model}:generateContent/`. Existing built-in default endpoint values are migrated to this placeholder form.
 
 ### B端 UI
 
 - The registered user table renamed `API Key` to `图片 Key` and added a `视频 Key` column.
-- User actions now expose separate image and video configuration controls. Image configuration includes the image address; video configuration includes one API Key and two addresses.
+- User actions now expose separate image and video configuration controls. Image configuration includes image model and Base URL/address; video configuration includes one API Key, video model, and two addresses.
 
 ### Storage Contract
 
-- SQLite `user_settings.video_api_key`, `user_settings.video_endpoint_primary`, and `user_settings.video_endpoint_secondary` were added.
-- Existing `user_settings.api_key` is now treated as the image API Key; existing `user_settings.endpoint` is exposed as the image address.
+- SQLite `user_settings.video_api_key`, `user_settings.video_model`, `user_settings.video_endpoint_primary`, and `user_settings.video_endpoint_secondary` were added.
+- Existing `user_settings.api_key`, `user_settings.model`, and `user_settings.endpoint` are now treated as image API Key, image model, and image address.
 
 ## 2026-06-10 - B端 user role assignment
 

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>B端管理台 - AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260610-media-config" />
+    <link rel="stylesheet" href="./styles.css?v=20260610-model-fields" />
   </head>
   <body class="admin-body">
     <main class="admin-shell">
@@ -39,8 +39,8 @@
               </div>
               <div class="settings-grid">
                 <label class="field">
-                  <span>默认接口地址</span>
-                  <input id="defaultEndpointInput" type="url" />
+                  <span>默认 Base URL / 接口地址</span>
+                  <input id="defaultEndpointInput" type="text" placeholder="https://aokapi.com/v1beta/models/{model}:generateContent/" />
                 </label>
                 <label class="field">
                   <span>默认模型</span>
@@ -190,8 +190,16 @@
             <input id="adminApiKeyInput" type="password" autocomplete="off" placeholder="粘贴新的 API Key" />
           </label>
           <label class="field" id="adminImageEndpointField">
-            <span>图片地址</span>
-            <input id="adminImageEndpointInput" type="url" autocomplete="off" placeholder="图片生成接口地址" />
+            <span>图片 Base URL / 地址</span>
+            <input id="adminImageEndpointInput" type="text" autocomplete="off" placeholder="https://aokapi.com/v1beta/models/{model}:generateContent/" />
+          </label>
+          <label class="field" id="adminImageModelField">
+            <span>图片模型</span>
+            <input id="adminImageModelInput" type="text" autocomplete="off" placeholder="gemini-2.5-flash-image" />
+          </label>
+          <label class="field" id="adminVideoModelField">
+            <span>视频模型</span>
+            <input id="adminVideoModelInput" type="text" autocomplete="off" placeholder="例如：veo-3-fast" />
           </label>
           <label class="field" id="adminVideoEndpointPrimaryField">
             <span>视频地址 1</span>
@@ -211,6 +219,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./admin.js?v=20260610-media-config" defer></script>
+    <script src="./admin.js?v=20260610-model-fields" defer></script>
   </body>
 </html>
