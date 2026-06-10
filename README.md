@@ -1,10 +1,48 @@
 # AI智能图片编辑器
 
-一个面向电商卖家的 AI 商品图片生成、整套详情页套图生成、二次编辑与素材管理原型。
+一个面向电商卖家的 AI 商品图片生成工具，支持 C 端注册登录、用户自配模型 API Key、商品详情页套图、单图生成、二次编辑、本地素材管理，以及配套 B 端用户和生成日志管理。
 
-## 使用方式
+## 启动
 
-直接用浏览器打开 `index.html`。页面会把 API Key、接口地址、模型名保存到本地浏览器，素材库使用 IndexedDB 本地存储。
+```bash
+python3 server.py
+```
+
+打开 C 端：
+
+```text
+http://localhost:8787
+```
+
+打开 B 端：
+
+```text
+http://localhost:8787/admin.html
+```
+
+默认 B 端账号：
+
+```text
+admin@example.com / change-me
+```
+
+生产部署时请设置：
+
+```bash
+ADMIN_EMAIL="你的管理员邮箱"
+ADMIN_PASSWORD="强密码"
+SESSION_DAYS=14
+```
+
+## 产品形态
+
+- C 端用户必须注册 / 登录后才能配置 API Key、接口地址、模型和尺寸。
+- 每个用户配置自己的模型 API Key 后生成图片。
+- 工具不提供套餐、充值或配额扣减。
+- 后端保存用户信息、会话、模型配置、生成调用日志和用量统计。
+- B 端可以查看所有注册用户、禁用/启用用户、查看所有生成记录的入参/出参日志、查看调用次数和 token 数，并配置默认模型。
+
+## 默认模型
 
 默认接口：
 
@@ -12,101 +50,34 @@
 https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/
 ```
 
-默认请求体：
+默认模型：
 
-```json
-{
-  "contents": [
-    {
-      "role": "user",
-      "parts": [
-        {
-          "text": "你的提示词"
-        },
-        {
-          "inlineData": {
-            "data": "BASE64_IMG",
-            "mimeType": "image/png"
-          }
-        }
-      ]
-    }
-  ],
-  "generationConfig": {
-    "responseModalities": ["TEXT", "IMAGE"],
-    "imageConfig": {
-      "aspectRatio": "1:1",
-      "imageSize": "1K"
-    }
-  }
-}
+```bash
+gemini-2.5-flash-image
 ```
 
 上传参考图后，工具会按 AOKAPI NanoBanana / Gemini 图生图格式发送：提示词放在 `contents[0].parts[].text`，参考图放在 `contents[0].parts[].inlineData`，返回图片从 `candidates[].content.parts[].inlineData.data` 解析。若切回旧版 `images/generations` 接口，工具仍保留旧字段探测逻辑作为兼容兜底。
 
-## 云端 SaaS 模式
+## B 端能力
 
-现在也可以启动后端，把这个工具部署给多人使用：
+- 查看所有用户姓名、邮箱、注册时间、最近登录时间和 API Key 配置状态
+- 查看每个用户调用次数、生成图片数、输入 token、输出 token、总 token
+- 禁用或启用用户；禁用后用户会话失效，前端生成前会被拦截
+- 查看最近生成记录，包括用户、模型、状态、耗时、token 和脱敏后的请求/响应 JSON
+- 配置默认接口地址、默认模型和用量说明
 
-```bash
-cd image-editor-tool
-python3 server.py
-```
-
-打开：
-
-```text
-http://localhost:8787
-```
-
-生产部署时设置环境变量：
-
-```bash
-IMAGE_API_KEY="你的模型 API Key"
-IMAGE_API_ENDPOINT="https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
-IMAGE_API_MODEL="gemini-2.5-flash-image"
-IMAGE_STUDIO_STORAGE="/data/image-studio"
-IMAGE_STUDIO_DB="/data/image-studio/image_studio.sqlite"
-CORS_ORIGIN="https://你的域名"
-PORT=8787
-```
-
-Docker：
+## Docker
 
 ```bash
 docker build -t image-editor-tool .
-docker run -p 8787:8787 --env-file .env -v "$PWD/storage:/data/image-studio" image-editor-tool
+docker run -p 8787:8787 -e ADMIN_EMAIL=admin@example.com -e ADMIN_PASSWORD=change-me image-editor-tool
 ```
 
-云端模式包含：
+## 数据存储
 
-- 多用户注册、登录、退出登录
-- 服务端 Session Token
-- SQLite 数据库
-- 服务端保存模型 API Key，前端不暴露供应商密钥
-- 云端素材库和文件夹
-- 生成记录
-- 生成配额扣减
-- 配额套餐和 mock 计费订单
-- 本地文件对象存储，路径在 `storage/media`
-
-如果没有设置 `IMAGE_API_KEY`，后端会返回 mock 图片，方便测试账号、素材库、生成记录和配额流程。正式部署必须配置 `IMAGE_API_KEY`。
-
-## 数据库表
-
-后端会自动创建 SQLite 表：
-
-- `users`：账号、密码哈希、套餐、剩余配额
-- `sessions`：登录 token
-- `folders`：用户素材文件夹
-- `assets`：云端素材
-- `generations`：生成任务记录
-- `generation_images`：生成结果图片
-- `quota_ledger`：配额流水
-- `plans`：可购买套餐
-- `billing_orders`：计费订单
-
-真实支付接入点在 `POST /api/billing/checkout` 和支付成功后的订单授信逻辑；当前默认 `MOCK_BILLING_AUTOGRANT=1`，购买套餐会立即增加配额。
+- SQLite 数据库默认在 `storage/image_studio.sqlite`
+- C 端本地素材库仍使用浏览器 IndexedDB
+- 生成日志会截断图片 base64 和超大字段，不记录用户 API Key
 
 ## 功能
 
@@ -124,18 +95,10 @@ docker run -p 8787:8787 --env-file .env -v "$PWD/storage:/data/image-studio" ima
 - 所有图片生成请求自动附加商品主体 1:1 还原原图的强约束
 - 上传参考图会参与单图、套图和二次编辑请求，提高商品主体一致性
 - 配置弹窗可测试入参图片是否生效，并展示带图结果与无图对照
-- API Key、接口地址、模型名后台保存
-- 生成图保存到素材库
+- 生成图保存到本地素材库
 - 生成结果可单张删除、保存或继续二次编辑
 - 历史文件夹选择或新建文件夹
 - 默认时间戳命名，可改图片名称
 - 生成图二次编辑与再次保存
 - 素材库文件夹和文件快速搜索
-- 云端账号体系
-- 云端素材库
-- 生成记录
-- 配额扣减和套餐充值
-
-## 说明
-
-当前二次编辑基于 AOKAPI Gemini 图生图 JSON 接口实现：它会把当前基图转成 `inlineData`，再把上一版提示词和本次微调要求组合后提交给 `generateContent`。这已经是图生图路径，不再只是提示词复刻。
+- AI 视频入口预留

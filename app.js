@@ -11,8 +11,7 @@ const DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-imag
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_FOLDER_NAME = "未分类素材";
 const USER_TEMPLATES_KEY = "imageStudio.userTemplates";
-const CLOUD_TOKEN_KEY = "imageStudio.cloudToken";
-const CLOUD_API_BASE_KEY = "imageStudio.apiBase";
+const AUTH_TOKEN_KEY = "imageStudio.authToken";
 const IMAGE_SIZE_MULTIPLE = 16;
 const REFERENCE_STRATEGY_KEY = "imageStudio.referenceStrategy";
 const STRICT_PRODUCT_REFERENCE_RULE = [
@@ -80,6 +79,55 @@ const templates = [
       "电商详情页对比模块视觉，【产品名称/品类】与简洁功能图块并列，突出规格差异、材质优势、使用体验和适用场景，版式清晰，留出后期排版空间，不添加未经验证的认证或夸张承诺。"
   },
   {
+    id: "aplus-brand-story",
+    category: "aplus",
+    title: "A+ 品牌故事横幅",
+    prompt:
+      "Amazon A+ Content 品牌故事横幅，为【产品名称/品类】生成横版增强图片：产品与品牌使用场景融合，画面一侧保留自定义标题和品牌故事文案安全区，真实商业摄影，高级可信，不生成真实可读文字，不出现 Amazon 标志、排名、认证、折扣或绝对化承诺。"
+  },
+  {
+    id: "aplus-lifestyle",
+    category: "aplus",
+    title: "A+ 生活方式模块",
+    prompt:
+      "Amazon A+ 生活方式模块视觉，【产品名称/品类】在目标用户真实使用场景中清晰可见，强调场景价值和情绪代入，产品外观准确，背景整洁，适合后期叠加短文案；不夸大效果，不生成平台标识和虚构认证。"
+  },
+  {
+    id: "aplus-benefit-grid",
+    category: "aplus",
+    title: "A+ 三栏卖点图",
+    prompt:
+      "Amazon A+ 图文模块，为【产品名称/品类】生成三栏或四栏核心卖点视觉：每个区域对应一个功能、材质、使用场景或配件价值，布局清晰，留出自定义文本位置，少文字或无文字，适合后期排版。"
+  },
+  {
+    id: "aplus-hotspot-detail",
+    category: "aplus",
+    title: "A+ 热点细节图",
+    prompt:
+      "Amazon A+ 热点/细节模块视觉，【产品名称/品类】以近景特写展示关键结构、材质、接口、纹理或配件，周围保留 3-5 个热点标注安全区，产品真实清晰，不添加未经验证的技术指标或认证章。"
+  },
+  {
+    id: "aplus-comparison-chart",
+    category: "aplus",
+    title: "A+ 对比图模块",
+    prompt:
+      "Amazon A+ 可购买对比图模块背景，为【产品名称/品类】生成清晰的产品对比视觉：适合展示同系列规格、颜色、套装或适用场景差异，预留表格和文字区域，不写具体竞品名，不生成虚假排名、最佳、第一等绝对化表达。"
+  },
+  {
+    id: "aplus-carousel-series",
+    category: "aplus",
+    title: "A+ 轮播组图",
+    prompt:
+      "Amazon A+ 图片轮播模块中的单张视觉，【产品名称/品类】保持统一品牌风格，画面聚焦一个清晰主题：场景、细节、使用步骤或购买理由之一；构图模块化，留白稳定，适合与其他轮播图组成一致套系。"
+  },
+  {
+    id: "aplus-qa-trust",
+    category: "aplus",
+    title: "A+ 问答信任图",
+    prompt:
+      "Amazon A+ 问答/信任模块视觉，为【产品名称/品类】生成使用、清洁、安装、维护或包装说明场景，画面清楚可信，留出 Q&A 或说明文案区域；不出现保修承诺、官方认证、医学/安全功效等未经确认信息。"
+  },
+  {
     id: "season-gift",
     category: "season",
     title: "礼品季",
@@ -107,6 +155,76 @@ const quickEdits = [
 ];
 
 const suitePresets = {
+  "amazon-aplus": {
+    title: "Amazon A+ 内容套图",
+    folder: "Amazon A+内容套图",
+    shots: [
+      {
+        id: "aplus-hero",
+        name: "01 A+ 首屏品牌横幅",
+        size: "1792x1024",
+        description: "品牌故事、增强图片、文案安全区",
+        prompt:
+          "生成 Amazon A+ Content 首屏品牌故事横幅：横版增强图片，商品作为视觉主角，结合品牌调性的生活方式场景或材质氛围，左侧或右侧保留大面积自定义标题与品牌故事文案安全区。画面高级可信，不生成真实可读文字、不出现 Amazon 标志、平台 UI、排名、认证章、折扣数字或绝对化承诺。"
+      },
+      {
+        id: "aplus-brand-scene",
+        name: "02 品牌使命场景图",
+        size: "1792x1024",
+        description: "品牌价值与目标用户生活场景",
+        prompt:
+          "生成 Amazon A+ 品牌使命/场景故事图：商品出现在目标用户真实生活或工作场景中，体现品牌价值、使用氛围和场景痛点，产品清晰可辨，人物或道具只辅助说明使用方式，预留短文案区域，不夸大功效。"
+      },
+      {
+        id: "aplus-benefit-module",
+        name: "03 三栏核心卖点模块",
+        size: "1792x1024",
+        description: "3-4 个模块化卖点和图文位置",
+        prompt:
+          "生成 Amazon A+ 图文模块视觉：三栏或四栏模块化布局，每栏对应一个核心卖点、材质、功能、配件或使用场景，商品或局部细节在每个模块中保持一致，留出后期自定义文本位置，版式清楚、少文字或无文字。"
+      },
+      {
+        id: "aplus-lifestyle",
+        name: "04 生活方式使用图",
+        size: "1024x1024",
+        description: "真实使用场景和情绪代入",
+        prompt:
+          "生成 Amazon A+ 生活方式模块图：目标用户自然使用商品，产品处于视觉中心附近且细节可辨，环境符合品类和购买人群，光线真实，强调使用场景与购买理由，不生成虚假前后对比或夸张效果。"
+      },
+      {
+        id: "aplus-hotspot-detail",
+        name: "05 热点细节特写",
+        size: "1024x1024",
+        description: "材质、结构、接口、热点留白",
+        prompt:
+          "生成 Amazon A+ 热点/细节模块图：近景展示商品关键结构、材质、接口、纹理、包装或配件细节，周围预留 3-5 个热点标注安全区，背景干净，细节真实，不添加未经验证的技术参数、认证或图标。"
+      },
+      {
+        id: "aplus-howto-care",
+        name: "06 使用步骤/维护图",
+        size: "1792x1024",
+        description: "步骤说明、安装清洁或维护",
+        prompt:
+          "生成 Amazon A+ 使用步骤、安装、清洁或维护说明模块：用 3-4 个清晰画面区块展示关键流程，手部互动自然，商品主体 1:1 一致，每个步骤预留文案空间，不生成真实可读文字或未经确认的保修承诺。"
+      },
+      {
+        id: "aplus-comparison",
+        name: "07 可购买对比图模块",
+        size: "1792x1024",
+        description: "同系列规格/颜色/套装对比",
+        prompt:
+          "生成 Amazon A+ 可购买对比图模块背景：适合展示同系列商品、颜色、规格、套装或适用场景差异，保留清晰表格和产品缩略图区域，视觉中立可信，不写竞品名，不生成最佳、第一、官方认证、销量排名等不可验证内容。"
+      },
+      {
+        id: "aplus-qa-finish",
+        name: "08 Q&A 信任收尾图",
+        size: "1792x1024",
+        description: "问答、包装、适配、信任信息",
+        prompt:
+          "生成 Amazon A+ Q&A/信任收尾模块视觉：展示商品、包装、配件、适配场景或常见问题说明氛围，画面稳定干净，保留多个问答或说明文案区域，强调真实可理解的信息结构，不出现平台标识、医学/安全功效、保修承诺或认证章。"
+      }
+    ]
+  },
   amazon: {
     title: "Amazon 详情页套图",
     folder: "Amazon详情页套图",
@@ -246,13 +364,10 @@ const state = {
   busy: false,
   referenceFallbackNotice: "",
   suiteShotSettings: {},
-  cloud: {
+  lastRequestPayload: null,
+  auth: {
     token: "",
-    user: null,
-    counts: null,
-    plans: [],
-    generations: [],
-    syncing: false
+    user: null
   }
 };
 
@@ -263,7 +378,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
   bindEvents();
   loadSettings();
-  loadCloudSession();
+  loadAuthSession();
   loadUserTemplates();
   renderSuitePlan();
   renderSuiteReference();
@@ -271,13 +386,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderQuickEdits();
   state.db = await openDb();
   await ensureDefaultFolder();
-  if (hasCloudSession()) {
-    await refreshCloudState({ silent: true });
-  } else {
-    await refreshLibrary();
-  }
+  await refreshLibrary();
+  await bootstrapAuth();
   updateConnectionState();
-  renderAccountView();
   setDefaultAutoSaveName();
 });
 
@@ -285,10 +396,11 @@ function cacheElements() {
   Object.assign(els, {
     navItems: document.querySelectorAll(".nav-item"),
     views: document.querySelectorAll(".view"),
-    cloudAccountCard: document.getElementById("cloudAccountCard"),
-    cloudAccountTitle: document.getElementById("cloudAccountTitle"),
-    cloudQuotaText: document.getElementById("cloudQuotaText"),
-    cloudSyncText: document.getElementById("cloudSyncText"),
+    accountTitle: document.getElementById("accountTitle"),
+    accountNameText: document.getElementById("accountNameText"),
+    accountMetaText: document.getElementById("accountMetaText"),
+    openAuthBtn: document.getElementById("openAuthBtn"),
+    logoutBtn: document.getElementById("logoutBtn"),
     connectionState: document.getElementById("connectionState"),
     singleConnectionState: document.getElementById("singleConnectionState"),
     folderCount: document.getElementById("folderCount"),
@@ -317,7 +429,6 @@ function cacheElements() {
     countInput: document.getElementById("countInput"),
     sizeInput: document.getElementById("sizeInput"),
     apiKeyInput: document.getElementById("apiKeyInput"),
-    apiBaseInput: document.getElementById("apiBaseInput"),
     endpointInput: document.getElementById("endpointInput"),
     modelInput: document.getElementById("modelInput"),
     testReferenceBtn: document.getElementById("testReferenceBtn"),
@@ -362,24 +473,12 @@ function cacheElements() {
     settingsModal: document.getElementById("settingsModal"),
     closeSettingsModalBtn: document.getElementById("closeSettingsModalBtn"),
     cancelSettingsBtn: document.getElementById("cancelSettingsBtn"),
-    cloudNameInput: document.getElementById("cloudNameInput"),
-    cloudEmailInput: document.getElementById("cloudEmailInput"),
-    cloudPasswordInput: document.getElementById("cloudPasswordInput"),
+    authModal: document.getElementById("authModal"),
+    authNameInput: document.getElementById("authNameInput"),
+    authEmailInput: document.getElementById("authEmailInput"),
+    authPasswordInput: document.getElementById("authPasswordInput"),
     loginBtn: document.getElementById("loginBtn"),
     registerBtn: document.getElementById("registerBtn"),
-    logoutBtn: document.getElementById("logoutBtn"),
-    refreshCloudBtn: document.getElementById("refreshCloudBtn"),
-    authPanel: document.getElementById("authPanel"),
-    cloudConsolePanel: document.getElementById("cloudConsolePanel"),
-    accountStatusText: document.getElementById("accountStatusText"),
-    accountQuotaValue: document.getElementById("accountQuotaValue"),
-    accountPlanValue: document.getElementById("accountPlanValue"),
-    accountAssetValue: document.getElementById("accountAssetValue"),
-    accountGenerationValue: document.getElementById("accountGenerationValue"),
-    accountEmailText: document.getElementById("accountEmailText"),
-    accountCloudBaseText: document.getElementById("accountCloudBaseText"),
-    planGrid: document.getElementById("planGrid"),
-    generationHistory: document.getElementById("generationHistory"),
     toast: document.getElementById("toast")
   });
 }
@@ -393,11 +492,10 @@ function bindEvents() {
   els.saveTemplateBtn.addEventListener("click", saveCurrentPromptTemplate);
   els.connectionState.addEventListener("click", openSettingsModal);
   els.singleConnectionState.addEventListener("click", openSettingsModal);
-  els.cloudAccountCard.addEventListener("click", () => switchView("account"));
-  els.loginBtn.addEventListener("click", () => handleCloudAuth("login"));
-  els.registerBtn.addEventListener("click", () => handleCloudAuth("register"));
-  els.logoutBtn.addEventListener("click", handleCloudLogout);
-  els.refreshCloudBtn.addEventListener("click", () => refreshCloudState({ silent: false }));
+  els.openAuthBtn.addEventListener("click", () => openAuthModal({ locked: false }));
+  els.loginBtn.addEventListener("click", () => handleAuth("login"));
+  els.registerBtn.addEventListener("click", () => handleAuth("register"));
+  els.logoutBtn.addEventListener("click", handleLogout);
   els.suitePresetInput.addEventListener("change", () => {
     resetSuiteShotSettings();
     state.suiteGenerated = [];
@@ -465,10 +563,20 @@ function bindEvents() {
   els.settingsModal.addEventListener("click", (event) => {
     if (event.target === els.settingsModal) closeSettingsModal();
   });
+  els.authModal.addEventListener("click", (event) => {
+    if (event.target === els.authModal && els.authModal.dataset.locked !== "true") closeAuthModal();
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && els.saveModal.classList.contains("active")) closeSaveModal();
     if (event.key === "Escape" && els.settingsModal.classList.contains("active")) closeSettingsModal();
+    if (
+      event.key === "Escape" &&
+      els.authModal.classList.contains("active") &&
+      els.authModal.dataset.locked !== "true"
+    ) {
+      closeAuthModal();
+    }
   });
 }
 
@@ -481,7 +589,196 @@ function switchView(viewName) {
   });
   els.views.forEach((view) => view.classList.toggle("active", view.id === `view-${viewName}`));
   if (viewName === "library") renderLibrary();
-  if (viewName === "account") renderAccountView();
+}
+
+function loadAuthSession() {
+  state.auth.token = localStorage.getItem(AUTH_TOKEN_KEY) || "";
+}
+
+function hasAuthSession() {
+  return Boolean(state.auth.token && state.auth.user);
+}
+
+function collectUserSource() {
+  const params = new URLSearchParams(window.location.search);
+  const sourceParam = params.get("source") || params.get("from") || "";
+  const utmSource = params.get("utm_source") || sourceParam;
+  const referrer = document.referrer || "";
+  let source = utmSource || sourceParam;
+  if (!source && referrer) {
+    try {
+      source = new URL(referrer).hostname || "referrer";
+    } catch {
+      source = "referrer";
+    }
+  }
+  return {
+    source: source || "direct",
+    referrer,
+    utmSource,
+    utmMedium: params.get("utm_medium") || "",
+    utmCampaign: params.get("utm_campaign") || "",
+    sourcePath: `${window.location.pathname}${window.location.search}`
+  };
+}
+
+async function bootstrapAuth() {
+  if (!state.auth.token) {
+    renderAuthState();
+    openAuthModal({ locked: true });
+    return;
+  }
+  try {
+    const payload = await apiFetch("/me");
+    state.auth.user = payload.user;
+    await loadAccountSettings();
+    closeAuthModal();
+  } catch (error) {
+    clearAuthSession();
+    showToast(error.message || "请重新登录", true);
+    openAuthModal({ locked: true });
+  } finally {
+    renderAuthState();
+  }
+}
+
+async function apiFetch(path, options = {}) {
+  const response = await fetch(`/api${path}`, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+      ...(state.auth.token ? { Authorization: `Bearer ${state.auth.token}` } : {})
+    }
+  });
+  const text = await response.text();
+  let payload = null;
+  try {
+    payload = text ? JSON.parse(text) : null;
+  } catch {
+    payload = { error: text };
+  }
+  if (!response.ok) {
+    if (response.status === 401 || response.status === 403) {
+      clearAuthSession();
+      renderAuthState();
+      openAuthModal({ locked: true });
+    }
+    const message = payload?.error || payload?.message || response.statusText || "请求失败";
+    if (response.status === 404 && message === "接口不存在" && path === "/image-feedback") {
+      throw new Error(portMismatchMessage());
+    }
+    throw new Error(message);
+  }
+  return payload || {};
+}
+
+function portMismatchMessage() {
+  const currentPort = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
+  if (currentPort === "8787") {
+    return "当前页面连接的是旧的 8787 服务；请打开 http://localhost:8788/ 使用新服务，或先执行 kill 48038 后重新启动 8787。";
+  }
+  return "点踩接口未在当前后端生效；请重启 server.py 后再试。";
+}
+
+async function handleAuth(mode) {
+  const email = els.authEmailInput.value.trim();
+  const password = els.authPasswordInput.value;
+  const name = els.authNameInput.value.trim();
+  if (!email || !password) {
+    showToast("请输入邮箱和密码", true);
+    return;
+  }
+  if (mode === "register" && password.length < 8) {
+    showToast("注册密码至少 8 位", true);
+    return;
+  }
+  const button = mode === "register" ? els.registerBtn : els.loginBtn;
+  setBusy(true, button, mode === "register" ? "注册中" : "登录中");
+  try {
+    const requestBody = { email, password, name };
+    if (mode === "register") requestBody.source = collectUserSource();
+    const payload = await apiFetch(mode === "register" ? "/auth/register" : "/auth/login", {
+      method: "POST",
+      body: JSON.stringify(requestBody)
+    });
+    state.auth.token = payload.token;
+    state.auth.user = payload.user;
+    localStorage.setItem(AUTH_TOKEN_KEY, state.auth.token);
+    els.authPasswordInput.value = "";
+    await loadAccountSettings();
+    closeAuthModal();
+    renderAuthState();
+    updateConnectionState();
+    showToast(mode === "register" ? "账号已创建" : "已登录");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(false, button, mode === "register" ? "注册并进入" : "登录");
+  }
+}
+
+async function handleLogout() {
+  try {
+    if (state.auth.token) {
+      await apiFetch("/auth/logout", { method: "POST", body: "{}" });
+    }
+  } catch {
+    // Local cleanup is enough when the server-side session is already gone.
+  }
+  clearAuthSession();
+  renderAuthState();
+  updateConnectionState();
+  openAuthModal({ locked: true });
+  showToast("已退出登录");
+}
+
+function clearAuthSession() {
+  state.auth.token = "";
+  state.auth.user = null;
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+}
+
+function renderAuthState() {
+  const user = state.auth.user;
+  els.accountTitle.textContent = user ? "当前账号" : "未登录";
+  els.accountNameText.textContent = user ? user.name || user.email : "注册后使用工具";
+  els.accountMetaText.textContent = user ? user.email : "登录后配置 API Key 并记录生成日志";
+  els.logoutBtn.style.display = user ? "inline-flex" : "none";
+  els.openAuthBtn.textContent = user ? "切换账号" : "登录 / 注册";
+}
+
+function openAuthModal({ locked = false } = {}) {
+  els.authModal.dataset.locked = locked ? "true" : "false";
+  els.authModal.classList.add("active");
+  els.authModal.setAttribute("aria-hidden", "false");
+  window.setTimeout(() => els.authEmailInput.focus(), 0);
+}
+
+function closeAuthModal() {
+  els.authModal.classList.remove("active");
+  els.authModal.setAttribute("aria-hidden", "true");
+  els.authModal.dataset.locked = "false";
+}
+
+async function loadAccountSettings() {
+  const payload = await apiFetch("/settings");
+  const settings = payload.settings || {};
+  els.apiKeyInput.value = settings.apiKey || "";
+  els.endpointInput.value = settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT;
+  els.modelInput.value = settings.model || settings.defaultModel || DEFAULT_MODEL;
+  const savedSize = normalizeImageSize(settings.size) || "1024x1024";
+  applyDetectedSize(savedSize);
+  els.sizeInput.value = savedSize;
+  updateConnectionState();
+}
+
+async function verifySessionActive() {
+  if (!state.auth.token) throw new Error("请先登录账号");
+  const payload = await apiFetch("/me");
+  state.auth.user = payload.user;
+  renderAuthState();
+  return true;
 }
 
 function selectedSuitePreset() {
@@ -714,21 +1011,27 @@ function buildSuitePrompt(shot, preset, context) {
   const referenceLine = state.suiteReference
     ? `以已上传商品基图「${context.referenceName}」作为唯一商品外观参考，商品主体必须和原图 1:1 还原，不能改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。`
     : "如果没有可见商品基图，则根据商品名称、品类和卖点生成可信的通用电商商品视觉。";
+  const aplusLine = preset.title.includes("A+")
+    ? "Amazon A+ Content 重点：增强图片、自定义文本位置、品牌故事、生活方式场景、热点细节、轮播、问答和可购买对比图；图片只负责可信视觉与排版安全区，真实文字与具体参数留给后期人工排版。"
+    : "";
 
   return [
     `任务：为「${context.productLabel}」生成「${preset.title}」中的「${shot.name}」。`,
     `品类：${context.category}`,
     `核心卖点：${context.sellingPoints}`,
     `视觉风格：${context.styleText}`,
+    aplusLine,
     referenceLine,
     shot.prompt,
     "电商摄影质感，产品真实可信，构图清晰，背景和道具服务于商品表达。",
     "不要添加虚构品牌 Logo、平台商标、未经验证的认证、夸张承诺、不可读乱码文字或误导性效果。"
-  ].join("\n");
+  ]
+    .filter(Boolean)
+    .join("\n");
 }
 
 async function handleGenerateSuite() {
-  if (!ensureApiReady()) return;
+  if (!(await ensureApiReady())) return;
 
   const preset = selectedSuitePreset();
   const context = suiteContext();
@@ -778,7 +1081,8 @@ async function handleGenerateSuite() {
         shotId: shot.id,
         shotName: shot.name,
         model: els.modelInput.value.trim() || DEFAULT_MODEL,
-        size: requestedSize
+        size: requestedSize,
+        request: images[0].request || state.lastRequestPayload
       };
       generated.push(item);
       state.suiteGenerated = generated;
@@ -937,7 +1241,6 @@ function renderQuickEdits() {
 }
 
 function loadSettings() {
-  els.apiBaseInput.value = localStorage.getItem(CLOUD_API_BASE_KEY) || defaultCloudApiBase();
   els.apiKeyInput.value = localStorage.getItem("imageStudio.apiKey") || "";
   const savedEndpoint = localStorage.getItem("imageStudio.endpoint") || "";
   const savedModel = localStorage.getItem("imageStudio.model") || "";
@@ -965,16 +1268,38 @@ function loadSettings() {
   }
 }
 
-function saveSettings() {
-  localStorage.setItem(CLOUD_API_BASE_KEY, normalizeApiBase(els.apiBaseInput.value) || defaultCloudApiBase());
-  localStorage.setItem("imageStudio.apiKey", els.apiKeyInput.value.trim());
+async function saveSettings() {
+  if (!hasAuthSession()) {
+    openAuthModal({ locked: true });
+    showToast("请先登录账号", true);
+    return;
+  }
+  setBusy(true, els.saveApiBtn, "保存中");
+  let saved = false;
+  try {
+    await apiFetch("/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        apiKey: els.apiKeyInput.value.trim(),
+        endpoint: els.endpointInput.value.trim() || DEFAULT_ENDPOINT,
+        model: els.modelInput.value.trim() || DEFAULT_MODEL,
+        size: els.sizeInput.value
+      })
+    });
+    saved = true;
+    showToast("配置已保存");
+    closeSettingsModal();
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(false, els.saveApiBtn, "保存配置");
+  }
+  if (!saved) return;
+  localStorage.removeItem("imageStudio.apiKey");
   localStorage.setItem("imageStudio.endpoint", els.endpointInput.value.trim() || DEFAULT_ENDPOINT);
   localStorage.setItem("imageStudio.model", els.modelInput.value.trim() || DEFAULT_MODEL);
   localStorage.setItem("imageStudio.size", els.sizeInput.value);
   updateConnectionState();
-  renderAccountView();
-  closeSettingsModal();
-  showToast("配置已保存");
 }
 
 function isLegacyDefaultEndpoint(value) {
@@ -987,18 +1312,16 @@ function isLegacyDefaultModel(value) {
 }
 
 function updateConnectionState() {
-  renderCloudRail();
-  if (hasCloudSession() && state.cloud.user) {
-    const text = `云端已登录 · ${state.cloud.user.quotaBalance} 点`;
+  if (!hasAuthSession()) {
     [els.connectionState, els.singleConnectionState].forEach((button) => {
       if (!button) return;
-      button.textContent = text;
-      button.classList.add("ready");
+      button.textContent = "请先登录";
+      button.classList.remove("ready");
     });
     return;
   }
   const hasKey = Boolean(els.apiKeyInput.value.trim());
-  const text = hasKey ? "本地 API 已就绪" : "登录/配置";
+  const text = hasKey ? "API 已就绪" : "配置 API Key";
   [els.connectionState, els.singleConnectionState].forEach((button) => {
     if (!button) return;
     button.textContent = text;
@@ -1010,15 +1333,25 @@ function toggleApiKey() {
   els.apiKeyInput.type = els.apiKeyInput.type === "password" ? "text" : "password";
 }
 
-function ensureApiReady() {
-  if (hasCloudSession()) return true;
+async function ensureApiReady() {
+  if (!hasAuthSession()) {
+    openAuthModal({ locked: true });
+    showToast("请先登录账号", true);
+    return false;
+  }
+  await verifySessionActive();
   if (els.apiKeyInput.value.trim()) return true;
-  switchView("account");
-  showToast("请先登录云端账号，或在设置中填写本地 API Key", true);
+  openSettingsModal();
+  showToast("请先填写 API Key", true);
   return false;
 }
 
 function openSettingsModal() {
+  if (!hasAuthSession()) {
+    openAuthModal({ locked: true });
+    showToast("请先登录账号", true);
+    return;
+  }
   els.settingsModal.classList.add("active");
   els.settingsModal.setAttribute("aria-hidden", "false");
   window.setTimeout(() => els.apiKeyInput.focus(), 0);
@@ -1029,277 +1362,10 @@ function closeSettingsModal() {
   els.settingsModal.setAttribute("aria-hidden", "true");
 }
 
-function defaultCloudApiBase() {
-  if (window.location.protocol === "file:") return "http://localhost:8787";
-  return window.location.origin;
-}
-
-function normalizeApiBase(value) {
-  return String(value || "").trim().replace(/\/+$/, "");
-}
-
-function cloudApiBase() {
-  return normalizeApiBase(els.apiBaseInput?.value || localStorage.getItem(CLOUD_API_BASE_KEY) || defaultCloudApiBase());
-}
-
-function loadCloudSession() {
-  state.cloud.token = localStorage.getItem(CLOUD_TOKEN_KEY) || "";
-}
-
-function hasCloudSession() {
-  return Boolean(state.cloud.token);
-}
-
-async function apiFetch(path, options = {}) {
-  const response = await fetch(`${cloudApiBase()}/api${path}`, {
-    ...options,
-    headers: {
-      "Content-Type": "application/json",
-      ...(options.headers || {}),
-      ...(state.cloud.token ? { Authorization: `Bearer ${state.cloud.token}` } : {})
-    }
-  });
-  const text = await response.text();
-  let payload = null;
-  try {
-    payload = text ? JSON.parse(text) : null;
-  } catch {
-    payload = { error: text };
-  }
-  if (!response.ok) {
-    if (response.status === 401) clearCloudSession();
-    throw new Error(payload?.error || payload?.message || response.statusText || "云端请求失败");
-  }
-  return payload || {};
-}
-
-async function handleCloudAuth(mode) {
-  const email = els.cloudEmailInput.value.trim();
-  const password = els.cloudPasswordInput.value;
-  const name = els.cloudNameInput.value.trim();
-  if (!email || !password) {
-    showToast("请输入邮箱和密码", true);
-    return;
-  }
-  if (mode === "register" && password.length < 8) {
-    showToast("注册密码至少 8 位", true);
-    return;
-  }
-
-  const button = mode === "register" ? els.registerBtn : els.loginBtn;
-  setBusy(true, button, mode === "register" ? "注册中" : "登录中");
-  try {
-    const payload = await apiFetch(mode === "register" ? "/auth/register" : "/auth/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password, name })
-    });
-    state.cloud.token = payload.token;
-    state.cloud.user = payload.user;
-    localStorage.setItem(CLOUD_TOKEN_KEY, state.cloud.token);
-    localStorage.setItem(CLOUD_API_BASE_KEY, cloudApiBase());
-    els.cloudPasswordInput.value = "";
-    await refreshCloudState({ silent: true });
-    switchView("suite");
-    showToast(mode === "register" ? "云端账号已创建" : "已登录云端");
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    setBusy(false, button, mode === "register" ? "注册新账号" : "登录");
-  }
-}
-
-async function handleCloudLogout() {
-  if (!hasCloudSession()) {
-    showToast("当前未登录");
-    return;
-  }
-  try {
-    await apiFetch("/auth/logout", { method: "POST", body: "{}" });
-  } catch {
-    // Token may already be expired; local cleanup is still correct.
-  }
-  clearCloudSession();
-  await refreshLibrary();
-  renderAccountView();
-  updateConnectionState();
-  showToast("已退出云端账号");
-}
-
-function clearCloudSession() {
-  state.cloud.token = "";
-  state.cloud.user = null;
-  state.cloud.counts = null;
-  state.cloud.generations = [];
-  localStorage.removeItem(CLOUD_TOKEN_KEY);
-}
-
-async function refreshCloudState({ silent = false } = {}) {
-  if (!hasCloudSession()) {
-    renderAccountView();
-    updateConnectionState();
-    return;
-  }
-  state.cloud.syncing = true;
-  renderCloudRail();
-  try {
-    const [me, folders, assets, generations, plans] = await Promise.all([
-      apiFetch("/me"),
-      apiFetch("/folders"),
-      apiFetch("/assets"),
-      apiFetch("/generations"),
-      apiFetch("/billing/plans")
-    ]);
-    state.cloud.user = me.user;
-    state.cloud.counts = me.counts;
-    state.folders = folders.folders || [];
-    state.assets = assets.assets || [];
-    state.cloud.generations = generations.generations || [];
-    state.cloud.plans = plans.plans || [];
-    populateFolderSelects();
-    renderLibrary();
-    renderAccountView();
-    updateConnectionState();
-    if (!silent) showToast("云端数据已刷新");
-  } catch (error) {
-    if (!silent) showToast(error.message, true);
-    renderAccountView();
-    updateConnectionState();
-  } finally {
-    state.cloud.syncing = false;
-    renderCloudRail();
-  }
-}
-
-function renderCloudRail() {
-  if (!els.cloudAccountTitle) return;
-  if (hasCloudSession() && state.cloud.user) {
-    els.cloudAccountTitle.textContent = state.cloud.user.name || state.cloud.user.email;
-    els.cloudQuotaText.textContent = `${state.cloud.user.quotaBalance} 点生成配额`;
-    els.cloudSyncText.textContent = state.cloud.syncing ? "正在同步云端素材..." : "云端素材库与生成记录已启用";
-    els.cloudAccountCard.classList.add("ready");
-    return;
-  }
-  els.cloudAccountTitle.textContent = hasCloudSession() ? "正在连接云端" : "未登录云端";
-  els.cloudQuotaText.textContent = hasCloudSession() ? "同步中" : "本地素材模式";
-  els.cloudSyncText.textContent = hasCloudSession() ? "正在校验登录状态" : "登录后启用账号、配额和云端记录";
-  els.cloudAccountCard.classList.toggle("ready", hasCloudSession());
-}
-
-function renderAccountView() {
-  const loggedIn = hasCloudSession() && state.cloud.user;
-  els.authPanel.classList.toggle("muted-panel", loggedIn);
-  els.logoutBtn.style.display = loggedIn ? "inline-flex" : "none";
-  els.refreshCloudBtn.disabled = !hasCloudSession();
-  els.accountStatusText.textContent = loggedIn ? "云端在线" : hasCloudSession() ? "连接中" : "未登录";
-  els.accountQuotaValue.textContent = loggedIn ? String(state.cloud.user.quotaBalance) : "--";
-  els.accountPlanValue.textContent = loggedIn ? state.cloud.user.plan : "--";
-  els.accountAssetValue.textContent = loggedIn ? String(state.cloud.counts?.assets ?? state.assets.length) : "--";
-  els.accountGenerationValue.textContent = loggedIn ? String(state.cloud.counts?.generations ?? state.cloud.generations.length) : "--";
-  els.accountEmailText.textContent = loggedIn ? state.cloud.user.email : "登录后会在这里显示账号邮箱";
-  els.accountCloudBaseText.textContent = `后端：${cloudApiBase()}`;
-  renderPlanGrid();
-  renderGenerationHistory();
-  renderCloudRail();
-}
-
-function renderPlanGrid() {
-  if (!state.cloud.plans.length) {
-    els.planGrid.innerHTML = `
-      <div class="empty-copy">
-        <strong>${hasCloudSession() ? "套餐加载中" : "登录后查看套餐"}</strong>
-        <span>云端后端会返回可购买的配额包。</span>
-      </div>
-    `;
-    return;
-  }
-  els.planGrid.innerHTML = state.cloud.plans
-    .map(
-      (plan) => `
-        <article class="plan-card">
-          <div>
-            <strong>${escapeHtml(plan.name)}</strong>
-            <span>${escapeHtml(plan.description)}</span>
-          </div>
-          <div class="plan-meta">
-            <b>${plan.credits}</b>
-            <small>生成点数 · ¥${(plan.priceCents / 100).toFixed(0)}</small>
-          </div>
-          <button class="small-button" type="button" data-action="buy-plan" data-plan-id="${escapeAttr(plan.id)}" ${hasCloudSession() ? "" : "disabled"}>购买配额</button>
-        </article>
-      `
-    )
-    .join("");
-  els.planGrid.querySelectorAll("[data-action='buy-plan']").forEach((button) => {
-    button.addEventListener("click", () => handleBuyPlan(button.dataset.planId));
-  });
-}
-
-async function handleBuyPlan(planId) {
-  if (!hasCloudSession()) {
-    showToast("请先登录云端账号", true);
-    return;
-  }
-  try {
-    const payload = await apiFetch("/billing/checkout", {
-      method: "POST",
-      body: JSON.stringify({ planId })
-    });
-    state.cloud.user = payload.user || state.cloud.user;
-    await refreshCloudState({ silent: true });
-    const paid = payload.order?.status === "paid";
-    showToast(paid ? "配额已到账" : "订单已创建，请接入真实支付回调");
-  } catch (error) {
-    showToast(error.message, true);
-  }
-}
-
-function renderGenerationHistory() {
-  const generations = state.cloud.generations || [];
-  if (!hasCloudSession()) {
-    els.generationHistory.className = "generation-history empty-state";
-    els.generationHistory.innerHTML = `<div class="empty-copy"><strong>未登录云端</strong><span>登录后会显示生成记录、消耗配额和输出图片。</span></div>`;
-    return;
-  }
-  if (!generations.length) {
-    els.generationHistory.className = "generation-history empty-state";
-    els.generationHistory.innerHTML = `<div class="empty-copy"><strong>暂无云端记录</strong><span>登录后生成的图片会记录在这里。</span></div>`;
-    return;
-  }
-  els.generationHistory.className = "generation-history";
-  els.generationHistory.innerHTML = generations
-    .map(
-      (item) => `
-        <article class="history-row">
-          <div class="history-thumb">
-            ${item.images?.[0]?.url ? `<img src="${escapeAttr(item.images[0].url)}" alt="生成记录图片" />` : ""}
-          </div>
-          <div class="history-copy">
-            <strong>${escapeHtml(item.status === "completed" ? `${item.count} 张 · ${item.size}` : item.status)}</strong>
-            <span>${escapeHtml(item.prompt || "")}</span>
-          </div>
-          <div class="history-meta">
-            <b>-${item.creditCost}</b>
-            <small>${formatTime(item.createdAt)}</small>
-          </div>
-        </article>
-      `
-    )
-    .join("");
-}
-
 async function handleTestReferenceSupport() {
-  if (hasCloudSession()) {
-    await handleCloudReferenceSupportTest();
-    return;
-  }
+  if (!(await ensureApiReady())) return;
 
   const apiKey = els.apiKeyInput.value.trim();
-  if (!apiKey) {
-    showToast("请先填写 API Key", true);
-    els.apiKeyInput.focus();
-    return;
-  }
-
   const endpoint = els.endpointInput.value.trim() || DEFAULT_ENDPOINT;
   const model = els.modelInput.value.trim() || DEFAULT_MODEL;
   const reference = firstAvailableReferenceImage() || {
@@ -1375,72 +1441,6 @@ async function handleTestReferenceSupport() {
     localStorage.removeItem(REFERENCE_STRATEGY_KEY);
     renderReferenceProbeError(`未确认支持入参图片：${result.message}`);
     showToast(`未确认支持参考图：${result.message}`, true);
-  } catch (error) {
-    renderReferenceProbeError(error.message);
-    showToast(error.message, true);
-  } finally {
-    setBusy(false, els.testReferenceBtn, "测试入参图片");
-  }
-}
-
-async function handleCloudReferenceSupportTest() {
-  const model = els.modelInput.value.trim() || DEFAULT_MODEL;
-  const reference = firstAvailableReferenceImage() || {
-    name: "参考图探测",
-    size: "1x1",
-    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-  };
-  const references = normalizeReferenceImages([reference]);
-  const usingFallbackReference = !firstAvailableReferenceImage();
-  const probePrompt = withStrictProductReference(
-    withReferenceContext(
-      "入参图片生效测试。请生成一张明亮科技感电商商品图，必须保持随请求提供的参考图商品主体一致，只允许改变背景、光线和构图，不添加文字。",
-      references
-    )
-  );
-  const body = {
-    prompt: probePrompt,
-    count: 1,
-    size: "1024x1024",
-    model,
-    referenceImages: references
-  };
-
-  renderReferenceProbeLoading(reference, usingFallbackReference);
-  setBusy(true, els.testReferenceBtn, "测试中");
-  try {
-    recordRequestPayload(`${cloudApiBase()}/api/generate`, body);
-    const result = await apiFetch("/generate", {
-      method: "POST",
-      body: JSON.stringify(body)
-    });
-    const control = await apiFetch("/generate", {
-      method: "POST",
-      body: JSON.stringify({
-        prompt: withStrictProductReference("无入参图片对照测试。请生成一张明亮科技感电商商品图，不添加文字。"),
-        count: 1,
-        size: "1024x1024",
-        model,
-        referenceImages: []
-      })
-    });
-    if (result.quota && state.cloud.user) state.cloud.user.quotaBalance = control.quota?.balance ?? result.quota.balance;
-    if (result.generation || control.generation) {
-      state.cloud.generations = [control.generation, result.generation, ...state.cloud.generations]
-        .filter(Boolean)
-        .filter((item, index, array) => array.findIndex((entry) => entry.id === item.id) === index)
-        .slice(0, 80);
-    }
-    renderReferenceProbeResult({
-      reference,
-      referenceImage: result.images[0],
-      controlImage: control.images[0],
-      strategy: "cloud /api/generate",
-      usingFallbackReference
-    });
-    renderAccountView();
-    updateConnectionState();
-    showToast("云端入参图片测试已完成");
   } catch (error) {
     renderReferenceProbeError(error.message);
     showToast(error.message, true);
@@ -1592,7 +1592,7 @@ async function handleGenerate() {
     showToast("请先输入提示词", true);
     return;
   }
-  if (!ensureApiReady()) return;
+  if (!(await ensureApiReady())) return;
   const count = clamp(parseInt(els.countInput.value, 10) || 1, 1, 8);
   els.countInput.value = String(count);
 
@@ -1617,7 +1617,8 @@ async function handleGenerate() {
       createdAt: new Date().toISOString(),
       source: "generation",
       model: els.modelInput.value.trim() || DEFAULT_MODEL,
-      size: els.sizeInput.value
+      size: els.sizeInput.value,
+      request: image.request || state.lastRequestPayload
     }));
     renderResults();
     showGenerationToast(`已生成 ${state.generated.length} 张图片，API 调用 ${calls} 次`);
@@ -1640,7 +1641,7 @@ async function handleRefine() {
     showToast("请输入二次编辑提示词", true);
     return;
   }
-  if (!ensureApiReady()) return;
+  if (!(await ensureApiReady())) return;
 
   state.referenceFallbackNotice = "";
   const composedPrompt = [
@@ -1675,7 +1676,8 @@ async function handleRefine() {
       source: "refinement",
       parentId: state.selectedImage.id,
       model: els.modelInput.value.trim() || DEFAULT_MODEL,
-      size: els.sizeInput.value
+      size: els.sizeInput.value,
+      request: images[0].request || state.lastRequestPayload
     };
     renderEditResults([refined]);
     state.selectedImage = refined;
@@ -1715,35 +1717,6 @@ async function requestImages({ prompt, count, size, model, endpoint, apiKey, ref
     size: requestSize
   };
 
-  if (hasCloudSession()) {
-    const cloudBody = {
-      prompt: finalPrompt,
-      count,
-      size: requestSize,
-      model,
-      endpoint: resolvedEndpoint,
-      referenceImages: references
-    };
-    recordRequestPayload(`${cloudApiBase()}/api/generate`, cloudBody);
-    const payload = await apiFetch("/generate", {
-      method: "POST",
-      body: JSON.stringify(cloudBody)
-    });
-    if (payload.quota && state.cloud.user) {
-      state.cloud.user.quotaBalance = payload.quota.balance;
-    }
-    if (payload.generation) {
-      state.cloud.generations = [payload.generation, ...state.cloud.generations.filter((item) => item.id !== payload.generation.id)].slice(0, 80);
-      state.cloud.counts = {
-        ...(state.cloud.counts || {}),
-        generations: (state.cloud.counts?.generations || 0) + 1
-      };
-    }
-    renderAccountView();
-    updateConnectionState();
-    return payload.images || [];
-  }
-
   if (isGeminiImageEndpoint(resolvedEndpoint, model)) {
     const geminiBody = await buildGeminiImageRequestBody({
       prompt: finalPrompt,
@@ -1781,38 +1754,157 @@ async function requestImages({ prompt, count, size, model, endpoint, apiKey, ref
 }
 
 async function postImageRequest(endpoint, apiKey, body) {
+  await verifySessionActive();
   recordRequestPayload(endpoint, body);
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: authorizationHeaderValue(apiKey, endpoint)
-    },
-    body: JSON.stringify(body)
-  });
-
-  const payloadText = await response.text();
+  const requestSnapshot = {
+    endpoint,
+    body: sanitizeRequestPayload(body)
+  };
+  const startedAt = performance.now();
+  let response = null;
   let payload = null;
+  let payloadText = "";
+  let logged = false;
   try {
-    payload = payloadText ? JSON.parse(payloadText) : null;
-  } catch {
-    payload = payloadText;
-  }
+    response = await fetch(endpoint, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: authorizationHeaderValue(apiKey, endpoint)
+      },
+      body: JSON.stringify(body)
+    });
 
-  if (!response.ok) {
-    const message = payload?.error?.message || payload?.message || response.statusText || "接口请求失败";
-    const error = new Error(`API ${response.status}: ${message}`);
-    error.status = response.status;
-    error.apiMessage = message;
+    payloadText = await response.text();
+    try {
+      payload = payloadText ? JSON.parse(payloadText) : null;
+    } catch {
+      payload = payloadText;
+    }
+
+    if (!response.ok) {
+      const message = payload?.error?.message || payload?.message || response.statusText || "接口请求失败";
+      await logGenerationCall({
+        endpoint,
+        body,
+        payload,
+        status: "failed",
+        error: `API ${response.status}: ${message}`,
+        durationMs: Math.round(performance.now() - startedAt)
+      });
+      logged = true;
+      const error = new Error(`API ${response.status}: ${message}`);
+      error.status = response.status;
+      error.apiMessage = message;
+      throw error;
+    }
+
+    const images = extractImageResultsFromPayload(payload);
+
+    if (!images.length) {
+      await logGenerationCall({
+        endpoint,
+        body,
+        payload,
+        status: "failed",
+        error: "接口未返回可识别的图片地址或 b64_json",
+        durationMs: Math.round(performance.now() - startedAt)
+      });
+      logged = true;
+      throw new Error("接口未返回可识别的图片地址或 b64_json");
+    }
+    await logGenerationCall({
+      endpoint,
+      body,
+      payload,
+      images,
+      status: "completed",
+      durationMs: Math.round(performance.now() - startedAt)
+    });
+    return images.map((image) => ({ ...image, request: requestSnapshot }));
+  } catch (error) {
+    if (!logged && response) {
+      await logGenerationCall({
+        endpoint,
+        body,
+        payload: payload || payloadText,
+        status: "failed",
+        error: error.message,
+        durationMs: Math.round(performance.now() - startedAt)
+      });
+    }
     throw error;
   }
+}
 
-  const images = extractImageResultsFromPayload(payload);
-
-  if (!images.length) {
-    throw new Error("接口未返回可识别的图片地址或 b64_json");
+async function logGenerationCall({ endpoint, body, payload, images = [], status, error = "", durationMs = 0 }) {
+  if (!state.auth.token) return;
+  const usage = extractTokenUsage(body, payload);
+  try {
+    await apiFetch("/generation-logs", {
+      method: "POST",
+      body: JSON.stringify({
+        endpoint,
+        model: extractModelFromBody(body),
+        prompt: extractPromptFromBody(body),
+        size: extractSizeFromBody(body),
+        count: extractCountFromBody(body),
+        imageCount: images.length,
+        status,
+        error,
+        requestBody: sanitizeRequestPayload(body),
+        responseBody: sanitizeRequestPayload(payload),
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        totalTokens: usage.totalTokens,
+        durationMs
+      })
+    });
+  } catch {
+    // Logging should not mask the model response/error the user is waiting for.
   }
-  return images;
+}
+
+function extractTokenUsage(body, payload) {
+  const geminiUsage = payload?.usageMetadata || payload?.usage_metadata;
+  const openAiUsage = payload?.usage;
+  const inputTokens =
+    Number(geminiUsage?.promptTokenCount ?? geminiUsage?.prompt_token_count ?? openAiUsage?.prompt_tokens) ||
+    estimateTokens(sanitizeRequestPayload(body));
+  const outputTokens =
+    Number(geminiUsage?.candidatesTokenCount ?? geminiUsage?.candidates_token_count ?? openAiUsage?.completion_tokens) ||
+    estimateTokens(sanitizeRequestPayload(payload));
+  const totalTokens =
+    Number(geminiUsage?.totalTokenCount ?? geminiUsage?.total_token_count ?? openAiUsage?.total_tokens) ||
+    inputTokens + outputTokens;
+  return { inputTokens, outputTokens, totalTokens };
+}
+
+function estimateTokens(value) {
+  const text = typeof value === "string" ? value : JSON.stringify(value || {});
+  return Math.max(0, Math.ceil(text.length / 4));
+}
+
+function extractModelFromBody(body) {
+  return body?.model || els.modelInput?.value || DEFAULT_MODEL;
+}
+
+function extractSizeFromBody(body) {
+  const imageConfig = body?.generationConfig?.imageConfig || body?.generation_config?.image_config;
+  return body?.size || imageConfig?.aspectRatio || imageConfig?.aspect_ratio || els.sizeInput?.value || "";
+}
+
+function extractCountFromBody(body) {
+  return Number(body?.n || body?.count || 1);
+}
+
+function extractPromptFromBody(body) {
+  if (body?.prompt) return String(body.prompt);
+  const parts = body?.contents?.flatMap((content) => content.parts || []) || [];
+  return parts
+    .map((part) => part.text || "")
+    .filter(Boolean)
+    .join("\n");
 }
 
 function resolveImageEndpoint(endpoint, model) {
@@ -2048,8 +2140,13 @@ function stripDataUrlPrefix(value) {
 }
 
 function recordRequestPayload(endpoint, body) {
-  if (!els.requestPayloadPreview || !els.requestPayloadMeta) return;
   const sanitized = sanitizeRequestPayload(body);
+  state.lastRequestPayload = {
+    endpoint,
+    body: sanitized,
+    recordedAt: new Date().toISOString()
+  };
+  if (!els.requestPayloadPreview || !els.requestPayloadMeta) return;
   const strategy = localStorage.getItem(REFERENCE_STRATEGY_KEY);
   const imageFields = findImagePayloadFields(body);
   els.requestPayloadMeta.textContent = [
@@ -2188,9 +2285,15 @@ function renderImageCard(item) {
           <span>${formatTime(item.createdAt)}</span>
         </div>
         <div class="prompt-preview">${escapeHtml(item.prompt || "")}</div>
-        <div class="card-actions three">
+        <div class="card-actions five">
           <button class="small-button" type="button" data-action="save" data-id="${escapeHtml(item.id)}">保存</button>
           <button class="small-button" type="button" data-action="edit" data-id="${escapeHtml(item.id)}">编辑</button>
+          <button class="small-button icon-only feedback-button positive ${item.feedback === "upvoted" ? "is-active" : ""}" type="button" data-action="upvote" data-id="${escapeHtml(item.id)}" aria-label="点赞 ${escapeAttr(item.name)}" title="${item.feedback === "upvoted" ? "已点赞" : "点赞"}" ${item.feedback ? "disabled" : ""}>
+            <svg viewBox="0 0 24 24"><path d="M14 9V4a2 2 0 0 0-2-2L8 9" /><path d="M6 21h10.2a2 2 0 0 0 2-1.4L21 12V9H6z" /><path d="M6 21H3V9h3" /></svg>
+          </button>
+          <button class="small-button icon-only feedback-button negative ${item.feedback === "downvoted" ? "is-active" : ""}" type="button" data-action="downvote" data-id="${escapeHtml(item.id)}" aria-label="点踩 ${escapeAttr(item.name)}" title="${item.feedback === "downvoted" ? "已点踩" : "点踩"}" ${item.feedback ? "disabled" : ""}>
+            <svg viewBox="0 0 24 24"><path d="M10 15v5a2 2 0 0 0 2 2l4-7" /><path d="M18 3H7.8a2 2 0 0 0-2 1.4L3 12v3h15z" /><path d="M18 3h3v12h-3" /></svg>
+          </button>
           <button class="small-button icon-only danger" type="button" data-action="remove-result" data-id="${escapeHtml(item.id)}" aria-label="删除 ${escapeAttr(item.name)}" title="删除">
             <svg viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m10 11 0 6" /><path d="m14 11 0 6" /><path d="M5 6l1 14h12l1-14" /></svg>
           </button>
@@ -2216,9 +2319,97 @@ function bindImageCardActions(container, items) {
       switchView("edit");
     });
   });
+  container.querySelectorAll("[data-action='upvote']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items.find((entry) => entry.id === button.dataset.id);
+      if (item) submitImageFeedback(item, button, "upvote");
+    });
+  });
+  container.querySelectorAll("[data-action='downvote']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const item = items.find((entry) => entry.id === button.dataset.id);
+      if (item) submitImageFeedback(item, button, "downvote");
+    });
+  });
   container.querySelectorAll("[data-action='remove-result']").forEach((button) => {
     button.addEventListener("click", () => removeGeneratedImage(button.dataset.id));
   });
+}
+
+async function submitImageFeedback(item, button, feedbackType) {
+  if (!hasAuthSession()) {
+    openAuthModal({ locked: true });
+    showToast("请先登录后再提交反馈", true);
+    return;
+  }
+  const isUpvote = feedbackType === "upvote";
+  button.disabled = true;
+  button.classList.add("is-active");
+  try {
+    const imageUrl = await feedbackImageUrl(item.url);
+    await apiFetch("/image-feedback", {
+      method: "POST",
+      body: JSON.stringify({
+        feedbackType,
+        imageUrl,
+        imageName: item.name || "",
+        imageSource: item.source || "",
+        prompt: item.prompt || "",
+        model: item.model || "",
+        size: item.size || "",
+        requestBody: item.request || state.lastRequestPayload || {},
+        item: feedbackItemSnapshot(item)
+      })
+    });
+    item.feedback = isUpvote ? "upvoted" : "downvoted";
+    button.setAttribute("title", isUpvote ? "已点赞" : "已点踩");
+    button.closest(".card-actions")?.querySelectorAll("[data-action='upvote'], [data-action='downvote']").forEach((feedbackButton) => {
+      feedbackButton.disabled = true;
+    });
+    showToast(isUpvote ? "已记录点赞反馈" : "已记录点踩反馈");
+  } catch (error) {
+    button.disabled = false;
+    button.classList.remove("is-active");
+    showToast(error.message, true);
+  }
+}
+
+async function feedbackImageUrl(url) {
+  if (!String(url || "").startsWith("data:image/")) return url;
+  return new Promise((resolve) => {
+    const image = new Image();
+    image.onload = () => {
+      const maxSide = 520;
+      const scale = Math.min(1, maxSide / Math.max(image.width, image.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(image.width * scale));
+      canvas.height = Math.max(1, Math.round(image.height * scale));
+      const context = canvas.getContext("2d");
+      if (!context) {
+        resolve(url);
+        return;
+      }
+      context.drawImage(image, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.82));
+    };
+    image.onerror = () => resolve(url);
+    image.src = url;
+  });
+}
+
+function feedbackItemSnapshot(item) {
+  return {
+    id: item.id,
+    name: item.name,
+    source: item.source,
+    suiteId: item.suiteId,
+    shotId: item.shotId,
+    shotName: item.shotName,
+    parentId: item.parentId,
+    model: item.model,
+    size: item.size,
+    createdAt: item.createdAt
+  };
 }
 
 function removeGeneratedImage(id) {
@@ -2311,30 +2502,6 @@ async function confirmSave() {
 }
 
 async function saveAssetWithFolder(item, options) {
-  if (hasCloudSession()) {
-    const payload = await apiFetch("/assets", {
-      method: "POST",
-      body: JSON.stringify({
-        name: options.name || item.name || timestampName(),
-        folderId: options.folderId,
-        newFolderName: options.newFolderName,
-        url: item.url,
-        prompt: item.prompt || "",
-        source: item.source || "",
-        model: item.model || "",
-        size: item.size || "",
-        createdAt: item.createdAt,
-        metadata: {
-          parentId: item.parentId || "",
-          suiteId: item.suiteId || "",
-          shotId: item.shotId || "",
-          shotName: item.shotName || ""
-        }
-      })
-    });
-    return payload.asset;
-  }
-
   const folder = options.newFolderName
     ? await createFolder(options.newFolderName)
     : state.folders.find((entry) => entry.id === options.folderId) || state.folders[0];
@@ -2354,25 +2521,12 @@ async function saveAssetWithFolder(item, options) {
 }
 
 async function refreshLibrary() {
-  if (hasCloudSession()) {
-    await refreshCloudLibrary();
-    return;
-  }
   state.folders = await getAll(STORES.folders);
   state.assets = await getAll(STORES.assets);
   state.folders.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   state.assets.sort((a, b) => (b.savedAt || b.createdAt).localeCompare(a.savedAt || a.createdAt));
   populateFolderSelects();
   renderLibrary();
-}
-
-async function refreshCloudLibrary() {
-  const [folders, assets] = await Promise.all([apiFetch("/folders"), apiFetch("/assets")]);
-  state.folders = folders.folders || [];
-  state.assets = assets.assets || [];
-  populateFolderSelects();
-  renderLibrary();
-  renderAccountView();
 }
 
 function populateFolderSelects() {
@@ -2520,20 +2674,6 @@ async function createFolderFromInput() {
 }
 
 async function createFolder(name) {
-  if (hasCloudSession()) {
-    const payload = await apiFetch("/folders", {
-      method: "POST",
-      body: JSON.stringify({ name })
-    });
-    const folder = payload.folder;
-    if (!state.folders.some((entry) => entry.id === folder.id)) {
-      state.folders.push(folder);
-    }
-    populateFolderSelects();
-    renderLibrary();
-    return folder;
-  }
-
   const existing = state.folders.find((folder) => normalized(folder.name) === normalized(name));
   if (existing) return existing;
   const folder = {
@@ -2559,15 +2699,6 @@ async function renameSelectedAsset() {
 async function renameAsset(asset) {
   const nextName = window.prompt("图片名称", asset.name);
   if (!nextName || !nextName.trim()) return;
-  if (hasCloudSession()) {
-    await apiFetch(`/assets/${encodeURIComponent(asset.id)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ name: nextName.trim(), folderId: asset.folderId })
-    });
-    await refreshLibrary();
-    showToast("图片名称已更新");
-    return;
-  }
   asset.name = nextName.trim();
   await putStore(STORES.assets, asset);
   await refreshLibrary();
@@ -2582,15 +2713,6 @@ async function deleteSelectedAsset() {
   }
   const ok = window.confirm(`删除素材「${asset.name}」？`);
   if (!ok) return;
-  if (hasCloudSession()) {
-    await apiFetch(`/assets/${encodeURIComponent(asset.id)}`, {
-      method: "DELETE"
-    });
-    state.selectedAssetId = null;
-    await refreshLibrary();
-    showToast("素材已删除");
-    return;
-  }
   await deleteStore(STORES.assets, asset.id);
   state.selectedAssetId = null;
   await refreshLibrary();

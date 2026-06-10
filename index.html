@@ -47,18 +47,16 @@
             </span>
             <span>素材库</span>
           </button>
-          <button class="nav-item" type="button" data-view="account">
-            <span class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><path d="M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8Z" /></svg>
-            </span>
-            <span>云端账号</span>
-          </button>
         </nav>
-        <button class="cloud-account-card" id="cloudAccountCard" type="button">
-          <span id="cloudAccountTitle">未登录云端</span>
-          <strong id="cloudQuotaText">本地素材模式</strong>
-          <small id="cloudSyncText">登录后启用账号、配额和云端记录</small>
-        </button>
+        <section class="account-card" aria-label="账号状态">
+          <span id="accountTitle">未登录</span>
+          <strong id="accountNameText">注册后使用工具</strong>
+          <small id="accountMetaText">登录后配置 API Key 并记录生成日志</small>
+          <div class="account-actions">
+            <button class="mini-button ghost-button" id="openAuthBtn" type="button">登录 / 注册</button>
+            <button class="mini-button ghost-button danger" id="logoutBtn" type="button">退出</button>
+          </div>
+        </section>
         <div class="rail-footer">
           <div class="metric">
             <span id="folderCount">0</span>
@@ -123,6 +121,7 @@
                 <label class="field">
                   <span>套图类型</span>
                   <select id="suitePresetInput">
+                    <option value="amazon-aplus">Amazon A+ 内容套图</option>
                     <option value="amazon">Amazon 详情页套图</option>
                     <option value="mall-long">商城详情长图</option>
                     <option value="ads">品牌广告套图</option>
@@ -222,6 +221,7 @@
                       <option value="scene">场景图</option>
                       <option value="infographic">信息图</option>
                       <option value="content">内容图</option>
+                      <option value="aplus">Amazon A+</option>
                       <option value="season">活动图</option>
                     </select>
                   </div>
@@ -392,95 +392,6 @@
           </div>
         </section>
 
-        <section id="view-account" class="view" aria-labelledby="accountTitle">
-          <div class="topbar">
-            <div>
-              <p class="eyebrow">CLOUD CONSOLE</p>
-              <h2 id="accountTitle">云端工作台</h2>
-            </div>
-            <div class="result-actions">
-              <button class="ghost-button" id="refreshCloudBtn" type="button">刷新</button>
-              <button class="ghost-button danger" id="logoutBtn" type="button">退出登录</button>
-            </div>
-          </div>
-
-          <div class="account-layout">
-            <section class="panel auth-panel" id="authPanel" aria-label="账号登录">
-              <div class="panel-header">
-                <h3>账号入口</h3>
-                <span class="mini-badge">Team Ready</span>
-              </div>
-              <div class="auth-grid">
-                <label class="field">
-                  <span>昵称 / 团队名</span>
-                  <input id="cloudNameInput" type="text" autocomplete="name" placeholder="例如：AIECO Studio" />
-                </label>
-                <label class="field">
-                  <span>邮箱</span>
-                  <input id="cloudEmailInput" type="email" autocomplete="email" placeholder="you@example.com" />
-                </label>
-                <label class="field">
-                  <span>密码</span>
-                  <input id="cloudPasswordInput" type="password" autocomplete="current-password" placeholder="至少 8 位" />
-                </label>
-              </div>
-              <div class="auth-actions">
-                <button class="primary-button" id="loginBtn" type="button">登录</button>
-                <button class="ghost-button" id="registerBtn" type="button">注册新账号</button>
-              </div>
-            </section>
-
-            <section class="panel cloud-console-panel" id="cloudConsolePanel" aria-label="账号状态">
-              <div class="panel-header">
-                <h3>账号状态</h3>
-                <span id="accountStatusText" class="muted">未连接</span>
-              </div>
-              <div class="quota-dashboard">
-                <article>
-                  <span>剩余配额</span>
-                  <strong id="accountQuotaValue">--</strong>
-                </article>
-                <article>
-                  <span>当前套餐</span>
-                  <strong id="accountPlanValue">--</strong>
-                </article>
-                <article>
-                  <span>云端素材</span>
-                  <strong id="accountAssetValue">--</strong>
-                </article>
-                <article>
-                  <span>生成记录</span>
-                  <strong id="accountGenerationValue">--</strong>
-                </article>
-              </div>
-              <div class="account-profile">
-                <span id="accountEmailText">登录后会在这里显示账号邮箱</span>
-                <span id="accountCloudBaseText">云端 API 未配置</span>
-              </div>
-            </section>
-
-            <section class="panel plan-panel" aria-label="计费套餐">
-              <div class="panel-header">
-                <h3>配额套餐</h3>
-                <span class="muted">Mock 计费，可替换真实支付回调</span>
-              </div>
-              <div id="planGrid" class="plan-grid"></div>
-            </section>
-
-            <section class="panel history-panel" aria-label="生成记录">
-              <div class="panel-header">
-                <h3>生成记录</h3>
-                <span class="muted">最近 80 条</span>
-              </div>
-              <div id="generationHistory" class="generation-history empty-state">
-                <div class="empty-copy">
-                  <strong>暂无云端记录</strong>
-                  <span>登录后生成的图片会记录在这里。</span>
-                </div>
-              </div>
-            </section>
-          </div>
-        </section>
       </main>
     </div>
 
@@ -517,16 +428,12 @@
     <div class="modal-backdrop" id="settingsModal" aria-hidden="true">
       <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
         <div class="modal-header">
-          <h3 id="settingsModalTitle">后台模型配置</h3>
+          <h3 id="settingsModalTitle">模型配置</h3>
           <button class="icon-button" type="button" id="closeSettingsModalBtn" aria-label="关闭" title="关闭">
             <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
           </button>
         </div>
         <div class="modal-body">
-          <label class="field">
-            <span>云端后端地址</span>
-            <input id="apiBaseInput" type="url" placeholder="例如：http://localhost:8787 或 https://your-domain.com" />
-          </label>
           <label class="field">
             <span>模型 API Key</span>
             <div class="secret-row">
@@ -562,6 +469,39 @@
             <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" /><path d="M17 21v-8H7v8" /><path d="M7 3v5h8" /></svg>
             保存配置
           </button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop auth-backdrop" id="authModal" aria-hidden="true">
+      <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">ACCOUNT REQUIRED</p>
+            <h3 id="authModalTitle">注册或登录后使用</h3>
+          </div>
+        </div>
+        <div class="modal-body">
+          <label class="field">
+            <span>昵称 / 团队名</span>
+            <input id="authNameInput" type="text" autocomplete="name" placeholder="例如：AIECO Studio" />
+          </label>
+          <label class="field">
+            <span>邮箱</span>
+            <input id="authEmailInput" type="email" autocomplete="email" placeholder="you@example.com" />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="至少 8 位" />
+          </label>
+          <div class="auth-note">
+            <strong>账号用于绑定 API Key、模型配置和生成日志。</strong>
+            <span>这里没有充值和配额概念，生成仍使用用户自己的模型 API Key。</span>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-button" id="loginBtn" type="button">登录</button>
+          <button class="primary-button" id="registerBtn" type="button">注册并进入</button>
         </div>
       </div>
     </div>

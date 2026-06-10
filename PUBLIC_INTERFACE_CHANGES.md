@@ -1,46 +1,51 @@
 # Public Interface Changes
 
-## 2026-06-09 - Initial SaaS import
+## 2026-06-10 - Account-gated C端 and B端 admin console
 
-Initial public contract for the AI image editor SaaS prototype.
+The app now requires C端 users to register/login before configuring their own model API Key. A B端 admin page was added for user management, model defaults, and generation input/output logs. There is still no package, recharge, or quota deduction flow.
 
-### HTTP API
+### C端 HTTP API
 
 - `GET /api/health`
 - `POST /api/auth/register`
 - `POST /api/auth/login`
 - `POST /api/auth/logout`
 - `GET /api/me`
-- `GET /api/folders`
-- `POST /api/folders`
-- `GET /api/assets`
-- `POST /api/assets`
-- `PATCH /api/assets/:id`
-- `DELETE /api/assets/:id`
-- `GET /api/generations`
-- `POST /api/generate`
-- `GET /api/billing/plans`
-- `POST /api/billing/checkout`
-- `POST /api/billing/mock-pay/:id`
+- `GET /api/settings`
+- `PUT /api/settings`
+- `POST /api/generation-logs`
+- `POST /api/image-feedback`
+
+### B端 HTTP API
+
+- `POST /api/admin/login`
+- `GET /api/admin/me`
+- `GET /api/admin/summary`
+- `GET /api/admin/users`
+- `PATCH /api/admin/users/:id`
+- `GET /api/admin/logs`
+- `GET /api/admin/feedback`
+- `GET /api/admin/downvotes`
+- `GET /api/admin/model-config`
+- `PUT /api/admin/model-config`
+
+### C端 UI
+
+- Left navigation keeps the reserved `AI视频` entry with a placeholder `view-video` workspace.
 
 ### Environment Variables
 
 - `HOST`
 - `PORT`
-- `IMAGE_API_KEY`
-- `IMAGE_API_ENDPOINT`
-- `IMAGE_API_MODEL`
 - `IMAGE_STUDIO_STORAGE`
 - `IMAGE_STUDIO_DB`
-- `FREE_QUOTA_CREDITS`
-- `CREDITS_PER_IMAGE`
 - `SESSION_DAYS`
-- `CORS_ORIGIN`
-- `MOCK_BILLING_AUTOGRANT`
-- `ALLOW_CLIENT_IMAGE_CONFIG`
+- `ADMIN_EMAIL`
+- `ADMIN_PASSWORD`
 
 ### Storage Contract
 
 - SQLite database defaults to `storage/image_studio.sqlite`.
-- Media files default to `storage/media`.
-- `storage/` is intentionally git-ignored.
+- C端 local folders and image assets remain in browser IndexedDB.
+- User API Keys are stored per registered user and are not exposed on the B端 user table.
+- Generation logs store sanitized request/response JSON plus call count, image count, duration, and token usage.

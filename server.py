@@ -1,75 +1,92 @@
 #!/usr/bin/env python3
-"""Cloud backend for the AI image editor.
-
-Zero third-party dependencies on purpose: this can run locally with Python's
-standard library, but still gives the app real users, SQLite persistence,
-quota accounting, cloud assets, generation history, and a deployable HTTP API.
-"""
+"""Account and admin backend for the AI image editor."""
 
 from __future__ import annotations
 
+from http import HTTPStatus
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import base64
-import datetime as dt
+import errno
 import hashlib
 import hmac
 import json
-import mimetypes
 import os
-import re
+from pathlib import Path
 import secrets
 import sqlite3
-import sys
 import time
-import urllib.error
-import urllib.parse
-import urllib.request
-import uuid
-from http import HTTPStatus
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from pathlib import Path
+from urllib.parse import parse_qs, unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
-STORAGE_DIR = Path(os.environ.get("IMAGE_STUDIO_STORAGE", ROOT / "storage")).resolve()
-DB_PATH = Path(os.environ.get("IMAGE_STUDIO_DB", STORAGE_DIR / "image_studio.sqlite")).resolve()
-MEDIA_ROOT = STORAGE_DIR / "media"
-
-DEFAULT_ENDPOINT = os.environ.get(
-    "IMAGE_API_ENDPOINT", "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
-)
-DEFAULT_MODEL = os.environ.get("IMAGE_API_MODEL", "gemini-2.5-flash-image")
-IMAGE_API_KEY = os.environ.get("IMAGE_API_KEY", "")
-ALLOW_CLIENT_IMAGE_CONFIG = os.environ.get("ALLOW_CLIENT_IMAGE_CONFIG", "").lower() in {"1", "true", "yes"}
-FREE_QUOTA = int(os.environ.get("FREE_QUOTA_CREDITS", "20"))
-CREDITS_PER_IMAGE = int(os.environ.get("CREDITS_PER_IMAGE", "1"))
+STORAGE_DIR = ROOT / os.environ.get("IMAGE_STUDIO_STORAGE", "storage")
+DB_PATH = Path(os.environ.get("IMAGE_STUDIO_DB", str(STORAGE_DIR / "image_studio.sqlite")))
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "14"))
-CORS_ORIGIN = os.environ.get("CORS_ORIGIN", "*")
-MOCK_BILLING_AUTOGRANT = os.environ.get("MOCK_BILLING_AUTOGRANT", "1").lower() in {"1", "true", "yes"}
+ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip().lower()
+ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
+DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
+DEFAULT_MODEL = "gemini-2.5-flash-image"
 
 
 def now_iso() -> str:
-    return dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
-
-
-def parse_iso(value: str) -> dt.datetime:
-    return dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
 
 def make_id(prefix: str) -> str:
-    return f"{prefix}_{uuid.uuid4().hex[:16]}"
+    return f"{prefix}_{secrets.token_urlsafe(12)}"
+
+
+def hash_password(password: str, salt: str | None = None) -> tuple[str, str]:
+    salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt.encode("utf-8"), 120_000)
+    return salt, base64.b64encode(digest).decode("ascii")
+
+
+def verify_password(password: str, salt: str, stored_hash: str) -> bool:
+    _, digest = hash_password(password, salt)
+    return hmac.compare_digest(digest, stored_hash)
 
 
 def connect() -> sqlite3.Connection:
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA foreign_keys = ON")
     return conn
 
 
+def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def ensure_sessions_schema(conn: sqlite3.Connection) -> None:
+    columns = {row["name"]: row for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    user_id = columns.get("user_id")
+    needs_rebuild = (
+        "token" not in columns
+        or "role" not in columns
+        or not user_id
+        or bool(user_id["notnull"])
+    )
+    if needs_rebuild:
+        # Sessions are ephemeral; rebuild legacy tables that cannot store admin sessions.
+        conn.execute("DROP TABLE IF EXISTS sessions")
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+              token TEXT PRIMARY KEY,
+              user_id TEXT,
+              role TEXT NOT NULL DEFAULT 'user',
+              created_at TEXT NOT NULL,
+              expires_at INTEGER NOT NULL
+            )
+            """
+        )
+
+
 def init_db() -> None:
-    STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    MEDIA_ROOT.mkdir(parents=True, exist_ok=True)
     with connect() as conn:
         conn.executescript(
             """
@@ -79,1224 +96,775 @@ def init_db() -> None:
               name TEXT NOT NULL,
               password_salt TEXT NOT NULL,
               password_hash TEXT NOT NULL,
-              plan TEXT NOT NULL DEFAULT 'free',
-              quota_balance INTEGER NOT NULL DEFAULT 0,
-              created_at TEXT NOT NULL
+              disabled INTEGER NOT NULL DEFAULT 0,
+              source TEXT NOT NULL DEFAULT 'direct',
+              referrer TEXT NOT NULL DEFAULT '',
+              utm_source TEXT NOT NULL DEFAULT '',
+              utm_medium TEXT NOT NULL DEFAULT '',
+              utm_campaign TEXT NOT NULL DEFAULT '',
+              source_path TEXT NOT NULL DEFAULT '',
+              created_at TEXT NOT NULL,
+              last_login_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS sessions (
-              token_hash TEXT PRIMARY KEY,
-              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              token TEXT PRIMARY KEY,
+              user_id TEXT,
+              role TEXT NOT NULL DEFAULT 'user',
               created_at TEXT NOT NULL,
-              expires_at TEXT NOT NULL
+              expires_at INTEGER NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS folders (
-              id TEXT PRIMARY KEY,
-              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-              name TEXT NOT NULL,
-              created_at TEXT NOT NULL,
-              UNIQUE(user_id, name)
+            CREATE TABLE IF NOT EXISTS user_settings (
+              user_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+              api_key TEXT NOT NULL DEFAULT '',
+              endpoint TEXT NOT NULL DEFAULT '',
+              model TEXT NOT NULL DEFAULT '',
+              size TEXT NOT NULL DEFAULT '1024x1024',
+              updated_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS assets (
+            CREATE TABLE IF NOT EXISTS generation_logs (
               id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-              folder_id TEXT NOT NULL REFERENCES folders(id) ON DELETE CASCADE,
-              name TEXT NOT NULL,
-              url TEXT NOT NULL,
-              storage_path TEXT,
-              prompt TEXT,
-              source TEXT,
-              model TEXT,
-              size TEXT,
-              metadata_json TEXT,
-              created_at TEXT NOT NULL,
-              saved_at TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS generations (
-              id TEXT PRIMARY KEY,
-              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-              prompt TEXT NOT NULL,
+              endpoint TEXT NOT NULL,
               model TEXT NOT NULL,
+              prompt TEXT NOT NULL,
               size TEXT NOT NULL,
-              count INTEGER NOT NULL,
-              reference_count INTEGER NOT NULL DEFAULT 0,
+              count INTEGER NOT NULL DEFAULT 1,
+              image_count INTEGER NOT NULL DEFAULT 0,
               status TEXT NOT NULL,
-              error TEXT,
-              credit_cost INTEGER NOT NULL DEFAULT 0,
-              request_json TEXT,
-              created_at TEXT NOT NULL,
-              completed_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS generation_images (
-              id TEXT PRIMARY KEY,
-              generation_id TEXT NOT NULL REFERENCES generations(id) ON DELETE CASCADE,
-              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-              name TEXT NOT NULL,
-              url TEXT NOT NULL,
-              storage_path TEXT,
+              error TEXT NOT NULL DEFAULT '',
+              request_json TEXT NOT NULL DEFAULT '{}',
+              response_json TEXT NOT NULL DEFAULT '{}',
+              input_tokens INTEGER NOT NULL DEFAULT 0,
+              output_tokens INTEGER NOT NULL DEFAULT 0,
+              total_tokens INTEGER NOT NULL DEFAULT 0,
+              duration_ms INTEGER NOT NULL DEFAULT 0,
               created_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS quota_ledger (
+            CREATE TABLE IF NOT EXISTS app_settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS image_feedback (
               id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-              delta INTEGER NOT NULL,
-              reason TEXT NOT NULL,
-              ref_type TEXT,
-              ref_id TEXT,
+              feedback_type TEXT NOT NULL DEFAULT 'downvote',
+              image_url TEXT NOT NULL,
+              image_name TEXT NOT NULL DEFAULT '',
+              image_source TEXT NOT NULL DEFAULT '',
+              prompt TEXT NOT NULL DEFAULT '',
+              model TEXT NOT NULL DEFAULT '',
+              size TEXT NOT NULL DEFAULT '',
+              request_json TEXT NOT NULL DEFAULT '{}',
+              item_json TEXT NOT NULL DEFAULT '{}',
+              user_source TEXT NOT NULL DEFAULT '',
               created_at TEXT NOT NULL
             );
 
-            CREATE TABLE IF NOT EXISTS plans (
-              id TEXT PRIMARY KEY,
-              name TEXT NOT NULL,
-              price_cents INTEGER NOT NULL,
-              credits INTEGER NOT NULL,
-              description TEXT NOT NULL
-            );
-
-            CREATE TABLE IF NOT EXISTS billing_orders (
-              id TEXT PRIMARY KEY,
-              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-              plan_id TEXT NOT NULL REFERENCES plans(id),
-              amount_cents INTEGER NOT NULL,
-              credits INTEGER NOT NULL,
-              status TEXT NOT NULL,
-              provider TEXT NOT NULL,
-              checkout_url TEXT,
-              created_at TEXT NOT NULL,
-              paid_at TEXT
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_assets_user_saved ON assets(user_id, saved_at);
-            CREATE INDEX IF NOT EXISTS idx_generations_user_created ON generations(user_id, created_at);
-            CREATE INDEX IF NOT EXISTS idx_ledger_user_created ON quota_ledger(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_logs_user_created ON generation_logs(user_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_logs_created ON generation_logs(created_at);
+            CREATE INDEX IF NOT EXISTS idx_feedback_created ON image_feedback(created_at);
+            CREATE INDEX IF NOT EXISTS idx_feedback_source ON image_feedback(user_source, image_source, created_at);
             """
         )
-        seed_plans(conn)
+        ensure_column(conn, "users", "disabled", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "users", "source", "TEXT NOT NULL DEFAULT 'direct'")
+        ensure_column(conn, "users", "referrer", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "utm_source", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "utm_medium", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "utm_campaign", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "source_path", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "users", "last_login_at", "TEXT")
+        ensure_sessions_schema(conn)
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, role)")
+        seed_setting(conn, "default_endpoint", DEFAULT_ENDPOINT)
+        seed_setting(conn, "default_model", DEFAULT_MODEL)
+        seed_setting(conn, "usage_note", "用量为前端根据模型返回 usage 或请求/响应文本估算的次数与 token 数。")
 
 
-def seed_plans(conn: sqlite3.Connection) -> None:
-    plans = [
-        ("starter", "Starter", 2900, 200, "适合个人店铺与轻量测试"),
-        ("growth", "Growth", 9900, 900, "适合稳定批量出图团队"),
-        ("studio", "Studio", 29900, 3200, "适合多人协作和高频生成"),
-    ]
-    for plan in plans:
-        conn.execute(
-            """
-            INSERT INTO plans (id, name, price_cents, credits, description)
-            VALUES (?, ?, ?, ?, ?)
-            ON CONFLICT(id) DO UPDATE SET
-              name=excluded.name,
-              price_cents=excluded.price_cents,
-              credits=excluded.credits,
-              description=excluded.description
-            """,
-            plan,
-        )
+def seed_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
+        (key, value, now_iso()),
+    )
 
 
-def password_digest(password: str, salt: str) -> str:
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), 200_000)
-    return digest.hex()
+def app_settings(conn: sqlite3.Connection) -> dict:
+    rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
+    values = {row["key"]: row["value"] for row in rows}
+    return {
+        "defaultEndpoint": values.get("default_endpoint", DEFAULT_ENDPOINT),
+        "defaultModel": values.get("default_model", DEFAULT_MODEL),
+        "usageNote": values.get("usage_note", ""),
+    }
 
 
-def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode("utf-8")).hexdigest()
-
-
-def clean_email(value: str) -> str:
-    return value.strip().lower()
-
-
-def public_media_url(storage_path: str) -> str:
-    return "/" + storage_path.replace(os.sep, "/")
-
-
-def safe_name(value: str, fallback: str = "image") -> str:
-    text = re.sub(r"[\\/:*?\"<>|\x00-\x1f]", "-", str(value or "")).strip()
-    return text[:96] or fallback
-
-
-def json_compact(value: object) -> str:
-    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-
-
-def parse_json_bytes(raw: bytes) -> object:
-    if not raw:
-        return {}
-    return json.loads(raw.decode("utf-8"))
-
-
-def row_user(row: sqlite3.Row) -> dict:
+def row_user(row: sqlite3.Row, usage: dict | None = None, api_key_configured: bool = False) -> dict:
+    source = row_value(row, "source", "direct") or "direct"
     return {
         "id": row["id"],
         "email": row["email"],
         "name": row["name"],
-        "plan": row["plan"],
-        "quotaBalance": row["quota_balance"],
+        "disabled": bool(row["disabled"]),
+        "source": {
+            "source": source,
+            "referrer": row_value(row, "referrer", ""),
+            "utmSource": row_value(row, "utm_source", ""),
+            "utmMedium": row_value(row, "utm_medium", ""),
+            "utmCampaign": row_value(row, "utm_campaign", ""),
+            "sourcePath": row_value(row, "source_path", ""),
+        },
         "createdAt": row["created_at"],
+        "lastLoginAt": row["last_login_at"],
+        "apiKeyConfigured": api_key_configured,
+        "usage": usage
+        or {
+            "calls": 0,
+            "images": 0,
+            "inputTokens": 0,
+            "outputTokens": 0,
+            "totalTokens": 0,
+        },
     }
 
 
-def row_folder(row: sqlite3.Row) -> dict:
-    return {"id": row["id"], "name": row["name"], "createdAt": row["created_at"]}
+def row_value(row: sqlite3.Row, key: str, default=""):
+    return row[key] if key in row.keys() else default
 
 
-def row_asset(row: sqlite3.Row) -> dict:
-    return {
-        "id": row["id"],
-        "folderId": row["folder_id"],
-        "folderName": row["folder_name"] if "folder_name" in row.keys() else "",
-        "name": row["name"],
-        "url": row["url"],
-        "prompt": row["prompt"] or "",
-        "source": row["source"] or "",
-        "model": row["model"] or "",
-        "size": row["size"] or "",
-        "metadata": json.loads(row["metadata_json"] or "{}"),
-        "createdAt": row["created_at"],
-        "savedAt": row["saved_at"],
-    }
-
-
-def row_plan(row: sqlite3.Row) -> dict:
-    return {
-        "id": row["id"],
-        "name": row["name"],
-        "priceCents": row["price_cents"],
-        "credits": row["credits"],
-        "description": row["description"],
-    }
-
-
-def row_generation(row: sqlite3.Row, images: list[dict] | None = None) -> dict:
-    return {
-        "id": row["id"],
-        "prompt": row["prompt"],
-        "model": row["model"],
-        "size": row["size"],
-        "count": row["count"],
-        "referenceCount": row["reference_count"],
-        "status": row["status"],
-        "error": row["error"] or "",
-        "creditCost": row["credit_cost"],
-        "createdAt": row["created_at"],
-        "completedAt": row["completed_at"] or "",
-        "images": images or [],
-    }
-
-
-def get_default_folder(conn: sqlite3.Connection, user_id: str) -> sqlite3.Row:
-    row = conn.execute(
-        "SELECT * FROM folders WHERE user_id=? ORDER BY created_at LIMIT 1", (user_id,)
-    ).fetchone()
-    if row:
-        return row
-    folder_id = make_id("folder")
-    conn.execute(
-        "INSERT INTO folders (id, user_id, name, created_at) VALUES (?, ?, ?, ?)",
-        (folder_id, user_id, "未分类素材", now_iso()),
-    )
-    return conn.execute("SELECT * FROM folders WHERE id=?", (folder_id,)).fetchone()
-
-
-def get_or_create_folder(conn: sqlite3.Connection, user_id: str, folder_id: str | None, new_name: str | None) -> sqlite3.Row:
-    if new_name:
-        existing = conn.execute(
-            "SELECT * FROM folders WHERE user_id=? AND name=?", (user_id, new_name)
-        ).fetchone()
-        if existing:
-            return existing
-        new_id = make_id("folder")
-        conn.execute(
-            "INSERT INTO folders (id, user_id, name, created_at) VALUES (?, ?, ?, ?)",
-            (new_id, user_id, safe_name(new_name, "新文件夹"), now_iso()),
-        )
-        return conn.execute("SELECT * FROM folders WHERE id=?", (new_id,)).fetchone()
-
-    if folder_id:
-        folder = conn.execute(
-            "SELECT * FROM folders WHERE id=? AND user_id=?", (folder_id, user_id)
-        ).fetchone()
-        if folder:
-            return folder
-    return get_default_folder(conn, user_id)
-
-
-def parse_data_url(value: str) -> tuple[str, bytes] | None:
-    match = re.match(r"^data:([^;,]+)?(?:;base64)?,(.*)$", value, re.S)
-    if not match:
-        return None
-    mime = match.group(1) or "application/octet-stream"
-    payload = match.group(2)
-    if ";base64," in value[:100]:
-        return mime, base64.b64decode(payload)
-    return mime, urllib.parse.unquote_to_bytes(payload)
-
-
-def extension_for_mime(mime: str) -> str:
-    if mime == "image/svg+xml":
-        return ".svg"
-    return mimetypes.guess_extension(mime) or ".png"
-
-
-def persist_image(user_id: str, image_url: str, namespace: str) -> tuple[str, str | None]:
-    if not image_url:
-        raise ValueError("图片地址不能为空")
-
-    data = parse_data_url(image_url)
-    if not data:
-        return image_url, None
-
-    mime, bytes_value = data
-    ext = extension_for_mime(mime)
-    media_dir = MEDIA_ROOT / user_id / namespace
-    media_dir.mkdir(parents=True, exist_ok=True)
-    file_name = f"{uuid.uuid4().hex}{ext}"
-    path = media_dir / file_name
-    path.write_bytes(bytes_value)
-    storage_path = str(path.relative_to(STORAGE_DIR))
-    return public_media_url(storage_path), storage_path
-
-
-def sanitize_request_payload(value: object) -> object:
-    if isinstance(value, list):
-        return [sanitize_request_payload(item) for item in value]
-    if isinstance(value, dict):
-        return {key: sanitize_request_payload(entry) for key, entry in value.items()}
-    if isinstance(value, str):
-        if value.startswith("data:image/"):
-            prefix, _, data = value.partition(",")
-            return f"{prefix},[base64 image truncated, length {len(data)}]"
-        if re.fullmatch(r"[A-Za-z0-9+/=]{400,}", value):
-            return f"[base64 image truncated, length {len(value)}]"
-    return value
-
-
-def normalize_references(references: object) -> list[dict]:
-    if not isinstance(references, list):
-        return []
-    seen = set()
-    normalized = []
-    for item in references:
-        if not isinstance(item, dict) or not item.get("url"):
-            continue
-        url = str(item["url"])
-        if url in seen:
-            continue
-        seen.add(url)
-        normalized.append(
-            {
-                "name": str(item.get("name") or "参考图"),
-                "size": str(item.get("size") or ""),
-                "url": url,
-            }
-        )
-        if len(normalized) >= 3:
-            break
-    return normalized
-
-
-def reference_payload_strategies(references: list[dict]) -> list[tuple[str, dict]]:
-    urls = [item["url"] for item in references]
-    base64_images = [strip_data_url_prefix(item["url"]) for item in references]
-    objects = [{"type": "input_image", "image_url": item["url"]} for item in references]
-    return [
-        ("reference_images", {"reference_images": urls}),
-        ("images", {"images": urls}),
-        ("image_urls", {"image_urls": urls}),
-        ("input_images", {"input_images": objects}),
-        ("image", {"image": urls[0]}),
-        ("reference_images_base64", {"reference_images": base64_images}),
-        ("images_base64", {"images": base64_images}),
-        ("image_base64", {"image": base64_images[0]}),
-    ]
-
-
-def strip_data_url_prefix(value: str) -> str:
-    return re.sub(r"^data:[^,]+,", "", value)
-
-
-def mock_image(prompt: str, index: int, size: str) -> str:
-    width, height = 1024, 1024
-    match = re.match(r"^(\d+)x(\d+)$", size or "")
-    if match:
-        width, height = int(match.group(1)), int(match.group(2))
-    title = "AI Image Studio"
-    prompt_line = re.sub(r"\s+", " ", prompt).strip()[:130]
-    svg = f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="{height}" viewBox="0 0 {width} {height}">
-  <defs>
-    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0" stop-color="#eef8ff"/>
-      <stop offset=".55" stop-color="#ffffff"/>
-      <stop offset="1" stop-color="#e8fff7"/>
-    </linearGradient>
-    <pattern id="p" width="40" height="40" patternUnits="userSpaceOnUse">
-      <path d="M40 0H0v40" fill="none" stroke="#8ecae6" stroke-opacity=".25"/>
-    </pattern>
-  </defs>
-  <rect width="100%" height="100%" fill="url(#g)"/>
-  <rect width="100%" height="100%" fill="url(#p)"/>
-  <rect x="{width * 0.12}" y="{height * 0.14}" width="{width * 0.76}" height="{height * 0.58}" rx="12" fill="#fff" stroke="#9fc5d8"/>
-  <circle cx="{width * 0.5}" cy="{height * 0.38}" r="{min(width, height) * 0.16}" fill="#dff8ed" stroke="#12b886"/>
-  <text x="{width * 0.5}" y="{height * 0.78}" text-anchor="middle" font-family="Avenir, sans-serif" font-size="{max(24, width // 34)}" fill="#1264e8" font-weight="800">{title} #{index}</text>
-  <text x="{width * 0.5}" y="{height * 0.84}" text-anchor="middle" font-family="Avenir, sans-serif" font-size="{max(16, width // 56)}" fill="#5b6c7d">{escape_xml(prompt_line)}</text>
-</svg>"""
-    return "data:image/svg+xml;base64," + base64.b64encode(svg.encode("utf-8")).decode("ascii")
-
-
-def escape_xml(value: str) -> str:
-    return (
-        value.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&apos;")
-    )
-
-
-class UpstreamError(Exception):
+class AppError(Exception):
     def __init__(self, status: int, message: str):
+        super().__init__(message)
         self.status = status
         self.message = message
-        super().__init__(message)
 
 
-def should_retry_reference(error: UpstreamError) -> bool:
-    if error.status not in {400, 404, 415, 422}:
-        return False
-    message = error.message.lower()
-    return any(
-        keyword in message
-        for keyword in ["unknown", "unsupported", "invalid", "unrecognized", "unexpected", "reference", "image", "param", "field", "format"]
-    )
-
-
-def resolve_image_endpoint(endpoint: str, model: str) -> str:
-    value = (endpoint or DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
-    selected_model = urllib.parse.quote(model or DEFAULT_MODEL, safe="")
-    if "{model}" in value:
-        return value.replace("{model}", selected_model)
-    if is_gemini_image_endpoint(value, model):
-        return re.sub(
-            r"/v1beta/models/[^/:]+:generateContent/?$",
-            f"/v1beta/models/{selected_model}:generateContent/",
-            value,
-        )
-    return value
-
-
-def is_gemini_image_endpoint(endpoint: str, model: str = "") -> bool:
-    value = f"{endpoint or ''} {model or ''}".lower()
-    return (
-        "generatecontent" in value
-        or "gemini-2.5-flash-image" in value
-        or "gemini-3-pro-image" in value
-    )
-
-
-def authorization_header_value(api_key: str, endpoint: str) -> str:
-    value = (api_key or "").strip()
-    if value.lower().startswith("bearer "):
-        return value
-    if is_gemini_image_endpoint(endpoint) or "aokapi.com" in endpoint.lower():
-        return value
-    return f"Bearer {value}"
-
-
-def build_gemini_image_body(prompt: str, size: str, references: list[dict]) -> dict:
-    parts: list[dict] = [{"text": prompt}]
-    for reference in references:
-        inline = reference_to_inline_data(reference)
-        if inline:
-            parts.append({"inlineData": inline})
-    return {
-        "contents": [{"role": "user", "parts": parts}],
-        "generationConfig": {
-            "responseModalities": ["TEXT", "IMAGE"],
-            "imageConfig": gemini_image_config_from_size(size),
-        },
-    }
-
-
-def reference_to_inline_data(reference: dict) -> dict | None:
-    url = str(reference.get("url") or "")
-    if not url:
-        return None
-    data_url = parse_data_url(url)
-    if data_url:
-        mime, bytes_value = data_url
-        return {"data": base64.b64encode(bytes_value).decode("ascii"), "mimeType": mime or "image/png"}
-
-    bytes_value, mime = read_reference_bytes(url)
-    if not bytes_value:
-        return None
-    return {"data": base64.b64encode(bytes_value).decode("ascii"), "mimeType": mime or "image/png"}
-
-
-def read_reference_bytes(url: str) -> tuple[bytes | None, str]:
-    if url.startswith("/media/") or url.startswith("media/"):
-        path = (STORAGE_DIR / url.lstrip("/")).resolve()
-        if str(path).startswith(str(STORAGE_DIR.resolve())) and path.exists():
-            return path.read_bytes(), mimetypes.guess_type(str(path))[0] or "image/png"
-        return None, "image/png"
-
-    if url.startswith("http://") or url.startswith("https://"):
-        request = urllib.request.Request(url, headers={"User-Agent": "ImageStudioCloud/1.0"})
-        with urllib.request.urlopen(request, timeout=30) as response:
-            mime = response.headers.get_content_type() or "image/png"
-            return response.read(), mime
-
-    return None, "image/png"
-
-
-def gemini_image_config_from_size(size: str) -> dict:
-    match = re.match(r"^(\d+)x(\d+)$", str(size or "").strip())
-    if not match:
-        return {"aspectRatio": "1:1", "imageSize": "1K"}
-    width = int(match.group(1))
-    height = int(match.group(2))
-    return {
-        "aspectRatio": nearest_gemini_aspect_ratio(width, height),
-        "imageSize": "2K" if max(width, height) > 1200 else "1K",
-    }
-
-
-def nearest_gemini_aspect_ratio(width: int, height: int) -> str:
-    ratio = width / height
-    options = {
-        "1:1": 1,
-        "16:9": 16 / 9,
-        "9:16": 9 / 16,
-        "4:3": 4 / 3,
-        "3:4": 3 / 4,
-    }
-    return min(options.items(), key=lambda item: abs(item[1] - ratio))[0]
-
-
-def extract_image_urls_from_payload(payload: object) -> list[dict]:
-    images: list[dict] = []
-    if isinstance(payload, dict):
-        data = payload.get("data") if isinstance(payload.get("data"), list) else payload.get("images")
-        if isinstance(data, list):
-            for item in data:
-                if isinstance(item, str):
-                    images.append({"url": item})
-                elif isinstance(item, dict):
-                    if item.get("url"):
-                        images.append({"url": item["url"]})
-                    elif item.get("b64_json"):
-                        images.append({"url": f"data:image/png;base64,{item['b64_json']}"})
-                    elif item.get("image"):
-                        images.append({"url": item["image"]})
-
-        for candidate in payload.get("candidates") or []:
-            for part in candidate.get("content", {}).get("parts") or []:
-                inline = part.get("inlineData") or part.get("inline_data")
-                if isinstance(inline, dict) and inline.get("data"):
-                    mime = inline.get("mimeType") or inline.get("mime_type") or "image/png"
-                    images.append({"url": f"data:{mime};base64,{inline['data']}"})
-
-        for choice in payload.get("choices") or []:
-            content = choice.get("message", {}).get("content") or choice.get("text") or ""
-            for match in re.findall(r"data:image/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+", content):
-                images.append({"url": match})
-    return [image for image in images if image.get("url")]
-
-
-def call_upstream(endpoint: str, api_key: str, body: dict) -> list[dict]:
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": authorization_header_value(api_key, endpoint),
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=90) as response:
-            raw = response.read().decode("utf-8")
-            payload = json.loads(raw) if raw else {}
-    except urllib.error.HTTPError as error:
-        raw = error.read().decode("utf-8", errors="replace")
-        try:
-            payload = json.loads(raw)
-            message = payload.get("error", {}).get("message") or payload.get("message") or error.reason
-        except Exception:
-            message = raw or error.reason
-        raise UpstreamError(error.code, message)
-    except urllib.error.URLError as error:
-        raise UpstreamError(502, str(error.reason))
-
-    images = extract_image_urls_from_payload(payload)
-    if not images:
-        raise UpstreamError(502, "模型接口未返回可识别的图片")
-    return images
-
-
-def generate_images(body: dict) -> tuple[list[dict], dict]:
-    prompt = str(body.get("prompt") or "").strip()
-    if not prompt:
-        raise ValueError("prompt 不能为空")
-    count = max(1, min(int(body.get("count") or body.get("n") or 1), 8))
-    size = str(body.get("size") or "1024x1024")
-    model = str(body.get("model") or os.environ.get("IMAGE_API_MODEL") or DEFAULT_MODEL)
-    endpoint = str(body.get("endpoint") or DEFAULT_ENDPOINT)
-    endpoint = resolve_image_endpoint(endpoint, model)
-    api_key = IMAGE_API_KEY
-
-    if ALLOW_CLIENT_IMAGE_CONFIG:
-        endpoint = resolve_image_endpoint(str(body.get("endpoint") or endpoint), model)
-        api_key = str(body.get("apiKey") or api_key)
-
-    base_payload = {"model": model, "prompt": prompt, "n": count, "size": size}
-    references = normalize_references(body.get("referenceImages"))
-    if not api_key:
-        images = [{"url": mock_image(prompt, index + 1, size)} for index in range(count)]
-        return images, {"endpoint": "mock://image-generator", "body": sanitize_request_payload(base_payload)}
-
-    if is_gemini_image_endpoint(endpoint, model):
-        images: list[dict] = []
-        request_meta: dict | None = None
-        calls = 0
-        while len(images) < count:
-            calls += 1
-            call_prompt = prompt
-            if calls > 1:
-                call_prompt = (
-                    prompt
-                    + f"\n\n请生成第 {calls} 张变体，保持同一商品和同一设计方向，但构图、角度或背景细节与前面图片有区别。"
-                )
-            gemini_body = build_gemini_image_body(call_prompt, size, references)
-            if request_meta is None:
-                request_meta = {
-                    "endpoint": endpoint,
-                    "referenceStrategy": "Gemini inlineData" if references else "Gemini text",
-                    "body": sanitize_request_payload(gemini_body),
-                }
-            images.extend(call_upstream(endpoint, api_key, gemini_body))
-        request_meta = request_meta or {"endpoint": endpoint, "body": {}}
-        request_meta["calls"] = calls
-        return images[:count], request_meta
-
-    if not references:
-        return call_upstream(endpoint, api_key, base_payload), {
-            "endpoint": endpoint,
-            "body": sanitize_request_payload(base_payload),
-        }
-
-    last_error: UpstreamError | None = None
-    for strategy_name, strategy_payload in reference_payload_strategies(references):
-        payload = {**base_payload, **strategy_payload}
-        try:
-            return call_upstream(endpoint, api_key, payload), {
-                "endpoint": endpoint,
-                "referenceStrategy": strategy_name,
-                "body": sanitize_request_payload(payload),
-            }
-        except UpstreamError as error:
-            if not should_retry_reference(error):
-                raise
-            last_error = error
-
-    if last_error:
-        payload = {
-            **base_payload,
-            "prompt": (
-                prompt
-                + "\n\n注意：当前上游接口未接受图片字段，本次降级为提示词锁定；请检查模型的参考图入参格式。"
-            ),
-        }
-        return call_upstream(endpoint, api_key, payload), {
-            "endpoint": endpoint,
-            "referenceStrategy": "prompt_fallback",
-            "body": sanitize_request_payload(payload),
-            "fallbackError": last_error.message,
-        }
-    raise UpstreamError(502, "参考图生成失败")
-
-
-class Handler(BaseHTTPRequestHandler):
-    server_version = "ImageStudioCloud/1.0"
-
-    def do_OPTIONS(self) -> None:
-        self.send_response(HTTPStatus.NO_CONTENT)
-        self.add_cors_headers()
-        self.end_headers()
+class Handler(SimpleHTTPRequestHandler):
+    server_version = "ImageStudioAccount/1.0"
 
     def do_GET(self) -> None:
-        try:
-            self.route("GET")
-        except Exception as error:
-            self.fail(error)
+        self.route()
 
     def do_POST(self) -> None:
-        try:
-            self.route("POST")
-        except Exception as error:
-            self.fail(error)
+        self.route()
+
+    def do_PUT(self) -> None:
+        self.route()
 
     def do_PATCH(self) -> None:
-        try:
-            self.route("PATCH")
-        except Exception as error:
-            self.fail(error)
+        self.route()
 
-    def do_DELETE(self) -> None:
-        try:
-            self.route("DELETE")
-        except Exception as error:
-            self.fail(error)
-
-    def route(self, method: str) -> None:
-        parsed = urllib.parse.urlparse(self.path)
+    def route(self) -> None:
+        parsed = urlparse(self.path)
         path = parsed.path
-        query = urllib.parse.parse_qs(parsed.query)
-
-        if path == "/api/health" and method == "GET":
-            return self.json_response({"ok": True, "time": now_iso(), "db": str(DB_PATH)})
-        if path == "/api/auth/register" and method == "POST":
-            return self.handle_register()
-        if path == "/api/auth/login" and method == "POST":
-            return self.handle_login()
-        if path == "/api/auth/logout" and method == "POST":
-            return self.handle_logout()
-        if path == "/api/me" and method == "GET":
-            return self.handle_me()
-        if path == "/api/folders":
-            if method == "GET":
-                return self.handle_list_folders()
-            if method == "POST":
-                return self.handle_create_folder()
-        if path == "/api/assets":
-            if method == "GET":
-                return self.handle_list_assets(query)
-            if method == "POST":
-                return self.handle_create_asset()
-        if path.startswith("/api/assets/"):
-            asset_id = path.rsplit("/", 1)[-1]
-            if method == "PATCH":
-                return self.handle_update_asset(asset_id)
-            if method == "DELETE":
-                return self.handle_delete_asset(asset_id)
-        if path == "/api/generations" and method == "GET":
-            return self.handle_list_generations()
-        if path == "/api/generate" and method == "POST":
-            return self.handle_generate()
-        if path == "/api/billing/plans" and method == "GET":
-            return self.handle_list_plans()
-        if path == "/api/billing/checkout" and method == "POST":
-            return self.handle_checkout()
-        if path.startswith("/api/billing/mock-pay/") and method == "POST":
-            order_id = path.rsplit("/", 1)[-1]
-            return self.handle_mock_pay(order_id)
-
-        if method == "GET":
-            return self.serve_static(path)
-        self.json_response({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+        method = self.command
+        try:
+            if path == "/api/health" and method == "GET":
+                return self.json_response({"ok": True, "mode": "account-admin"})
+            if path == "/api/auth/register" and method == "POST":
+                return self.handle_register()
+            if path == "/api/auth/login" and method == "POST":
+                return self.handle_login()
+            if path == "/api/auth/logout" and method == "POST":
+                return self.handle_logout()
+            if path == "/api/me" and method == "GET":
+                return self.handle_me()
+            if path == "/api/settings" and method == "GET":
+                return self.handle_get_settings()
+            if path == "/api/settings" and method == "PUT":
+                return self.handle_put_settings()
+            if path == "/api/generation-logs" and method == "POST":
+                return self.handle_create_generation_log()
+            if path == "/api/image-feedback" and method == "POST":
+                return self.handle_create_image_feedback()
+            if path == "/api/admin/login" and method == "POST":
+                return self.handle_admin_login()
+            if path == "/api/admin/me" and method == "GET":
+                self.require_admin()
+                return self.json_response({"admin": {"email": ADMIN_EMAIL}})
+            if path == "/api/admin/summary" and method == "GET":
+                return self.handle_admin_summary()
+            if path == "/api/admin/users" and method == "GET":
+                return self.handle_admin_users()
+            if path.startswith("/api/admin/users/") and method == "PATCH":
+                user_id = unquote(path.removeprefix("/api/admin/users/"))
+                return self.handle_admin_update_user(user_id)
+            if path == "/api/admin/logs" and method == "GET":
+                return self.handle_admin_logs(parsed.query)
+            if path == "/api/admin/feedback" and method == "GET":
+                return self.handle_admin_feedback(parsed.query)
+            if path == "/api/admin/downvotes" and method == "GET":
+                return self.handle_admin_feedback(parsed.query)
+            if path == "/api/admin/model-config" and method == "GET":
+                return self.handle_admin_model_config()
+            if path == "/api/admin/model-config" and method == "PUT":
+                return self.handle_admin_put_model_config()
+            if path.startswith("/api/"):
+                raise AppError(HTTPStatus.NOT_FOUND, "接口不存在")
+            return super().do_GET()
+        except AppError as error:
+            self.json_response({"error": error.message}, error.status)
+        except Exception as error:
+            self.json_response({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def read_json(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length)
-        value = parse_json_bytes(raw)
-        if not isinstance(value, dict):
-            raise ValueError("请求体必须是 JSON 对象")
-        return value
+        length = int(self.headers.get("Content-Length") or "0")
+        raw = self.rfile.read(length) if length else b"{}"
+        try:
+            return json.loads(raw.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            raise AppError(HTTPStatus.BAD_REQUEST, "JSON 格式错误")
 
-    def json_response(self, payload: object, status: int = HTTPStatus.OK) -> None:
-        data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    def json_response(self, payload: dict, status: int = HTTPStatus.OK) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
-        self.add_cors_headers()
         self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(data)))
+        self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(data)
+        self.wfile.write(body)
 
-    def add_cors_headers(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", CORS_ORIGIN)
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Authorization,Content-Type")
+    def bearer_token(self) -> str:
+        auth = self.headers.get("Authorization", "")
+        if auth.lower().startswith("bearer "):
+            return auth.split(" ", 1)[1].strip()
+        return ""
 
-    def fail(self, error: Exception) -> None:
-        if isinstance(error, PermissionError):
-            self.json_response({"error": str(error)}, HTTPStatus.UNAUTHORIZED)
-            return
-        if isinstance(error, ValueError):
-            self.json_response({"error": str(error)}, HTTPStatus.BAD_REQUEST)
-            return
-        if isinstance(error, UpstreamError):
-            self.json_response({"error": error.message}, error.status)
-            return
-        self.json_response({"error": f"服务器错误：{error}"}, HTTPStatus.INTERNAL_SERVER_ERROR)
+    def require_user(self) -> sqlite3.Row:
+        token = self.bearer_token()
+        if not token:
+            raise AppError(HTTPStatus.UNAUTHORIZED, "请先登录")
+        now = int(time.time())
+        with connect() as conn:
+            session = conn.execute(
+                "SELECT * FROM sessions WHERE token=? AND role='user' AND expires_at>?",
+                (token, now),
+            ).fetchone()
+            if not session:
+                raise AppError(HTTPStatus.UNAUTHORIZED, "登录已失效")
+            user = conn.execute("SELECT * FROM users WHERE id=?", (session["user_id"],)).fetchone()
+            if not user:
+                raise AppError(HTTPStatus.UNAUTHORIZED, "用户不存在")
+            if user["disabled"]:
+                conn.execute("DELETE FROM sessions WHERE user_id=? AND role='user'", (user["id"],))
+                conn.commit()
+                raise AppError(HTTPStatus.FORBIDDEN, "账号已被禁用")
+            return user
 
-    def auth_user(self, conn: sqlite3.Connection) -> sqlite3.Row:
-        header = self.headers.get("Authorization", "")
-        match = re.match(r"Bearer\s+(.+)", header)
-        if not match:
-            raise PermissionError("请先登录")
-        token_hash = hash_token(match.group(1).strip())
-        session = conn.execute(
-            """
-            SELECT users.*, sessions.expires_at AS session_expires_at
-            FROM sessions
-            JOIN users ON users.id=sessions.user_id
-            WHERE sessions.token_hash=?
-            """,
-            (token_hash,),
-        ).fetchone()
+    def require_admin(self) -> None:
+        token = self.bearer_token()
+        if not token:
+            raise AppError(HTTPStatus.UNAUTHORIZED, "请先登录 B 端")
+        with connect() as conn:
+            session = conn.execute(
+                "SELECT token FROM sessions WHERE token=? AND role='admin' AND expires_at>?",
+                (token, int(time.time())),
+            ).fetchone()
         if not session:
-            raise PermissionError("登录已失效")
-        if parse_iso(session["session_expires_at"]) < dt.datetime.now(dt.timezone.utc):
-            conn.execute("DELETE FROM sessions WHERE token_hash=?", (token_hash,))
-            raise PermissionError("登录已过期")
-        return session
+            raise AppError(HTTPStatus.UNAUTHORIZED, "B 端登录已失效")
 
-    def create_session(self, conn: sqlite3.Connection, user_id: str) -> str:
-        token = secrets.token_urlsafe(36)
-        expires = dt.datetime.now(dt.timezone.utc) + dt.timedelta(days=SESSION_DAYS)
-        conn.execute(
-            "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
-            (hash_token(token), user_id, now_iso(), expires.isoformat(timespec="seconds")),
-        )
+    def create_session(self, user_id: str | None, role: str) -> str:
+        token = secrets.token_urlsafe(32)
+        expires_at = int(time.time()) + SESSION_DAYS * 86400
+        with connect() as conn:
+            conn.execute(
+                "INSERT INTO sessions (token, user_id, role, created_at, expires_at) VALUES (?, ?, ?, ?, ?)",
+                (token, user_id, role, now_iso(), expires_at),
+            )
         return token
 
     def handle_register(self) -> None:
         body = self.read_json()
-        email = clean_email(str(body.get("email") or ""))
+        email = str(body.get("email") or "").strip().lower()
+        name = str(body.get("name") or "").strip() or email.split("@")[0]
         password = str(body.get("password") or "")
-        name = safe_name(body.get("name") or email.split("@")[0] or "用户", "用户")
-        if not re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
-            raise ValueError("请输入有效邮箱")
+        if "@" not in email:
+            raise AppError(HTTPStatus.BAD_REQUEST, "请输入有效邮箱")
         if len(password) < 8:
-            raise ValueError("密码至少 8 位")
-        salt = secrets.token_hex(16)
+            raise AppError(HTTPStatus.BAD_REQUEST, "密码至少 8 位")
+        source = normalize_source(body.get("source"))
+        salt, password_hash = hash_password(password)
         user_id = make_id("user")
-        with connect() as conn:
-            try:
+        try:
+            with connect() as conn:
                 conn.execute(
                     """
-                    INSERT INTO users (id, email, name, password_salt, password_hash, plan, quota_balance, created_at)
-                    VALUES (?, ?, ?, ?, ?, 'free', ?, ?)
+                    INSERT INTO users
+                      (id, email, name, password_salt, password_hash, disabled, source, referrer,
+                       utm_source, utm_medium, utm_campaign, source_path, created_at, last_login_at)
+                    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
-                    (user_id, email, name, salt, password_digest(password, salt), FREE_QUOTA, now_iso()),
+                    (
+                        user_id,
+                        email,
+                        name,
+                        salt,
+                        password_hash,
+                        source["source"],
+                        source["referrer"],
+                        source["utmSource"],
+                        source["utmMedium"],
+                        source["utmCampaign"],
+                        source["sourcePath"],
+                        now_iso(),
+                        now_iso(),
+                    ),
                 )
-            except sqlite3.IntegrityError:
-                raise ValueError("该邮箱已注册")
-            conn.execute(
-                "INSERT INTO quota_ledger (id, user_id, delta, reason, ref_type, ref_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                (make_id("quota"), user_id, FREE_QUOTA, "new_user_free_quota", "user", user_id, now_iso()),
-            )
-            get_default_folder(conn, user_id)
-            token = self.create_session(conn, user_id)
-            user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+                settings = app_settings(conn)
+                conn.execute(
+                    """
+                    INSERT INTO user_settings (user_id, endpoint, model, size, updated_at)
+                    VALUES (?, ?, ?, '1024x1024', ?)
+                    """,
+                    (user_id, settings["defaultEndpoint"], settings["defaultModel"], now_iso()),
+                )
+        except sqlite3.IntegrityError:
+            raise AppError(HTTPStatus.CONFLICT, "邮箱已注册")
+        token = self.create_session(user_id, "user")
+        user = connect().execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         self.json_response({"token": token, "user": row_user(user)})
 
     def handle_login(self) -> None:
         body = self.read_json()
-        email = clean_email(str(body.get("email") or ""))
+        email = str(body.get("email") or "").strip().lower()
         password = str(body.get("password") or "")
         with connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
-            if not user:
-                raise PermissionError("邮箱或密码不正确")
-            candidate = password_digest(password, user["password_salt"])
-            if not hmac.compare_digest(candidate, user["password_hash"]):
-                raise PermissionError("邮箱或密码不正确")
-            token = self.create_session(conn, user["id"])
+            if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
+                raise AppError(HTTPStatus.UNAUTHORIZED, "邮箱或密码错误")
+            if user["disabled"]:
+                raise AppError(HTTPStatus.FORBIDDEN, "账号已被禁用")
+            conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
+        token = self.create_session(user["id"], "user")
+        user = connect().execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
         self.json_response({"token": token, "user": row_user(user)})
 
     def handle_logout(self) -> None:
-        header = self.headers.get("Authorization", "")
-        match = re.match(r"Bearer\s+(.+)", header)
-        if match:
+        token = self.bearer_token()
+        if token:
             with connect() as conn:
-                conn.execute("DELETE FROM sessions WHERE token_hash=?", (hash_token(match.group(1).strip()),))
+                conn.execute("DELETE FROM sessions WHERE token=?", (token,))
         self.json_response({"ok": True})
 
     def handle_me(self) -> None:
+        user = self.require_user()
+        self.json_response({"user": row_user(user)})
+
+    def handle_get_settings(self) -> None:
+        user = self.require_user()
         with connect() as conn:
-            user = self.auth_user(conn)
-            counts = conn.execute(
-                """
-                SELECT
-                  (SELECT COUNT(*) FROM folders WHERE user_id=?) AS folders,
-                  (SELECT COUNT(*) FROM assets WHERE user_id=?) AS assets,
-                  (SELECT COUNT(*) FROM generations WHERE user_id=?) AS generations
-                """,
-                (user["id"], user["id"], user["id"]),
-            ).fetchone()
-        self.json_response({"user": row_user(user), "counts": dict(counts)})
-
-    def handle_list_folders(self) -> None:
-        with connect() as conn:
-            user = self.auth_user(conn)
-            get_default_folder(conn, user["id"])
-            rows = conn.execute(
-                "SELECT * FROM folders WHERE user_id=? ORDER BY created_at ASC", (user["id"],)
-            ).fetchall()
-        self.json_response({"folders": [row_folder(row) for row in rows]})
-
-    def handle_create_folder(self) -> None:
-        body = self.read_json()
-        name = safe_name(body.get("name"), "新文件夹")
-        with connect() as conn:
-            user = self.auth_user(conn)
-            folder = get_or_create_folder(conn, user["id"], None, name)
-        self.json_response({"folder": row_folder(folder)}, HTTPStatus.CREATED)
-
-    def handle_list_assets(self, query: dict) -> None:
-        search = (query.get("search") or [""])[0].strip().lower()
-        folder_id = (query.get("folderId") or [""])[0]
-        with connect() as conn:
-            user = self.auth_user(conn)
-            params: list[object] = [user["id"]]
-            clauses = ["assets.user_id=?"]
-            if folder_id and folder_id != "all":
-                clauses.append("assets.folder_id=?")
-                params.append(folder_id)
-            if search:
-                clauses.append(
-                    "(lower(assets.name) LIKE ? OR lower(assets.prompt) LIKE ? OR lower(folders.name) LIKE ?)"
-                )
-                params.extend([f"%{search}%", f"%{search}%", f"%{search}%"])
-            rows = conn.execute(
-                f"""
-                SELECT assets.*, folders.name AS folder_name
-                FROM assets
-                JOIN folders ON folders.id=assets.folder_id
-                WHERE {' AND '.join(clauses)}
-                ORDER BY assets.saved_at DESC
-                """,
-                params,
-            ).fetchall()
-        self.json_response({"assets": [row_asset(row) for row in rows]})
-
-    def handle_create_asset(self) -> None:
-        body = self.read_json()
-        url = str(body.get("url") or "")
-        name = safe_name(body.get("name"), "未命名图片")
-        with connect() as conn:
-            user = self.auth_user(conn)
-            folder = get_or_create_folder(
-                conn,
-                user["id"],
-                str(body.get("folderId") or "") or None,
-                str(body.get("newFolderName") or "").strip() or None,
-            )
-            public_url, storage_path = persist_image(user["id"], url, "assets")
-            asset_id = make_id("asset")
-            created_at = str(body.get("createdAt") or now_iso())
-            saved_at = now_iso()
-            conn.execute(
-                """
-                INSERT INTO assets
-                  (id, user_id, folder_id, name, url, storage_path, prompt, source, model, size, metadata_json, created_at, saved_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    asset_id,
-                    user["id"],
-                    folder["id"],
-                    name,
-                    public_url,
-                    storage_path,
-                    str(body.get("prompt") or ""),
-                    str(body.get("source") or ""),
-                    str(body.get("model") or ""),
-                    str(body.get("size") or ""),
-                    json_compact(body.get("metadata") or {}),
-                    created_at,
-                    saved_at,
-                ),
-            )
-            row = conn.execute(
-                """
-                SELECT assets.*, folders.name AS folder_name
-                FROM assets JOIN folders ON folders.id=assets.folder_id
-                WHERE assets.id=?
-                """,
-                (asset_id,),
-            ).fetchone()
-        self.json_response({"asset": row_asset(row)}, HTTPStatus.CREATED)
-
-    def handle_update_asset(self, asset_id: str) -> None:
-        body = self.read_json()
-        with connect() as conn:
-            user = self.auth_user(conn)
-            asset = conn.execute("SELECT * FROM assets WHERE id=? AND user_id=?", (asset_id, user["id"])).fetchone()
-            if not asset:
-                self.json_response({"error": "素材不存在"}, HTTPStatus.NOT_FOUND)
-                return
-            name = safe_name(body.get("name") or asset["name"], asset["name"])
-            folder_id = str(body.get("folderId") or asset["folder_id"])
-            folder = get_or_create_folder(conn, user["id"], folder_id, None)
-            conn.execute(
-                "UPDATE assets SET name=?, folder_id=? WHERE id=? AND user_id=?",
-                (name, folder["id"], asset_id, user["id"]),
-            )
-            row = conn.execute(
-                """
-                SELECT assets.*, folders.name AS folder_name
-                FROM assets JOIN folders ON folders.id=assets.folder_id
-                WHERE assets.id=?
-                """,
-                (asset_id,),
-            ).fetchone()
-        self.json_response({"asset": row_asset(row)})
-
-    def handle_delete_asset(self, asset_id: str) -> None:
-        with connect() as conn:
-            user = self.auth_user(conn)
-            asset = conn.execute("SELECT * FROM assets WHERE id=? AND user_id=?", (asset_id, user["id"])).fetchone()
-            if not asset:
-                self.json_response({"ok": True})
-                return
-            conn.execute("DELETE FROM assets WHERE id=? AND user_id=?", (asset_id, user["id"]))
-        self.json_response({"ok": True})
-
-    def handle_list_generations(self) -> None:
-        with connect() as conn:
-            user = self.auth_user(conn)
-            rows = conn.execute(
-                "SELECT * FROM generations WHERE user_id=? ORDER BY created_at DESC LIMIT 80", (user["id"],)
-            ).fetchall()
-            generation_ids = [row["id"] for row in rows]
-            images_by_generation: dict[str, list[dict]] = {generation_id: [] for generation_id in generation_ids}
-            if generation_ids:
-                placeholders = ",".join("?" for _ in generation_ids)
-                image_rows = conn.execute(
-                    f"SELECT * FROM generation_images WHERE generation_id IN ({placeholders}) ORDER BY created_at ASC",
-                    generation_ids,
-                ).fetchall()
-                for image in image_rows:
-                    images_by_generation[image["generation_id"]].append(
-                        {"id": image["id"], "name": image["name"], "url": image["url"], "createdAt": image["created_at"]}
-                    )
-        self.json_response({"generations": [row_generation(row, images_by_generation[row["id"]]) for row in rows]})
-
-    def handle_generate(self) -> None:
-        body = self.read_json()
-        count = max(1, min(int(body.get("count") or body.get("n") or 1), 8))
-        cost = count * CREDITS_PER_IMAGE
-        references = normalize_references(body.get("referenceImages"))
-        prompt = str(body.get("prompt") or "").strip()
-        size = str(body.get("size") or "1024x1024")
-        model = str(body.get("model") or DEFAULT_MODEL)
-        if not prompt:
-            raise ValueError("prompt 不能为空")
-
-        with connect() as conn:
-            user = self.auth_user(conn)
-            fresh_user = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
-            if fresh_user["quota_balance"] < cost:
-                self.json_response(
-                    {"error": f"配额不足，本次需要 {cost} 点，当前剩余 {fresh_user['quota_balance']} 点"},
-                    HTTPStatus.PAYMENT_REQUIRED,
-                )
-                return
-            generation_id = make_id("gen")
-            conn.execute(
-                """
-                INSERT INTO generations
-                  (id, user_id, prompt, model, size, count, reference_count, status, credit_cost, request_json, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'running', ?, ?, ?)
-                """,
-                (
-                    generation_id,
-                    user["id"],
-                    prompt,
-                    model,
-                    size,
-                    count,
-                    len(references),
-                    cost,
-                    json_compact(sanitize_request_payload(body)),
-                    now_iso(),
-                ),
-            )
-
-        try:
-            images, request_meta = generate_images({**body, "count": count, "size": size, "model": model})
-        except Exception as error:
-            with connect() as conn:
-                conn.execute(
-                    "UPDATE generations SET status='failed', error=?, completed_at=? WHERE id=?",
-                    (str(error), now_iso(), generation_id),
-                )
-            raise
-
-        saved_images = []
-        with connect() as conn:
-            user = self.auth_user(conn)
-            for index, image in enumerate(images[:count], start=1):
-                public_url, storage_path = persist_image(user["id"], image["url"], "generated")
-                image_id = make_id("img")
-                image_name = f"生成图片-{index}"
-                conn.execute(
-                    """
-                    INSERT INTO generation_images (id, generation_id, user_id, name, url, storage_path, created_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (image_id, generation_id, user["id"], image_name, public_url, storage_path, now_iso()),
-                )
-                saved_images.append({"id": image_id, "name": image_name, "url": public_url, "createdAt": now_iso()})
-
-            conn.execute(
-                "UPDATE users SET quota_balance=quota_balance-? WHERE id=?",
-                (cost, user["id"]),
-            )
-            conn.execute(
-                """
-                INSERT INTO quota_ledger (id, user_id, delta, reason, ref_type, ref_id, created_at)
-                VALUES (?, ?, ?, 'image_generation', 'generation', ?, ?)
-                """,
-                (make_id("quota"), user["id"], -cost, generation_id, now_iso()),
-            )
-            conn.execute(
-                "UPDATE generations SET status='completed', completed_at=?, request_json=? WHERE id=?",
-                (now_iso(), json_compact(request_meta), generation_id),
-            )
-            updated_user = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
-            generation = conn.execute("SELECT * FROM generations WHERE id=?", (generation_id,)).fetchone()
-
+            settings = app_settings(conn)
+            row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
         self.json_response(
             {
-                "images": [{"url": image["url"]} for image in saved_images],
-                "generation": row_generation(generation, saved_images),
-                "quota": {"balance": updated_user["quota_balance"], "cost": cost},
-                "request": request_meta,
+                "settings": {
+                    "apiKey": row["api_key"] if row else "",
+                    "endpoint": row["endpoint"] if row and row["endpoint"] else settings["defaultEndpoint"],
+                    "model": row["model"] if row and row["model"] else settings["defaultModel"],
+                    "size": row["size"] if row else "1024x1024",
+                    "defaultEndpoint": settings["defaultEndpoint"],
+                    "defaultModel": settings["defaultModel"],
+                }
             }
         )
 
-    def handle_list_plans(self) -> None:
-        with connect() as conn:
-            rows = conn.execute("SELECT * FROM plans ORDER BY price_cents ASC").fetchall()
-        self.json_response({"plans": [row_plan(row) for row in rows]})
-
-    def handle_checkout(self) -> None:
+    def handle_put_settings(self) -> None:
+        user = self.require_user()
         body = self.read_json()
-        plan_id = str(body.get("planId") or "")
+        api_key = str(body.get("apiKey") or "").strip()
+        endpoint = str(body.get("endpoint") or DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
+        model = str(body.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+        size = str(body.get("size") or "1024x1024").strip() or "1024x1024"
         with connect() as conn:
-            user = self.auth_user(conn)
-            plan = conn.execute("SELECT * FROM plans WHERE id=?", (plan_id,)).fetchone()
-            if not plan:
-                raise ValueError("套餐不存在")
-            order_id = make_id("order")
-            status = "paid" if MOCK_BILLING_AUTOGRANT else "pending"
-            paid_at = now_iso() if status == "paid" else None
-            checkout_url = f"/api/billing/mock-pay/{order_id}"
             conn.execute(
                 """
-                INSERT INTO billing_orders
-                  (id, user_id, plan_id, amount_cents, credits, status, provider, checkout_url, created_at, paid_at)
-                VALUES (?, ?, ?, ?, ?, ?, 'mock', ?, ?, ?)
+                INSERT INTO user_settings (user_id, api_key, endpoint, model, size, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                  api_key=excluded.api_key,
+                  endpoint=excluded.endpoint,
+                  model=excluded.model,
+                  size=excluded.size,
+                  updated_at=excluded.updated_at
+                """,
+                (user["id"], api_key, endpoint, model, size, now_iso()),
+            )
+        self.json_response({"ok": True})
+
+    def handle_create_generation_log(self) -> None:
+        user = self.require_user()
+        body = self.read_json()
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO generation_logs
+                  (id, user_id, endpoint, model, prompt, size, count, image_count, status, error,
+                   request_json, response_json, input_tokens, output_tokens, total_tokens, duration_ms, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    order_id,
+                    make_id("log"),
                     user["id"],
-                    plan["id"],
-                    plan["price_cents"],
-                    plan["credits"],
-                    status,
-                    checkout_url,
+                    str(body.get("endpoint") or "")[:800],
+                    str(body.get("model") or "")[:160],
+                    str(body.get("prompt") or "")[:4000],
+                    str(body.get("size") or "")[:80],
+                    int(body.get("count") or 1),
+                    int(body.get("imageCount") or 0),
+                    str(body.get("status") or "completed")[:32],
+                    str(body.get("error") or "")[:2000],
+                    trim_json(body.get("requestBody")),
+                    trim_json(body.get("responseBody")),
+                    int(body.get("inputTokens") or 0),
+                    int(body.get("outputTokens") or 0),
+                    int(body.get("totalTokens") or 0),
+                    int(body.get("durationMs") or 0),
                     now_iso(),
-                    paid_at,
                 ),
             )
-            if status == "paid":
-                self.grant_order_credits(conn, user["id"], order_id, plan["credits"])
-            updated_user = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        self.json_response({"ok": True})
+
+    def handle_create_image_feedback(self) -> None:
+        user = self.require_user()
+        body = self.read_json()
+        image_url = str(body.get("imageUrl") or "").strip()
+        if not image_url:
+            raise AppError(HTTPStatus.BAD_REQUEST, "缺少图片信息")
+        feedback_type = str(body.get("feedbackType") or "downvote").strip()[:32] or "downvote"
+        if feedback_type not in {"upvote", "downvote"}:
+            raise AppError(HTTPStatus.BAD_REQUEST, "反馈类型无效")
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO image_feedback
+                  (id, user_id, feedback_type, image_url, image_name, image_source, prompt, model, size,
+                   request_json, item_json, user_source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    make_id("fb"),
+                    user["id"],
+                    feedback_type,
+                    trim_text(image_url, 240_000),
+                    str(body.get("imageName") or "")[:240],
+                    str(body.get("imageSource") or "")[:80],
+                    str(body.get("prompt") or "")[:6000],
+                    str(body.get("model") or "")[:160],
+                    str(body.get("size") or "")[:80],
+                    trim_json(body.get("requestBody"), 120_000),
+                    trim_json(body.get("item"), 80_000),
+                    row_value(user, "source", "direct") or "direct",
+                    now_iso(),
+                ),
+            )
+        self.json_response({"ok": True})
+
+    def handle_admin_login(self) -> None:
+        body = self.read_json()
+        email = str(body.get("email") or "").strip().lower()
+        password = str(body.get("password") or "")
+        if email != ADMIN_EMAIL or password != ADMIN_PASSWORD:
+            raise AppError(HTTPStatus.UNAUTHORIZED, "B 端账号或密码错误")
+        token = self.create_session(None, "admin")
+        self.json_response({"token": token, "admin": {"email": ADMIN_EMAIL}})
+
+    def handle_admin_summary(self) -> None:
+        self.require_admin()
+        with connect() as conn:
+            summary = conn.execute(
+                """
+                SELECT
+                  (SELECT COUNT(*) FROM users) AS users,
+                  (SELECT COUNT(*) FROM users WHERE disabled=1) AS disabled_users,
+                  (SELECT COUNT(*) FROM generation_logs) AS calls,
+                  (SELECT COALESCE(SUM(image_count), 0) FROM generation_logs) AS images,
+                  (SELECT COALESCE(SUM(input_tokens), 0) FROM generation_logs) AS input_tokens,
+                  (SELECT COALESCE(SUM(output_tokens), 0) FROM generation_logs) AS output_tokens,
+                  (SELECT COALESCE(SUM(total_tokens), 0) FROM generation_logs) AS total_tokens,
+                  (SELECT COUNT(*) FROM image_feedback) AS feedbacks,
+                  (SELECT COUNT(*) FROM image_feedback WHERE feedback_type='upvote') AS upvotes,
+                  (SELECT COUNT(*) FROM image_feedback WHERE feedback_type='downvote') AS downvotes
+                """
+            ).fetchone()
+            settings = app_settings(conn)
+        self.json_response({"summary": dict(summary), "modelConfig": settings})
+
+    def handle_admin_users(self) -> None:
+        self.require_admin()
+        with connect() as conn:
+            rows = conn.execute("SELECT * FROM users ORDER BY created_at DESC").fetchall()
+            usage_rows = conn.execute(
+                """
+                SELECT user_id, COUNT(*) AS calls, COALESCE(SUM(image_count), 0) AS images,
+                       COALESCE(SUM(input_tokens), 0) AS input_tokens,
+                       COALESCE(SUM(output_tokens), 0) AS output_tokens,
+                       COALESCE(SUM(total_tokens), 0) AS total_tokens
+                FROM generation_logs GROUP BY user_id
+                """
+            ).fetchall()
+            settings_rows = conn.execute("SELECT user_id, api_key FROM user_settings").fetchall()
+        usage_by_user = {
+            row["user_id"]: {
+                "calls": row["calls"],
+                "images": row["images"],
+                "inputTokens": row["input_tokens"],
+                "outputTokens": row["output_tokens"],
+                "totalTokens": row["total_tokens"],
+            }
+            for row in usage_rows
+        }
+        key_by_user = {row["user_id"]: bool(row["api_key"]) for row in settings_rows}
+        self.json_response(
+            {"users": [row_user(row, usage_by_user.get(row["id"]), key_by_user.get(row["id"], False)) for row in rows]}
+        )
+
+    def handle_admin_update_user(self, user_id: str) -> None:
+        self.require_admin()
+        body = self.read_json()
+        disabled = 1 if body.get("disabled") else 0
+        with connect() as conn:
+            cursor = conn.execute("UPDATE users SET disabled=? WHERE id=?", (disabled, user_id))
+            if cursor.rowcount == 0:
+                raise AppError(HTTPStatus.NOT_FOUND, "用户不存在")
+            if disabled:
+                conn.execute("DELETE FROM sessions WHERE user_id=? AND role='user'", (user_id,))
+        self.json_response({"ok": True})
+
+    def handle_admin_logs(self, query: str) -> None:
+        self.require_admin()
+        params = parse_qs(query)
+        limit = min(max(int(params.get("limit", ["120"])[0] or 120), 1), 500)
+        with connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT generation_logs.*, users.email, users.name, users.source
+                FROM generation_logs
+                JOIN users ON users.id = generation_logs.user_id
+                ORDER BY generation_logs.created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        logs = []
+        for row in rows:
+            logs.append(
+                {
+                    "id": row["id"],
+                    "userId": row["user_id"],
+                    "userEmail": row["email"],
+                    "userName": row["name"],
+                    "userSource": row["source"],
+                    "endpoint": row["endpoint"],
+                    "model": row["model"],
+                    "prompt": row["prompt"],
+                    "size": row["size"],
+                    "count": row["count"],
+                    "imageCount": row["image_count"],
+                    "status": row["status"],
+                    "error": row["error"],
+                    "requestBody": parse_json_field(row["request_json"]),
+                    "responseBody": parse_json_field(row["response_json"]),
+                    "inputTokens": row["input_tokens"],
+                    "outputTokens": row["output_tokens"],
+                    "totalTokens": row["total_tokens"],
+                    "durationMs": row["duration_ms"],
+                    "createdAt": row["created_at"],
+                }
+            )
+        self.json_response({"logs": logs})
+
+    def handle_admin_feedback(self, query: str) -> None:
+        self.require_admin()
+        params = parse_qs(query)
+        limit = min(max(int(params.get("limit", ["120"])[0] or 120), 1), 500)
+        feedback_type_filter = str(params.get("feedbackType", [""])[0] or "").strip()
+        if feedback_type_filter not in {"upvote", "downvote"}:
+            feedback_type_filter = ""
+        source_filter = str(params.get("source", [""])[0] or "").strip()
+        image_source_filter = str(params.get("imageSource", [""])[0] or "").strip()
+        where = ["1=1"]
+        values: list[str | int] = []
+        if feedback_type_filter:
+            where.append("image_feedback.feedback_type=?")
+            values.append(feedback_type_filter)
+        if source_filter:
+            where.append("users.source=?")
+            values.append(source_filter)
+        if image_source_filter:
+            where.append("image_feedback.image_source=?")
+            values.append(image_source_filter)
+        values.append(limit)
+        with connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT image_feedback.*, users.email, users.name, users.source, users.referrer,
+                       users.utm_source, users.utm_medium, users.utm_campaign, users.source_path
+                FROM image_feedback
+                JOIN users ON users.id = image_feedback.user_id
+                WHERE {" AND ".join(where)}
+                ORDER BY image_feedback.created_at DESC
+                LIMIT ?
+                """,
+                values,
+            ).fetchall()
+            source_rows = conn.execute(
+                """
+                SELECT COALESCE(NULLIF(users.source, ''), 'direct') AS source, COUNT(*) AS count
+                FROM image_feedback
+                JOIN users ON users.id = image_feedback.user_id
+                WHERE (? = '' OR image_feedback.feedback_type = ?)
+                GROUP BY COALESCE(NULLIF(users.source, ''), 'direct')
+                ORDER BY count DESC, source ASC
+                """,
+                (feedback_type_filter, feedback_type_filter),
+            ).fetchall()
+            image_source_rows = conn.execute(
+                """
+                SELECT COALESCE(NULLIF(image_source, ''), 'unknown') AS image_source, COUNT(*) AS count
+                FROM image_feedback
+                WHERE (? = '' OR feedback_type = ?)
+                GROUP BY COALESCE(NULLIF(image_source, ''), 'unknown')
+                ORDER BY count DESC, image_source ASC
+                """,
+                (feedback_type_filter, feedback_type_filter),
+            ).fetchall()
+        feedbacks = []
+        for row in rows:
+            feedbacks.append(
+                {
+                    "id": row["id"],
+                    "userId": row["user_id"],
+                    "userEmail": row["email"],
+                    "userName": row["name"],
+                    "feedbackType": row["feedback_type"],
+                    "userSource": {
+                        "source": row["source"] or "direct",
+                        "referrer": row["referrer"],
+                        "utmSource": row["utm_source"],
+                        "utmMedium": row["utm_medium"],
+                        "utmCampaign": row["utm_campaign"],
+                        "sourcePath": row["source_path"],
+                    },
+                    "imageUrl": row["image_url"],
+                    "imageName": row["image_name"],
+                    "imageSource": row["image_source"],
+                    "prompt": row["prompt"],
+                    "model": row["model"],
+                    "size": row["size"],
+                    "requestBody": parse_json_field(row["request_json"]),
+                    "item": parse_json_field(row["item_json"]),
+                    "createdAt": row["created_at"],
+                }
+            )
         self.json_response(
             {
-                "order": {
-                    "id": order_id,
-                    "status": status,
-                    "provider": "mock",
-                    "checkoutUrl": checkout_url,
-                    "credits": plan["credits"],
-                    "amountCents": plan["price_cents"],
-                },
-                "user": row_user(updated_user),
-            },
-            HTTPStatus.CREATED,
+                "feedbacks": feedbacks,
+                "sources": [{"source": row["source"], "count": row["count"]} for row in source_rows],
+                "imageSources": [
+                    {"imageSource": row["image_source"], "count": row["count"]} for row in image_source_rows
+                ],
+            }
         )
 
-    def handle_mock_pay(self, order_id: str) -> None:
+    def handle_admin_model_config(self) -> None:
+        self.require_admin()
         with connect() as conn:
-            user = self.auth_user(conn)
-            order = conn.execute(
-                "SELECT * FROM billing_orders WHERE id=? AND user_id=?", (order_id, user["id"])
-            ).fetchone()
-            if not order:
-                self.json_response({"error": "订单不存在"}, HTTPStatus.NOT_FOUND)
-                return
-            if order["status"] != "paid":
+            self.json_response({"modelConfig": app_settings(conn)})
+
+    def handle_admin_put_model_config(self) -> None:
+        self.require_admin()
+        body = self.read_json()
+        endpoint = str(body.get("defaultEndpoint") or DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
+        model = str(body.get("defaultModel") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
+        note = str(body.get("usageNote") or "").strip()
+        with connect() as conn:
+            for key, value in {
+                "default_endpoint": endpoint,
+                "default_model": model,
+                "usage_note": note,
+            }.items():
                 conn.execute(
-                    "UPDATE billing_orders SET status='paid', paid_at=? WHERE id=?",
-                    (now_iso(), order_id),
+                    """
+                    INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                    """,
+                    (key, value, now_iso()),
                 )
-                self.grant_order_credits(conn, user["id"], order_id, order["credits"])
-            updated_user = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
-        self.json_response({"ok": True, "user": row_user(updated_user)})
+        self.json_response({"ok": True})
 
-    def grant_order_credits(self, conn: sqlite3.Connection, user_id: str, order_id: str, credits: int) -> None:
-        conn.execute("UPDATE users SET quota_balance=quota_balance+? WHERE id=?", (credits, user_id))
-        conn.execute(
-            """
-            INSERT INTO quota_ledger (id, user_id, delta, reason, ref_type, ref_id, created_at)
-            VALUES (?, ?, ?, 'billing_topup', 'order', ?, ?)
-            """,
-            (make_id("quota"), user_id, credits, order_id, now_iso()),
-        )
 
-    def serve_static(self, path: str) -> None:
-        if path in {"", "/"}:
-            target = ROOT / "index.html"
-        elif path.startswith("/media/"):
-            target = STORAGE_DIR / path.lstrip("/")
-        else:
-            target = ROOT / path.lstrip("/")
+def normalize_source(value) -> dict:
+    source = value if isinstance(value, dict) else {}
+    utm_source = str(source.get("utmSource") or source.get("utm_source") or source.get("source") or "").strip()
+    referrer = str(source.get("referrer") or "").strip()
+    normalized_source = str(source.get("source") or utm_source or "").strip()
+    if not normalized_source:
+        normalized_source = "referrer" if referrer else "direct"
+    return {
+        "source": trim_text(normalized_source.lower(), 120) or "direct",
+        "referrer": trim_text(referrer, 600),
+        "utmSource": trim_text(utm_source, 120),
+        "utmMedium": trim_text(str(source.get("utmMedium") or source.get("utm_medium") or "").strip(), 120),
+        "utmCampaign": trim_text(str(source.get("utmCampaign") or source.get("utm_campaign") or "").strip(), 160),
+        "sourcePath": trim_text(str(source.get("sourcePath") or source.get("source_path") or "").strip(), 600),
+    }
 
-        target = target.resolve()
-        allowed_roots = [ROOT.resolve(), STORAGE_DIR.resolve()]
-        if not any(str(target).startswith(str(root)) for root in allowed_roots):
-            self.json_response({"error": "Forbidden"}, HTTPStatus.FORBIDDEN)
-            return
-        if not target.exists() or not target.is_file():
-            self.json_response({"error": "Not found"}, HTTPStatus.NOT_FOUND)
-            return
 
-        data = target.read_bytes()
-        content_type = mimetypes.guess_type(str(target))[0] or "application/octet-stream"
-        self.send_response(HTTPStatus.OK)
-        self.add_cors_headers()
-        self.send_header("Content-Type", content_type)
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+def trim_text(value, max_len: int) -> str:
+    text = str(value or "")
+    if len(text) <= max_len:
+        return text
+    return text[:max_len]
 
-    def log_message(self, fmt: str, *args: object) -> None:
-        sys.stderr.write("[%s] %s\n" % (time.strftime("%H:%M:%S"), fmt % args))
+
+def trim_json(value, max_len: int = 120_000) -> str:
+    text = json.dumps(value or {}, ensure_ascii=False)
+    if len(text) > max_len:
+        return json.dumps({"truncated": True, "preview": text[:max_len]}, ensure_ascii=False)
+    return text
+
+
+def parse_json_field(value: str):
+    try:
+        return json.loads(value or "{}")
+    except json.JSONDecodeError:
+        return {"raw": value}
 
 
 def main() -> None:
     init_db()
+    os.chdir(ROOT)
     host = os.environ.get("HOST", "127.0.0.1")
     port = int(os.environ.get("PORT", "8787"))
-    server = ThreadingHTTPServer((host, port), Handler)
-    display_host = "localhost" if host in {"127.0.0.1", "0.0.0.0"} else host
-    print(f"AI image editor cloud server running on http://{display_host}:{port}")
-    print(f"SQLite database: {DB_PATH}")
-    if not IMAGE_API_KEY:
-        print("IMAGE_API_KEY is not set; /api/generate will return mock images for local testing.")
-    server.serve_forever()
+    display_host = "localhost" if host in {"", "0.0.0.0", "::", "127.0.0.1"} else host
+    server = bind_server(host, port)
+    actual_port = server.server_address[1]
+    print(f"AI image editor server running on http://{display_host}:{actual_port}")
+    if actual_port != port:
+        print(f"Port {port} is busy; switched to http://{display_host}:{actual_port}")
+    print(f"Admin login: {ADMIN_EMAIL} / {ADMIN_PASSWORD}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        pass
+    finally:
+        server.server_close()
+
+
+def bind_server(host: str, port: int) -> ThreadingHTTPServer:
+    if os.environ.get("PORT"):
+        return ThreadingHTTPServer((host, port), Handler)
+    for candidate in range(port, port + 20):
+        try:
+            return ThreadingHTTPServer((host, candidate), Handler)
+        except OSError as error:
+            if error.errno not in {errno.EADDRINUSE, 48}:
+                raise
+    raise OSError(errno.EADDRINUSE, f"Ports {port}-{port + 19} are already in use")
 
 
 if __name__ == "__main__":
