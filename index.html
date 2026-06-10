@@ -51,7 +51,10 @@
         <section class="account-card" aria-label="账号状态">
           <span id="accountTitle">未登录</span>
           <strong id="accountNameText">注册后使用工具</strong>
-          <small id="accountMetaText">登录后由管理员配置 API Key</small>
+          <div class="account-key-status" id="accountKeyStatus" aria-label="模型 Key 配置状态">
+            <span><b>图片 Key</b><em>登录后查看</em></span>
+            <span><b>视频 Key</b><em>登录后查看</em></span>
+          </div>
           <div class="account-actions">
             <button class="mini-button ghost-button" id="openAuthBtn" type="button">登录 / 注册</button>
             <button class="mini-button ghost-button danger" id="logoutBtn" type="button">退出</button>

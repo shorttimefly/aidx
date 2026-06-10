@@ -23,9 +23,15 @@ assert.ok(authModal.includes('id="authSubmitBtn"'));
 assert.ok(!authModal.includes('id="loginBtn"'));
 assert.ok(!authModal.includes('id="registerBtn"'));
 assert.ok(!authModal.includes("authEmailInput"));
+assert.ok(html.includes('id="accountKeyStatus"'));
+assert.ok(html.includes("图片 Key"));
+assert.ok(html.includes("视频 Key"));
 
 assert.ok(!app.includes("authEmailInput"));
+assert.ok(!app.includes("accountMetaText"));
 assert.ok(app.includes('activeAuthMode: "login"'));
+assert.ok(app.includes("videoApiKeyConfigured"));
+assert.ok(app.includes("renderAccountKeyStatus"));
 assert.ok(app.includes("authTypeInput: document.getElementById(\"authTypeInput\")"));
 assert.ok(app.includes("authSubmitBtn: document.getElementById(\"authSubmitBtn\")"));
 assert.ok(app.includes("switchAuthMode"));

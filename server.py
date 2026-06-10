@@ -792,13 +792,26 @@ class Handler(SimpleHTTPRequestHandler):
         api_key = row["api_key"] if row else ""
         endpoint = row_value(row, "endpoint", "") or settings["defaultEndpoint"]
         model = row_value(row, "model", "") or settings["defaultModel"]
+        video_api_key = row_value(row, "video_api_key", "")
+        video_model = row_value(row, "video_model", "")
+        video_endpoint_primary = row_value(row, "video_endpoint_primary", "")
+        video_endpoint_secondary = row_value(row, "video_endpoint_secondary", "")
         self.json_response(
             {
                 "settings": {
                     "apiKeyConfigured": bool(api_key),
                     "apiKeyMasked": mask_api_key(api_key),
+                    "imageApiKeyConfigured": bool(api_key),
+                    "imageApiKeyMasked": mask_api_key(api_key),
+                    "imageEndpoint": endpoint,
+                    "imageModel": model,
                     "endpoint": endpoint,
                     "model": model,
+                    "videoApiKeyConfigured": bool(video_api_key),
+                    "videoApiKeyMasked": mask_api_key(video_api_key),
+                    "videoModel": video_model,
+                    "videoEndpointPrimary": video_endpoint_primary,
+                    "videoEndpointSecondary": video_endpoint_secondary,
                     "size": row["size"] if row else "1024x1024",
                     "defaultEndpoint": settings["defaultEndpoint"],
                     "defaultModel": settings["defaultModel"],

@@ -323,8 +323,18 @@ class AdminRoleTests(unittest.TestCase):
 
         status, settings_payload = self.request("GET", "/api/settings", token=user_payload["token"])
         self.assertEqual(status, 200)
+        self.assertTrue(settings_payload["settings"]["imageApiKeyConfigured"])
+        self.assertTrue(settings_payload["settings"]["apiKeyConfigured"])
+        self.assertTrue(settings_payload["settings"]["videoApiKeyConfigured"])
+        self.assertNotIn("secret", settings_payload["settings"]["imageApiKeyMasked"])
+        self.assertNotIn("secret", settings_payload["settings"]["videoApiKeyMasked"])
         self.assertEqual(settings_payload["settings"]["endpoint"], "https://image.example.com/v1/generate")
         self.assertEqual(settings_payload["settings"]["model"], "gemini-3-pro-image")
+        self.assertEqual(settings_payload["settings"]["imageEndpoint"], "https://image.example.com/v1/generate")
+        self.assertEqual(settings_payload["settings"]["imageModel"], "gemini-3-pro-image")
+        self.assertEqual(settings_payload["settings"]["videoModel"], "veo-3-fast")
+        self.assertEqual(settings_payload["settings"]["videoEndpointPrimary"], "https://video.example.com/v1/jobs")
+        self.assertEqual(settings_payload["settings"]["videoEndpointSecondary"], "https://video.example.com/v1/status")
 
     def test_demoting_admin_user_revokes_admin_sessions(self):
         user_payload = self.register_user()

@@ -45,6 +45,8 @@ B端 user credential configuration now distinguishes image and video model setti
 - `GET /api/admin/users` now returns video-specific fields `videoApiKeyConfigured`, `videoApiKeyMasked`, `videoEndpointPrimary`, and `videoEndpointSecondary`.
 - `PATCH /api/admin/users/:id` now accepts `imageApiKey`, `imageEndpoint`, `imageModel`, `clearImageApiKey`, `videoApiKey`, `videoModel`, `videoEndpointPrimary`, `videoEndpointSecondary`, and `clearVideoApiKey`.
 - Existing `apiKey` and `clearApiKey` payloads remain compatible aliases for the image key.
+- `GET /api/settings` returns image-specific fields `imageApiKeyConfigured`, `imageApiKeyMasked`, `imageEndpoint`, and `imageModel`, while keeping legacy `apiKeyConfigured` and `apiKeyMasked` as image-key aliases.
+- `GET /api/settings` returns video-specific fields `videoApiKeyConfigured`, `videoApiKeyMasked`, `videoModel`, `videoEndpointPrimary`, and `videoEndpointSecondary`.
 - `GET /api/settings` and backend image generation now use the user's configured image address when present, falling back to the B端 default endpoint.
 - The built-in AOKAPI image endpoint default now uses `{model}`: `https://aokapi.com/v1beta/models/{model}:generateContent/`. Existing built-in default endpoint values are migrated to this placeholder form.
 
@@ -52,6 +54,7 @@ B端 user credential configuration now distinguishes image and video model setti
 
 - The registered user table renamed `API Key` to `图片 Key` and added a `视频 Key` column.
 - User actions now expose separate image and video configuration controls. Image configuration includes image model and Base URL/address; video configuration includes one API Key, video model, and two addresses.
+- C端 account status now lists `图片 Key` and `视频 Key` separately, so a missing video key no longer hides an already configured image key.
 
 ### Storage Contract
 

@@ -383,6 +383,7 @@ const state = {
     token: "",
     user: null,
     apiKeyConfigured: false,
+    videoApiKeyConfigured: false,
     modelSettings: {
       endpoint: DEFAULT_ENDPOINT,
       model: DEFAULT_MODEL
@@ -621,7 +622,7 @@ function cacheElements() {
     views: document.querySelectorAll(".view"),
     accountTitle: document.getElementById("accountTitle"),
     accountNameText: document.getElementById("accountNameText"),
-    accountMetaText: document.getElementById("accountMetaText"),
+    accountKeyStatus: document.getElementById("accountKeyStatus"),
     openAuthBtn: document.getElementById("openAuthBtn"),
     logoutBtn: document.getElementById("logoutBtn"),
     connectionState: document.getElementById("connectionState"),
@@ -1030,6 +1031,7 @@ function clearAuthSession() {
   state.auth.token = "";
   state.auth.user = null;
   state.auth.apiKeyConfigured = false;
+  state.auth.videoApiKeyConfigured = false;
   state.auth.modelSettings = {
     endpoint: DEFAULT_ENDPOINT,
     model: DEFAULT_MODEL
@@ -1042,9 +1044,26 @@ function renderAuthState() {
   const user = state.auth.user;
   els.accountTitle.textContent = user ? "当前账号" : "未登录";
   els.accountNameText.textContent = user ? user.name || "已登录账号" : "注册后使用工具";
-  els.accountMetaText.textContent = "登录后由管理员配置 API Key";
+  renderAccountKeyStatus();
   els.logoutBtn.style.display = user ? "inline-flex" : "none";
   els.openAuthBtn.textContent = user ? "切换账号" : "登录 / 注册";
+}
+
+function renderAccountKeyStatus() {
+  if (!els.accountKeyStatus) return;
+  const loggedIn = Boolean(state.auth.user);
+  const imageReady = loggedIn && Boolean(state.auth.apiKeyConfigured);
+  const videoReady = loggedIn && Boolean(state.auth.videoApiKeyConfigured);
+  const statusItems = [
+    { label: "图片 Key", ready: imageReady, text: loggedIn ? (imageReady ? "已配置" : "未配置") : "登录后查看" },
+    { label: "视频 Key", ready: videoReady, text: loggedIn ? (videoReady ? "已配置" : "未配置") : "登录后查看" }
+  ];
+  els.accountKeyStatus.innerHTML = statusItems
+    .map((item) => {
+      const statusClass = !loggedIn ? "neutral" : item.ready ? "ready" : "missing";
+      return `<span class="${statusClass}"><b>${escapeHtml(item.label)}</b><em>${escapeHtml(item.text)}</em></span>`;
+    })
+    .join("");
 }
 
 function updateAuthTypeUi() {
@@ -1083,7 +1102,8 @@ function closeAuthModal() {
 async function loadAccountSettings() {
   const payload = await apiFetch("/settings");
   const settings = payload.settings || {};
-  state.auth.apiKeyConfigured = Boolean(settings.apiKeyConfigured);
+  state.auth.apiKeyConfigured = Boolean(settings.imageApiKeyConfigured ?? settings.apiKeyConfigured);
+  state.auth.videoApiKeyConfigured = Boolean(settings.videoApiKeyConfigured);
   state.auth.modelSettings = {
     endpoint: settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT,
     model: settings.model || settings.defaultModel || DEFAULT_MODEL
@@ -1096,6 +1116,7 @@ async function loadAccountSettings() {
   const savedSize = localSize || normalizeImageSize(settings.size) || "1024x1024";
   applyDetectedSize(savedSize);
   els.sizeInput.value = savedSize;
+  renderAuthState();
   updateConnectionState();
 }
 

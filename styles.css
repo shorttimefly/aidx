@@ -215,7 +215,6 @@ svg {
 }
 
 .account-card span,
-.account-card small,
 .account-card strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -231,15 +230,60 @@ svg {
   font-size: 15px;
 }
 
-.account-card small {
-  font-size: 11px;
-}
-
 .account-actions {
   display: grid;
   grid-template-columns: 1fr auto;
   gap: 8px;
   margin-top: 4px;
+}
+
+.account-key-status {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.account-card .account-key-status span {
+  display: grid;
+  grid-template-columns: minmax(56px, auto) minmax(0, 1fr);
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  overflow: visible;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.25;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.account-key-status b,
+.account-key-status em {
+  min-width: 0;
+  overflow: hidden;
+  font-style: normal;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-key-status b {
+  color: #314157;
+  font-weight: 750;
+}
+
+.account-key-status em {
+  color: var(--muted);
+  text-align: right;
+}
+
+.account-key-status .ready em {
+  color: var(--green-dark);
+  font-weight: 800;
+}
+
+.account-key-status .missing em {
+  color: var(--red);
+  font-weight: 800;
 }
 
 .rail-footer {
