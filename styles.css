@@ -1871,6 +1871,12 @@ input[readonly] {
   color: var(--red);
 }
 
+.status-chip.neutral {
+  border-color: var(--line);
+  background: var(--panel-subtle);
+  color: var(--muted);
+}
+
 .source-chip {
   display: inline-grid;
   place-items: center;

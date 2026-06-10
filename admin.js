@@ -20,7 +20,8 @@ const state = {
   activeAdminView: "model",
   promptConfig: null,
   activePromptGroup: "single",
-  selectedKeyUserId: ""
+  selectedKeyUserId: "",
+  selectedKeyMode: "image"
 };
 
 const els = {};
@@ -67,8 +68,17 @@ function cacheElements() {
     promptGroupList: document.getElementById("promptGroupList"),
     promptConfigEditor: document.getElementById("promptConfigEditor"),
     adminKeyModal: document.getElementById("adminKeyModal"),
+    adminKeyModalTitle: document.getElementById("adminKeyModalTitle"),
     adminKeyUserText: document.getElementById("adminKeyUserText"),
+    adminKeyHelpText: document.getElementById("adminKeyHelpText"),
+    adminKeyInputLabel: document.getElementById("adminKeyInputLabel"),
     adminApiKeyInput: document.getElementById("adminApiKeyInput"),
+    adminImageEndpointField: document.getElementById("adminImageEndpointField"),
+    adminImageEndpointInput: document.getElementById("adminImageEndpointInput"),
+    adminVideoEndpointPrimaryField: document.getElementById("adminVideoEndpointPrimaryField"),
+    adminVideoEndpointPrimaryInput: document.getElementById("adminVideoEndpointPrimaryInput"),
+    adminVideoEndpointSecondaryField: document.getElementById("adminVideoEndpointSecondaryField"),
+    adminVideoEndpointSecondaryInput: document.getElementById("adminVideoEndpointSecondaryInput"),
     closeAdminKeyModalBtn: document.getElementById("closeAdminKeyModalBtn"),
     cancelUserKeyBtn: document.getElementById("cancelUserKeyBtn"),
     saveUserKeyBtn: document.getElementById("saveUserKeyBtn"),
@@ -234,6 +244,7 @@ async function loadPromptConfig() {
 function renderSummary(summary = {}) {
   const cards = [
     ["注册用户", summary.users || 0],
+    ["注册管理员", summary.admin_users || 0],
     ["禁用用户", summary.disabled_users || 0],
     ["模型调用", summary.calls || 0],
     ["生成图片", summary.images || 0],
@@ -526,7 +537,7 @@ function setPromptConfigValue(path, value) {
 
 function renderUsers() {
   if (!state.users.length) {
-    els.adminUserTable.innerHTML = `<tr><td colspan="9">暂无注册用户</td></tr>`;
+    els.adminUserTable.innerHTML = `<tr><td colspan="11">暂无注册用户</td></tr>`;
     return;
   }
   els.adminUserTable.innerHTML = state.users
@@ -542,9 +553,17 @@ function renderUsers() {
             <small>${escapeHtml(user.source?.utmCampaign || user.source?.referrer || user.source?.sourcePath || "")}</small>
           </td>
           <td><span class="status-chip ${user.disabled ? "danger" : "ready"}">${user.disabled ? "已禁用" : "正常"}</span></td>
+          <td><span class="status-chip ${user.role === "admin" ? "ready" : "neutral"}">${escapeHtml(userRoleLabel(user.role))}</span></td>
           <td>
-            <span class="status-chip ${user.apiKeyConfigured ? "ready" : "danger"}">${user.apiKeyConfigured ? "已配置" : "未配置"}</span>
-            <small>${escapeHtml(user.apiKeyMasked || "未设置")}</small>
+            <span class="status-chip ${(user.imageApiKeyConfigured ?? user.apiKeyConfigured) ? "ready" : "danger"}">${(user.imageApiKeyConfigured ?? user.apiKeyConfigured) ? "已配置" : "未配置"}</span>
+            <small>${escapeHtml(user.imageApiKeyMasked || user.apiKeyMasked || "未设置")}</small>
+            <small>地址：${escapeHtml(user.imageEndpoint || "未设置")}</small>
+          </td>
+          <td>
+            <span class="status-chip ${user.videoApiKeyConfigured ? "ready" : "danger"}">${user.videoApiKeyConfigured ? "已配置" : "未配置"}</span>
+            <small>${escapeHtml(user.videoApiKeyMasked || "未设置")}</small>
+            <small>地址1：${escapeHtml(user.videoEndpointPrimary || "未设置")}</small>
+            <small>地址2：${escapeHtml(user.videoEndpointSecondary || "未设置")}</small>
           </td>
           <td>${formatNumber(user.usage.calls)}</td>
           <td>${formatNumber(user.usage.images)}</td>
@@ -555,8 +574,14 @@ function renderUsers() {
           </td>
           <td>
             <div class="admin-action-row">
-              <button class="small-button" type="button" data-action="config-key" data-user-id="${escapeAttr(user.id)}">
-                ${user.apiKeyConfigured ? "更新 Key" : "配置 Key"}
+              <button class="small-button" type="button" data-action="config-image-key" data-user-id="${escapeAttr(user.id)}">
+                图片 Key
+              </button>
+              <button class="small-button" type="button" data-action="config-video-key" data-user-id="${escapeAttr(user.id)}">
+                视频配置
+              </button>
+              <button class="small-button" type="button" data-action="toggle-role" data-user-id="${escapeAttr(user.id)}">
+                ${user.role === "admin" ? "设为普通用户" : "设为管理员"}
               </button>
               <button class="small-button ${user.disabled ? "" : "danger"}" type="button" data-action="toggle-user" data-user-id="${escapeAttr(user.id)}">
                 ${user.disabled ? "启用" : "禁用"}
@@ -570,8 +595,14 @@ function renderUsers() {
   els.adminUserTable.querySelectorAll("[data-action='toggle-user']").forEach((button) => {
     button.addEventListener("click", () => toggleUser(button.dataset.userId));
   });
-  els.adminUserTable.querySelectorAll("[data-action='config-key']").forEach((button) => {
-    button.addEventListener("click", () => openUserKeyModal(button.dataset.userId));
+  els.adminUserTable.querySelectorAll("[data-action='config-image-key']").forEach((button) => {
+    button.addEventListener("click", () => openUserKeyModal(button.dataset.userId, "image"));
+  });
+  els.adminUserTable.querySelectorAll("[data-action='config-video-key']").forEach((button) => {
+    button.addEventListener("click", () => openUserKeyModal(button.dataset.userId, "video"));
+  });
+  els.adminUserTable.querySelectorAll("[data-action='toggle-role']").forEach((button) => {
+    button.addEventListener("click", () => toggleUserRole(button.dataset.userId));
   });
 }
 
@@ -591,14 +622,56 @@ async function toggleUser(userId) {
   }
 }
 
-function openUserKeyModal(userId) {
+async function toggleUserRole(userId) {
+  const user = state.users.find((entry) => entry.id === userId);
+  if (!user) return;
+  const role = user.role === "admin" ? "user" : "admin";
+  const ok = window.confirm(`${role === "admin" ? "授予" : "撤销"} ${user.email} 的 B 端管理员权限？`);
+  if (!ok) return;
+  try {
+    await adminFetch(`/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ role })
+    });
+    await Promise.all([loadUsers(), loadSummary()]);
+    showToast(role === "admin" ? "用户已设为管理员" : "用户已设为普通用户");
+  } catch (error) {
+    showToast(error.message, true);
+  }
+}
+
+function openUserKeyModal(userId, mode = "image") {
   const user = state.users.find((entry) => entry.id === userId);
   if (!user) return;
   state.selectedKeyUserId = userId;
+  state.selectedKeyMode = mode === "video" ? "video" : "image";
+  delete els.saveUserKeyBtn.dataset.originalText;
+  delete els.clearUserKeyBtn.dataset.originalText;
+  const isVideo = state.selectedKeyMode === "video";
+  const imageKeyConfigured = user.imageApiKeyConfigured ?? user.apiKeyConfigured;
   els.adminKeyUserText.textContent = `${user.name} / ${user.email}`;
+  els.adminKeyModalTitle.textContent = isVideo ? "配置视频 Key" : "配置图片 Key";
+  els.adminKeyHelpText.textContent = isVideo
+    ? "视频配置仅在 B 端保存，普通用户不能查看明文 Key。"
+    : "图片生成请求由后端使用该用户的图片 Key 和图片地址调用模型。";
+  els.adminKeyInputLabel.textContent = isVideo ? "视频 API Key" : "图片 API Key";
   els.adminApiKeyInput.value = "";
-  els.adminApiKeyInput.placeholder = user.apiKeyConfigured ? "粘贴新的 API Key，留空不修改" : "粘贴新的 API Key";
-  els.clearUserKeyBtn.disabled = !user.apiKeyConfigured;
+  els.adminApiKeyInput.placeholder = isVideo
+    ? user.videoApiKeyConfigured
+      ? "粘贴新的视频 Key，留空不修改"
+      : "粘贴视频 Key"
+    : imageKeyConfigured
+      ? "粘贴新的图片 Key，留空不修改"
+      : "粘贴图片 Key";
+  els.adminImageEndpointField.hidden = isVideo;
+  els.adminVideoEndpointPrimaryField.hidden = !isVideo;
+  els.adminVideoEndpointSecondaryField.hidden = !isVideo;
+  els.adminImageEndpointInput.value = user.imageEndpoint || "";
+  els.adminVideoEndpointPrimaryInput.value = user.videoEndpointPrimary || "";
+  els.adminVideoEndpointSecondaryInput.value = user.videoEndpointSecondary || "";
+  els.clearUserKeyBtn.disabled = isVideo ? !user.videoApiKeyConfigured : !imageKeyConfigured;
+  els.clearUserKeyBtn.textContent = isVideo ? "清空视频 Key" : "清空图片 Key";
+  els.saveUserKeyBtn.textContent = isVideo ? "保存视频配置" : "保存图片配置";
   els.adminKeyModal.classList.add("active");
   els.adminKeyModal.setAttribute("aria-hidden", "false");
   window.setTimeout(() => els.adminApiKeyInput.focus(), 0);
@@ -606,7 +679,11 @@ function openUserKeyModal(userId) {
 
 function closeUserKeyModal() {
   state.selectedKeyUserId = "";
+  state.selectedKeyMode = "image";
   els.adminApiKeyInput.value = "";
+  els.adminImageEndpointInput.value = "";
+  els.adminVideoEndpointPrimaryInput.value = "";
+  els.adminVideoEndpointSecondaryInput.value = "";
   els.adminKeyModal.classList.remove("active");
   els.adminKeyModal.setAttribute("aria-hidden", "true");
 }
@@ -614,24 +691,37 @@ function closeUserKeyModal() {
 async function saveUserKey() {
   const userId = state.selectedKeyUserId;
   const apiKey = els.adminApiKeyInput.value.trim();
+  const isVideo = state.selectedKeyMode === "video";
   if (!userId) return;
-  if (!apiKey) {
-    showToast("请输入新的 API Key", true);
+  const body = isVideo
+    ? {
+        videoEndpointPrimary: els.adminVideoEndpointPrimaryInput.value.trim(),
+        videoEndpointSecondary: els.adminVideoEndpointSecondaryInput.value.trim()
+      }
+    : {
+        imageEndpoint: els.adminImageEndpointInput.value.trim()
+      };
+  if (apiKey) {
+    if (isVideo) body.videoApiKey = apiKey;
+    else body.imageApiKey = apiKey;
+  }
+  if (!apiKey && !Object.values(body).some(Boolean)) {
+    showToast(isVideo ? "请输入视频 Key 或视频地址" : "请输入图片 Key 或图片地址", true);
     return;
   }
   setBusy(els.saveUserKeyBtn, "保存中", true);
   try {
     await adminFetch(`/users/${encodeURIComponent(userId)}`, {
       method: "PATCH",
-      body: JSON.stringify({ apiKey })
+      body: JSON.stringify(body)
     });
     closeUserKeyModal();
     await Promise.all([loadUsers(), loadSummary()]);
-    showToast("用户 API Key 已保存");
+    showToast(isVideo ? "用户视频配置已保存" : "用户图片配置已保存");
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    setBusy(els.saveUserKeyBtn, "保存 Key", false);
+    setBusy(els.saveUserKeyBtn, isVideo ? "保存视频配置" : "保存图片配置", false);
   }
 }
 
@@ -639,21 +729,32 @@ async function clearUserKey() {
   const userId = state.selectedKeyUserId;
   if (!userId) return;
   const user = state.users.find((entry) => entry.id === userId);
-  const ok = window.confirm(`清空 ${user?.email || "该用户"} 的 API Key？`);
+  const isVideo = state.selectedKeyMode === "video";
+  const ok = window.confirm(`清空 ${user?.email || "该用户"} 的${isVideo ? "视频" : "图片"} Key？`);
   if (!ok) return;
   setBusy(els.clearUserKeyBtn, "清空中", true);
   try {
+    const body = isVideo
+      ? {
+          clearVideoApiKey: true,
+          videoEndpointPrimary: els.adminVideoEndpointPrimaryInput.value.trim(),
+          videoEndpointSecondary: els.adminVideoEndpointSecondaryInput.value.trim()
+        }
+      : {
+          clearImageApiKey: true,
+          imageEndpoint: els.adminImageEndpointInput.value.trim()
+        };
     await adminFetch(`/users/${encodeURIComponent(userId)}`, {
       method: "PATCH",
-      body: JSON.stringify({ clearApiKey: true })
+      body: JSON.stringify(body)
     });
     closeUserKeyModal();
     await Promise.all([loadUsers(), loadSummary()]);
-    showToast("用户 API Key 已清空");
+    showToast(isVideo ? "用户视频 Key 已清空" : "用户图片 Key 已清空");
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    setBusy(els.clearUserKeyBtn, "清空 Key", false);
+    setBusy(els.clearUserKeyBtn, isVideo ? "清空视频 Key" : "清空图片 Key", false);
   }
 }
 
@@ -805,6 +906,10 @@ function feedbackTypeLabel(value) {
       downvote: "点踩"
     }[value] || "反馈"
   );
+}
+
+function userRoleLabel(value) {
+  return value === "admin" ? "管理员" : "普通用户";
 }
 
 function escapeHtml(value) {

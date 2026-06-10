@@ -34,6 +34,9 @@ PROMPT_CONFIG_KEY = "prompt_config_json"
 PROMPT_CONFIG_PATH = ROOT / "prompt-config-defaults.json"
 PROMPT_TEXT_LIMIT = 20_000
 LOCKED_PROMPT_CONFIG_KEYS = {"id", "url"}
+USER_ROLE = "user"
+ADMIN_ROLE = "admin"
+VALID_USER_ROLES = {USER_ROLE, ADMIN_ROLE}
 
 
 def now_iso() -> str:
@@ -105,6 +108,7 @@ def init_db() -> None:
               password_salt TEXT NOT NULL,
               password_hash TEXT NOT NULL,
               disabled INTEGER NOT NULL DEFAULT 0,
+              role TEXT NOT NULL DEFAULT 'user',
               source TEXT NOT NULL DEFAULT 'direct',
               referrer TEXT NOT NULL DEFAULT '',
               utm_source TEXT NOT NULL DEFAULT '',
@@ -128,6 +132,9 @@ def init_db() -> None:
               api_key TEXT NOT NULL DEFAULT '',
               endpoint TEXT NOT NULL DEFAULT '',
               model TEXT NOT NULL DEFAULT '',
+              video_api_key TEXT NOT NULL DEFAULT '',
+              video_endpoint_primary TEXT NOT NULL DEFAULT '',
+              video_endpoint_secondary TEXT NOT NULL DEFAULT '',
               size TEXT NOT NULL DEFAULT '1024x1024',
               updated_at TEXT NOT NULL
             );
@@ -181,6 +188,7 @@ def init_db() -> None:
             """
         )
         ensure_column(conn, "users", "disabled", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "users", "role", "TEXT NOT NULL DEFAULT 'user'")
         ensure_column(conn, "users", "source", "TEXT NOT NULL DEFAULT 'direct'")
         ensure_column(conn, "users", "referrer", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "utm_source", "TEXT NOT NULL DEFAULT ''")
@@ -188,6 +196,9 @@ def init_db() -> None:
         ensure_column(conn, "users", "utm_campaign", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "source_path", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "users", "last_login_at", "TEXT")
+        ensure_column(conn, "user_settings", "video_api_key", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "user_settings", "video_endpoint_primary", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "user_settings", "video_endpoint_secondary", "TEXT NOT NULL DEFAULT ''")
         ensure_sessions_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, role)")
         seed_setting(conn, "default_endpoint", DEFAULT_ENDPOINT)
@@ -330,6 +341,11 @@ def row_user(
     usage: dict | None = None,
     api_key_configured: bool = False,
     api_key_masked: str = "",
+    image_endpoint: str = "",
+    video_api_key_configured: bool = False,
+    video_api_key_masked: str = "",
+    video_endpoint_primary: str = "",
+    video_endpoint_secondary: str = "",
 ) -> dict:
     source = row_value(row, "source", "direct") or "direct"
     return {
@@ -337,6 +353,7 @@ def row_user(
         "email": row["email"],
         "name": row["name"],
         "disabled": bool(row["disabled"]),
+        "role": normalize_user_role(row_value(row, "role", USER_ROLE)),
         "source": {
             "source": source,
             "referrer": row_value(row, "referrer", ""),
@@ -349,6 +366,13 @@ def row_user(
         "lastLoginAt": row["last_login_at"],
         "apiKeyConfigured": api_key_configured,
         "apiKeyMasked": api_key_masked,
+        "imageApiKeyConfigured": api_key_configured,
+        "imageApiKeyMasked": api_key_masked,
+        "imageEndpoint": image_endpoint,
+        "videoApiKeyConfigured": video_api_key_configured,
+        "videoApiKeyMasked": video_api_key_masked,
+        "videoEndpointPrimary": video_endpoint_primary,
+        "videoEndpointSecondary": video_endpoint_secondary,
         "usage": usage
         or {
             "calls": 0,
@@ -361,7 +385,14 @@ def row_user(
 
 
 def row_value(row: sqlite3.Row, key: str, default=""):
+    if row is None:
+        return default
     return row[key] if key in row.keys() else default
+
+
+def normalize_user_role(value) -> str:
+    role = str(value or USER_ROLE).strip().lower()
+    return role if role in VALID_USER_ROLES else USER_ROLE
 
 
 class AppError(Exception):
@@ -422,8 +453,8 @@ class Handler(SimpleHTTPRequestHandler):
             if path == "/api/admin/login" and method == "POST":
                 return self.handle_admin_login()
             if path == "/api/admin/me" and method == "GET":
-                self.require_admin()
-                return self.json_response({"admin": {"email": ADMIN_EMAIL}})
+                admin = self.require_admin()
+                return self.json_response({"admin": admin})
             if path == "/api/admin/summary" and method == "GET":
                 return self.handle_admin_summary()
             if path == "/api/admin/users" and method == "GET":
@@ -496,17 +527,40 @@ class Handler(SimpleHTTPRequestHandler):
                 raise AppError(HTTPStatus.FORBIDDEN, "账号已被禁用")
             return user
 
-    def require_admin(self) -> None:
+    def require_admin(self) -> dict:
         token = self.bearer_token()
         if not token:
             raise AppError(HTTPStatus.UNAUTHORIZED, "请先登录 B 端")
         with connect() as conn:
             session = conn.execute(
-                "SELECT token FROM sessions WHERE token=? AND role='admin' AND expires_at>?",
-                (token, int(time.time())),
+                "SELECT * FROM sessions WHERE token=? AND role=? AND expires_at>?",
+                (token, ADMIN_ROLE, int(time.time())),
             ).fetchone()
-        if not session:
-            raise AppError(HTTPStatus.UNAUTHORIZED, "B 端登录已失效")
+            if not session:
+                raise AppError(HTTPStatus.UNAUTHORIZED, "B 端登录已失效")
+            user_id = row_value(session, "user_id", "")
+            if not user_id:
+                return {"email": ADMIN_EMAIL, "role": ADMIN_ROLE, "source": "builtin"}
+            user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+            if not user:
+                conn.execute("DELETE FROM sessions WHERE token=?", (token,))
+                conn.commit()
+                raise AppError(HTTPStatus.UNAUTHORIZED, "管理员用户不存在")
+            if user["disabled"]:
+                conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+                conn.commit()
+                raise AppError(HTTPStatus.FORBIDDEN, "管理员账号已被禁用")
+            if normalize_user_role(row_value(user, "role", USER_ROLE)) != ADMIN_ROLE:
+                conn.execute("DELETE FROM sessions WHERE user_id=? AND role=?", (user_id, ADMIN_ROLE))
+                conn.commit()
+                raise AppError(HTTPStatus.FORBIDDEN, "管理员权限已撤销")
+            return {
+                "id": user["id"],
+                "email": user["email"],
+                "name": user["name"],
+                "role": ADMIN_ROLE,
+                "source": "user",
+            }
 
     def create_session(self, user_id: str | None, role: str) -> str:
         token = secrets.token_urlsafe(32)
@@ -535,9 +589,9 @@ class Handler(SimpleHTTPRequestHandler):
                 conn.execute(
                     """
                     INSERT INTO users
-                      (id, email, name, password_salt, password_hash, disabled, source, referrer,
+                      (id, email, name, password_salt, password_hash, disabled, role, source, referrer,
                        utm_source, utm_medium, utm_campaign, source_path, created_at, last_login_at)
-                    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)
+                    VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         user_id,
@@ -545,6 +599,7 @@ class Handler(SimpleHTTPRequestHandler):
                         name,
                         salt,
                         password_hash,
+                        USER_ROLE,
                         source["source"],
                         source["referrer"],
                         source["utmSource"],
@@ -602,13 +657,15 @@ class Handler(SimpleHTTPRequestHandler):
             prompt_config = prompt_config_settings(conn)
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
         api_key = row["api_key"] if row else ""
+        endpoint = row_value(row, "endpoint", "") or settings["defaultEndpoint"]
+        model = row_value(row, "model", "") or settings["defaultModel"]
         self.json_response(
             {
                 "settings": {
                     "apiKeyConfigured": bool(api_key),
                     "apiKeyMasked": mask_api_key(api_key),
-                    "endpoint": settings["defaultEndpoint"],
-                    "model": settings["defaultModel"],
+                    "endpoint": endpoint,
+                    "model": model,
                     "size": row["size"] if row else "1024x1024",
                     "defaultEndpoint": settings["defaultEndpoint"],
                     "defaultModel": settings["defaultModel"],
@@ -649,8 +706,8 @@ class Handler(SimpleHTTPRequestHandler):
         api_key = str(row["api_key"] if row else "").strip()
         if not api_key:
             raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置 API Key")
-        endpoint = settings["defaultEndpoint"]
-        model = settings["defaultModel"]
+        endpoint = row_value(row, "endpoint", "") or settings["defaultEndpoint"]
+        model = row_value(row, "model", "") or settings["defaultModel"]
         resolved_endpoint = resolve_image_endpoint(endpoint, model)
         request_body, strategy = build_image_request_body(
             prompt=prompt,
@@ -784,10 +841,27 @@ class Handler(SimpleHTTPRequestHandler):
         body = self.read_json()
         email = str(body.get("email") or "").strip().lower()
         password = str(body.get("password") or "")
-        if email != ADMIN_EMAIL or password != ADMIN_PASSWORD:
-            raise AppError(HTTPStatus.UNAUTHORIZED, "B 端账号或密码错误")
-        token = self.create_session(None, "admin")
-        self.json_response({"token": token, "admin": {"email": ADMIN_EMAIL}})
+        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+            token = self.create_session(None, ADMIN_ROLE)
+            self.json_response({"token": token, "admin": {"email": ADMIN_EMAIL, "role": ADMIN_ROLE, "source": "builtin"}})
+            return
+
+        with connect() as conn:
+            user = conn.execute("SELECT * FROM users WHERE email=?", (email,)).fetchone()
+            if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
+                raise AppError(HTTPStatus.UNAUTHORIZED, "B 端账号或密码错误")
+            if user["disabled"]:
+                raise AppError(HTTPStatus.FORBIDDEN, "管理员账号已被禁用")
+            if normalize_user_role(row_value(user, "role", USER_ROLE)) != ADMIN_ROLE:
+                raise AppError(HTTPStatus.FORBIDDEN, "该账号没有 B 端管理员权限")
+            conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
+        token = self.create_session(user["id"], ADMIN_ROLE)
+        self.json_response(
+            {
+                "token": token,
+                "admin": {"id": user["id"], "email": user["email"], "name": user["name"], "role": ADMIN_ROLE, "source": "user"},
+            }
+        )
 
     def handle_admin_summary(self) -> None:
         self.require_admin()
@@ -796,6 +870,7 @@ class Handler(SimpleHTTPRequestHandler):
                 """
                 SELECT
                   (SELECT COUNT(*) FROM users) AS users,
+                  (SELECT COUNT(*) FROM users WHERE role='admin') AS admin_users,
                   (SELECT COUNT(*) FROM users WHERE disabled=1) AS disabled_users,
                   (SELECT COUNT(*) FROM generation_logs) AS calls,
                   (SELECT COALESCE(SUM(image_count), 0) FROM generation_logs) AS images,
@@ -823,7 +898,13 @@ class Handler(SimpleHTTPRequestHandler):
                 FROM generation_logs GROUP BY user_id
                 """
             ).fetchall()
-            settings_rows = conn.execute("SELECT user_id, api_key FROM user_settings").fetchall()
+            settings_rows = conn.execute(
+                """
+                SELECT user_id, api_key, endpoint, video_api_key,
+                       video_endpoint_primary, video_endpoint_secondary
+                FROM user_settings
+                """
+            ).fetchall()
         usage_by_user = {
             row["user_id"]: {
                 "calls": row["calls"],
@@ -834,15 +915,20 @@ class Handler(SimpleHTTPRequestHandler):
             }
             for row in usage_rows
         }
-        key_by_user = {row["user_id"]: row["api_key"] for row in settings_rows}
+        settings_by_user = {row["user_id"]: row for row in settings_rows}
         self.json_response(
             {
                 "users": [
                     row_user(
                         row,
                         usage_by_user.get(row["id"]),
-                        bool(key_by_user.get(row["id"], "")),
-                        mask_api_key(key_by_user.get(row["id"], "")),
+                        bool(row_value(settings_by_user.get(row["id"]), "api_key", "")),
+                        mask_api_key(row_value(settings_by_user.get(row["id"]), "api_key", "")),
+                        row_value(settings_by_user.get(row["id"]), "endpoint", ""),
+                        bool(row_value(settings_by_user.get(row["id"]), "video_api_key", "")),
+                        mask_api_key(row_value(settings_by_user.get(row["id"]), "video_api_key", "")),
+                        row_value(settings_by_user.get(row["id"]), "video_endpoint_primary", ""),
+                        row_value(settings_by_user.get(row["id"]), "video_endpoint_secondary", ""),
                     )
                     for row in rows
                 ]
@@ -860,24 +946,118 @@ class Handler(SimpleHTTPRequestHandler):
                 disabled = 1 if body.get("disabled") else 0
                 conn.execute("UPDATE users SET disabled=? WHERE id=?", (disabled, user_id))
                 if disabled:
-                    conn.execute("DELETE FROM sessions WHERE user_id=? AND role='user'", (user_id,))
-            if body.get("clearApiKey"):
-                self.upsert_user_api_key(conn, user_id, "")
-            elif "apiKey" in body:
-                self.upsert_user_api_key(conn, user_id, str(body.get("apiKey") or "").strip())
+                    conn.execute("DELETE FROM sessions WHERE user_id=?", (user_id,))
+            if "role" in body:
+                role = normalize_user_role(body.get("role"))
+                if str(body.get("role") or "").strip().lower() not in VALID_USER_ROLES:
+                    raise AppError(HTTPStatus.BAD_REQUEST, "用户角色无效")
+                conn.execute("UPDATE users SET role=? WHERE id=?", (role, user_id))
+                if role != ADMIN_ROLE:
+                    conn.execute("DELETE FROM sessions WHERE user_id=? AND role=?", (user_id, ADMIN_ROLE))
+            if body.get("clearApiKey") or body.get("clearImageApiKey"):
+                self.upsert_user_image_config(
+                    conn,
+                    user_id,
+                    api_key="",
+                    endpoint=body.get("imageEndpoint") if "imageEndpoint" in body else body.get("endpoint"),
+                )
+            elif "apiKey" in body or "imageApiKey" in body or "imageEndpoint" in body or "endpoint" in body:
+                self.upsert_user_image_config(
+                    conn,
+                    user_id,
+                    api_key=str(body.get("imageApiKey", body.get("apiKey")) or "").strip()
+                    if "imageApiKey" in body or "apiKey" in body
+                    else None,
+                    endpoint=body.get("imageEndpoint") if "imageEndpoint" in body else body.get("endpoint"),
+                )
+            if body.get("clearVideoApiKey"):
+                self.upsert_user_video_config(
+                    conn,
+                    user_id,
+                    api_key="",
+                    endpoint_primary=body.get("videoEndpointPrimary"),
+                    endpoint_secondary=body.get("videoEndpointSecondary"),
+                )
+            elif (
+                "videoApiKey" in body
+                or "videoEndpointPrimary" in body
+                or "videoEndpointSecondary" in body
+            ):
+                self.upsert_user_video_config(
+                    conn,
+                    user_id,
+                    api_key=str(body.get("videoApiKey") or "").strip() if "videoApiKey" in body else None,
+                    endpoint_primary=body.get("videoEndpointPrimary"),
+                    endpoint_secondary=body.get("videoEndpointSecondary"),
+                )
         self.json_response({"ok": True})
 
-    def upsert_user_api_key(self, conn: sqlite3.Connection, user_id: str, api_key: str) -> None:
+    def upsert_user_image_config(
+        self,
+        conn: sqlite3.Connection,
+        user_id: str,
+        api_key: str | None = None,
+        endpoint: str | None = None,
+    ) -> None:
         settings = app_settings(conn)
+        row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+        next_api_key = row_value(row, "api_key", "") if api_key is None else api_key
+        next_endpoint = row_value(row, "endpoint", settings["defaultEndpoint"]) if endpoint is None else str(endpoint or "").strip()
+        next_endpoint = trim_text(next_endpoint or settings["defaultEndpoint"], 800)
         conn.execute(
             """
             INSERT INTO user_settings (user_id, api_key, endpoint, model, size, updated_at)
             VALUES (?, ?, ?, ?, '1024x1024', ?)
             ON CONFLICT(user_id) DO UPDATE SET
               api_key=excluded.api_key,
+              endpoint=excluded.endpoint,
               updated_at=excluded.updated_at
             """,
-            (user_id, api_key, settings["defaultEndpoint"], settings["defaultModel"], now_iso()),
+            (user_id, next_api_key, next_endpoint, settings["defaultModel"], now_iso()),
+        )
+
+    def upsert_user_video_config(
+        self,
+        conn: sqlite3.Connection,
+        user_id: str,
+        api_key: str | None = None,
+        endpoint_primary: str | None = None,
+        endpoint_secondary: str | None = None,
+    ) -> None:
+        settings = app_settings(conn)
+        row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user_id,)).fetchone()
+        next_api_key = row_value(row, "video_api_key", "") if api_key is None else api_key
+        next_primary = (
+            row_value(row, "video_endpoint_primary", "")
+            if endpoint_primary is None
+            else trim_text(str(endpoint_primary or "").strip(), 800)
+        )
+        next_secondary = (
+            row_value(row, "video_endpoint_secondary", "")
+            if endpoint_secondary is None
+            else trim_text(str(endpoint_secondary or "").strip(), 800)
+        )
+        conn.execute(
+            """
+            INSERT INTO user_settings
+              (user_id, api_key, endpoint, model, video_api_key,
+               video_endpoint_primary, video_endpoint_secondary, size, updated_at)
+            VALUES (?, '', ?, ?, ?, ?, ?, '1024x1024', ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+              video_api_key=excluded.video_api_key,
+              video_endpoint_primary=excluded.video_endpoint_primary,
+              video_endpoint_secondary=excluded.video_endpoint_secondary,
+              updated_at=excluded.updated_at
+            """,
+            (
+                user_id,
+                settings["defaultEndpoint"],
+                settings["defaultModel"],
+                next_api_key,
+                next_primary,
+                next_secondary,
+                now_iso(),
+            ),
         )
 
     def handle_admin_logs(self, query: str) -> None:

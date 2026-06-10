@@ -1,5 +1,42 @@
 # Public Interface Changes
 
+## 2026-06-10 - B端 image and video user credentials
+
+B端 user credential configuration now distinguishes image and video model settings per registered user.
+
+### B端 HTTP API
+
+- `GET /api/admin/users` now returns image-specific fields `imageApiKeyConfigured`, `imageApiKeyMasked`, and `imageEndpoint`, while keeping legacy `apiKeyConfigured` and `apiKeyMasked` for compatibility.
+- `GET /api/admin/users` now returns video-specific fields `videoApiKeyConfigured`, `videoApiKeyMasked`, `videoEndpointPrimary`, and `videoEndpointSecondary`.
+- `PATCH /api/admin/users/:id` now accepts `imageApiKey`, `imageEndpoint`, `clearImageApiKey`, `videoApiKey`, `videoEndpointPrimary`, `videoEndpointSecondary`, and `clearVideoApiKey`.
+- Existing `apiKey` and `clearApiKey` payloads remain compatible aliases for the image key.
+- `GET /api/settings` and backend image generation now use the user's configured image address when present, falling back to the B端 default endpoint.
+
+### B端 UI
+
+- The registered user table renamed `API Key` to `图片 Key` and added a `视频 Key` column.
+- User actions now expose separate image and video configuration controls. Image configuration includes the image address; video configuration includes one API Key and two addresses.
+
+### Storage Contract
+
+- SQLite `user_settings.video_api_key`, `user_settings.video_endpoint_primary`, and `user_settings.video_endpoint_secondary` were added.
+- Existing `user_settings.api_key` is now treated as the image API Key; existing `user_settings.endpoint` is exposed as the image address.
+
+## 2026-06-10 - B端 user role assignment
+
+B端 now distinguishes registered user roles. Newly registered users are ordinary `user` accounts by default; only the built-in admin credentials or registered users promoted to `admin` can create B端 admin sessions.
+
+### B端 HTTP API
+
+- `GET /api/admin/users` now returns `role` for each registered user.
+- `PATCH /api/admin/users/:id` now accepts `role: "user" | "admin"` to revoke or grant B端 administrator access.
+- `POST /api/admin/login` still accepts the built-in `ADMIN_EMAIL` / `ADMIN_PASSWORD`; it also accepts registered users whose `role` is `admin`.
+- Registered ordinary users remain limited to C端 user sessions and cannot access `/api/admin/*`.
+
+### Storage Contract
+
+- SQLite `users.role` was added with default `user`.
+
 ## 2026-06-10 - B端 login route split
 
 B端 login is now a dedicated page. `admin.html` is only the authenticated management console, while `admin-login.html` owns the administrator login form.
