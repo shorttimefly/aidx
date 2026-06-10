@@ -1539,6 +1539,10 @@ input[readonly] {
   object-fit: contain;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 .toast {
   position: fixed;
   right: 20px;
@@ -1579,6 +1583,12 @@ input[readonly] {
   padding: 24px 0 40px;
 }
 
+.admin-login-shell {
+  width: min(680px, calc(100vw - 32px));
+  min-height: 100vh;
+  align-content: center;
+}
+
 .admin-header {
   display: flex;
   align-items: center;
@@ -1607,7 +1617,7 @@ input[readonly] {
 }
 
 .admin-login-panel {
-  max-width: 560px;
+  width: 100%;
 }
 
 .admin-login-grid {

@@ -1,5 +1,15 @@
 # Public Interface Changes
 
+## 2026-06-10 - B端 login route split
+
+B端 login is now a dedicated page. `admin.html` is only the authenticated management console, while `admin-login.html` owns the administrator login form.
+
+### B端 UI
+
+- `admin-login.html` was added as the standalone administrator login entry.
+- `admin.html` redirects unauthenticated or expired sessions to `admin-login.html`.
+- Logging out from `admin.html` clears the admin token and returns to `admin-login.html`.
+
 ## 2026-06-10 - B端 prompt preset configuration
 
 B端 can now manage the prompt presets and prompt composition copy used by C端 image generation. The edit surface is stable-scope: administrators can edit titles, display labels, prompt text, composition text, suite shot descriptions, and recommended sizes, while structural IDs remain fixed.

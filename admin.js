@@ -27,27 +27,25 @@ const els = {};
 
 document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
+  if (!state.token) {
+    redirectToAdminLogin("required");
+    return;
+  }
+
   bindEvents();
   renderShell();
-  if (state.token) {
-    try {
-      await adminFetch("/me");
-      await loadDashboard();
-    } catch (error) {
-      clearAdmin();
-      showToast(error.message, true);
-    }
+  try {
+    await adminFetch("/me");
+    await loadDashboard();
+  } catch (error) {
+    if (state.token) showToast(error.message, true);
   }
   renderShell();
 });
 
 function cacheElements() {
   Object.assign(els, {
-    adminLoginPanel: document.getElementById("adminLoginPanel"),
     adminDashboard: document.getElementById("adminDashboard"),
-    adminEmailInput: document.getElementById("adminEmailInput"),
-    adminPasswordInput: document.getElementById("adminPasswordInput"),
-    adminLoginBtn: document.getElementById("adminLoginBtn"),
     adminLogoutBtn: document.getElementById("adminLogoutBtn"),
     adminNavItems: document.querySelectorAll(".admin-nav-item"),
     adminViews: document.querySelectorAll("[data-admin-view-panel]"),
@@ -83,7 +81,6 @@ function bindEvents() {
   els.adminNavItems.forEach((button) => {
     button.addEventListener("click", () => switchAdminView(button.dataset.adminView));
   });
-  els.adminLoginBtn.addEventListener("click", handleAdminLogin);
   els.adminLogoutBtn.addEventListener("click", handleAdminLogout);
   els.saveModelConfigBtn.addEventListener("click", saveModelConfig);
   els.refreshUsersBtn.addEventListener("click", loadUsers);
@@ -105,19 +102,14 @@ function bindEvents() {
   els.cancelUserKeyBtn.addEventListener("click", closeUserKeyModal);
   els.saveUserKeyBtn.addEventListener("click", saveUserKey);
   els.clearUserKeyBtn.addEventListener("click", clearUserKey);
-  els.adminPasswordInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") handleAdminLogin();
-  });
   els.adminApiKeyInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") saveUserKey();
   });
 }
 
 function renderShell() {
-  const loggedIn = Boolean(state.token);
-  els.adminLoginPanel.hidden = loggedIn;
-  els.adminDashboard.hidden = !loggedIn;
-  els.adminLogoutBtn.style.display = loggedIn ? "inline-flex" : "none";
+  els.adminDashboard.hidden = !state.token;
+  els.adminLogoutBtn.style.display = state.token ? "inline-flex" : "none";
   switchAdminView(state.activeAdminView);
 }
 
@@ -150,7 +142,12 @@ async function adminFetch(path, options = {}) {
     payload = { error: text };
   }
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) clearAdmin();
+    if (response.status === 401 || response.status === 403) {
+      const error = new Error("登录已过期，请重新登录");
+      error.authFailure = true;
+      handleAuthFailure();
+      throw error;
+    }
     const message = payload?.error || payload?.message || response.statusText || "请求失败";
     if (response.status === 404 && message === "接口不存在" && path.startsWith("/downvotes")) {
       throw new Error(portMismatchMessage());
@@ -163,45 +160,30 @@ async function adminFetch(path, options = {}) {
 function portMismatchMessage() {
   const currentPort = window.location.port || (window.location.protocol === "https:" ? "443" : "80");
   if (currentPort === "8787") {
-    return "当前 B 端连接的是旧的 8787 服务；请打开 http://localhost:8788/admin.html，或先执行 kill 48038 后重新启动 8787。";
+    return "当前 B 端连接的是旧的 8787 服务；请打开 http://localhost:8788/admin-login.html，或先执行 kill 48038 后重新启动 8787。";
   }
   return "点踩反馈接口未在当前后端生效；请重启 server.py 后再试。";
 }
 
-async function handleAdminLogin() {
-  const email = els.adminEmailInput.value.trim();
-  const password = els.adminPasswordInput.value;
-  if (!email || !password) {
-    showToast("请输入管理员邮箱和密码", true);
-    return;
-  }
-  setBusy(els.adminLoginBtn, "登录中", true);
-  try {
-    const payload = await adminFetch("/login", {
-      method: "POST",
-      body: JSON.stringify({ email, password })
-    });
-    state.token = payload.token;
-    localStorage.setItem(ADMIN_TOKEN_KEY, state.token);
-    await loadDashboard();
-    renderShell();
-    showToast("已进入管理台");
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    setBusy(els.adminLoginBtn, "进入管理台", false);
-  }
-}
-
 function handleAdminLogout() {
   clearAdmin();
-  renderShell();
-  showToast("已退出 B 端");
+  redirectToAdminLogin("logout");
 }
 
 function clearAdmin() {
   state.token = "";
   localStorage.removeItem(ADMIN_TOKEN_KEY);
+}
+
+function handleAuthFailure() {
+  clearAdmin();
+  redirectToAdminLogin("expired");
+}
+
+function redirectToAdminLogin(reason) {
+  const target = new URL("./admin-login.html", window.location.href);
+  if (reason) target.searchParams.set("reason", reason);
+  window.location.replace(target.toString());
 }
 
 async function loadDashboard() {
