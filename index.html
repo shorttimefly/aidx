@@ -339,12 +339,133 @@
             </div>
           </div>
 
-          <section class="panel output-panel empty-state" aria-label="AI视频工作台">
-            <div class="empty-copy">
-              <strong>视频工作台</strong>
-              <span>入口已预留</span>
-            </div>
-          </section>
+          <div class="video-layout">
+            <section class="panel video-control-panel" aria-label="AI视频生成参数">
+              <div class="panel-header">
+                <h3>图生视频</h3>
+                <span class="mini-badge">演示模式</span>
+              </div>
+
+              <div class="dropzone compact-dropzone" id="videoDropzone">
+                <input id="videoUploadInput" type="file" accept="image/*" />
+                <div class="drop-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M20 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3" /></svg>
+                </div>
+                <strong>上传商品图（必填）</strong>
+                <span>演示版会以这张图作为商品外观参考，不调用真实视频接口。</span>
+              </div>
+              <div id="videoReferencePreview" class="suite-reference video-reference-preview is-empty"></div>
+
+              <div class="video-config-panel">
+                <section class="video-usage-section" aria-labelledby="videoUsageLabel">
+                  <div class="video-config-head">
+                    <strong id="videoUsageLabel">视频用途</strong>
+                    <small>决定下方可用比例和时长</small>
+                  </div>
+                  <select id="videoPresetInput" class="visually-hidden" aria-label="Amazon 视频用途">
+                    <option value="shoppable">商品详情页 Shoppable Video</option>
+                    <option value="sponsored-brands">Sponsored Brands Video</option>
+                    <option value="store-a-plus">Store / A+ 后台模块</option>
+                  </select>
+                  <div id="videoPresetCards" class="video-preset-cards" role="listbox" aria-label="Amazon 视频用途"></div>
+                </section>
+
+                <section class="video-output-section" aria-labelledby="videoOutputLabel">
+                  <div class="video-config-head compact">
+                    <strong id="videoOutputLabel">输出设置</strong>
+                    <small id="videoOutputHint">已按当前用途筛选比例和时长</small>
+                  </div>
+                  <div class="video-output-group">
+                    <div class="video-output-label">画幅比例</div>
+                    <select id="videoAspectInput" class="visually-hidden" aria-label="画幅比例"></select>
+                    <div id="videoAspectOptions" class="video-choice-row" role="radiogroup" aria-label="画幅比例"></div>
+                  </div>
+                  <div class="video-output-group">
+                    <div class="video-output-label">目标时长</div>
+                    <select id="videoDurationInput" class="visually-hidden" aria-label="目标时长"></select>
+                    <div id="videoDurationOptions" class="video-choice-row" role="radiogroup" aria-label="目标时长"></div>
+                  </div>
+                  <div class="video-composition-note">当前方案会生成 1 条成片视频</div>
+                </section>
+              </div>
+              <div id="videoInlineSummary" class="video-inline-summary" aria-live="polite"></div>
+
+              <label class="field">
+                <span>视频描述</span>
+                <textarea id="videoSellingPointsInput" rows="4" placeholder="可选：描述产品卖点、使用场景或想要的视频感觉，例如：家庭场景中展示大屏读数和便携使用..."></textarea>
+              </label>
+
+              <details class="video-advanced-details">
+                <summary>更多设置</summary>
+                <div class="video-output-group">
+                  <div class="video-output-label">镜头数</div>
+                  <select id="videoSceneCountInput" class="visually-hidden" aria-label="镜头数"></select>
+                  <div id="videoSceneCountOptions" class="video-choice-row" role="radiogroup" aria-label="镜头数"></div>
+                </div>
+                <div class="suite-control-grid">
+                  <label class="field">
+                    <span>商品名称</span>
+                    <input id="videoProductNameInput" type="text" placeholder="例如：指夹式血氧仪" />
+                  </label>
+                  <label class="field">
+                    <span>品类</span>
+                    <input id="videoCategoryInput" type="text" placeholder="例如：家用健康监测设备" />
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span>视频风格</span>
+                  <select id="videoStyleInput">
+                    <option value="clean-medical">医疗清爽</option>
+                    <option value="home-lifestyle">家庭生活</option>
+                    <option value="premium-tech">高级科技</option>
+                    <option value="store-brand">品牌叙事</option>
+                  </select>
+                </label>
+              </details>
+
+              <button class="generate-button" id="generateVideoPlanBtn" type="button">
+                <svg viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M5 21h14" /></svg>
+                <span id="generateVideoPlanLabel">生成视频</span>
+              </button>
+            </section>
+
+            <section class="panel video-result-panel" aria-label="视频生成结果">
+              <div class="panel-header">
+                <h3>生成结果</h3>
+                <span id="videoPresetBadge" class="mini-badge">自然视频</span>
+              </div>
+              <div id="videoResultPreview" class="video-result-preview empty-state">
+                <div class="empty-copy">
+                  <strong>生成后在这里预览视频</strong>
+                  <span>右侧会显示 Mock 成片预览、规格摘要和可编辑分镜。</span>
+                </div>
+              </div>
+              <div class="video-result-section">
+                <h4>当前规格摘要</h4>
+                <div id="videoSpecCards" class="video-spec-grid"></div>
+              </div>
+              <p id="videoPresetMeta" class="video-preset-meta">商品详情页顶部主媒体区、详情页视频区、部分搜索结果</p>
+              <details class="video-compliance">
+                <summary class="video-compliance-head">
+                  <strong>医疗设备合规已开启</strong>
+                  <span>查看规则</span>
+                </summary>
+                <ul id="videoComplianceList"></ul>
+                <div class="video-policy-details">
+                  <strong>当前用途补充规则</strong>
+                  <ul id="videoPolicyDetailList"></ul>
+                </div>
+              </details>
+              <details id="videoStoryboardDetails" class="video-storyboard-details" hidden>
+                <summary class="video-compliance-head scene-header">
+                  <strong>视频分镜预览</strong>
+                  <span id="videoSceneCount">待生成</span>
+                </summary>
+                <div id="videoSceneList" class="video-scene-list"></div>
+              </details>
+            </section>
+          </div>
         </section>
 
         <section id="view-library" class="view" aria-labelledby="libraryTitle">
@@ -495,6 +616,9 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js?v=20260610-key-proxy" defer></script>
+    <script src="./video-constraints.js?v=20260610-video-demo" defer></script>
+    <script src="./video-planner.js?v=20260610-video-demo" defer></script>
+    <script src="./video-mock-service.js?v=20260610-video-demo" defer></script>
+    <script src="./app.js?v=20260610-video-demo" defer></script>
   </body>
 </html>
