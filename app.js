@@ -367,6 +367,10 @@ const state = {
   suiteShotSettings: {},
   lastRequestPayload: null,
   promptConfig: legacyPromptConfig(),
+  videoReference: null,
+  videoScenes: [],
+  videoJob: null,
+  videoJobTimer: null,
   auth: {
     token: "",
     user: null,
@@ -579,6 +583,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderSuiteReference();
   renderTemplates();
   renderQuickEdits();
+  renderVideoOutputControls();
+  renderVideoSpecs();
+  renderVideoPresetCards();
+  renderVideoReference();
+  renderVideoScenes();
+  updateVideoPlanButton();
   state.db = await openDb();
   await ensureDefaultFolder();
   await refreshLibrary();
@@ -614,6 +624,34 @@ function cacheElements() {
     saveSuiteBtn: document.getElementById("saveSuiteBtn"),
     suiteShotList: document.getElementById("suiteShotList"),
     suiteResultGrid: document.getElementById("suiteResultGrid"),
+    videoDropzone: document.getElementById("videoDropzone"),
+    videoUploadInput: document.getElementById("videoUploadInput"),
+    videoReferencePreview: document.getElementById("videoReferencePreview"),
+    videoProductNameInput: document.getElementById("videoProductNameInput"),
+    videoCategoryInput: document.getElementById("videoCategoryInput"),
+    videoSellingPointsInput: document.getElementById("videoSellingPointsInput"),
+    videoPresetInput: document.getElementById("videoPresetInput"),
+    videoPresetCards: document.getElementById("videoPresetCards"),
+    videoStyleInput: document.getElementById("videoStyleInput"),
+    videoAspectInput: document.getElementById("videoAspectInput"),
+    videoAspectOptions: document.getElementById("videoAspectOptions"),
+    videoDurationInput: document.getElementById("videoDurationInput"),
+    videoDurationOptions: document.getElementById("videoDurationOptions"),
+    videoOutputHint: document.getElementById("videoOutputHint"),
+    videoSceneCountInput: document.getElementById("videoSceneCountInput"),
+    videoSceneCountOptions: document.getElementById("videoSceneCountOptions"),
+    generateVideoPlanBtn: document.getElementById("generateVideoPlanBtn"),
+    generateVideoPlanLabel: document.getElementById("generateVideoPlanLabel"),
+    videoInlineSummary: document.getElementById("videoInlineSummary"),
+    videoResultPreview: document.getElementById("videoResultPreview"),
+    videoStoryboardDetails: document.getElementById("videoStoryboardDetails"),
+    videoPresetBadge: document.getElementById("videoPresetBadge"),
+    videoPresetMeta: document.getElementById("videoPresetMeta"),
+    videoSpecCards: document.getElementById("videoSpecCards"),
+    videoComplianceList: document.getElementById("videoComplianceList"),
+    videoPolicyDetailList: document.getElementById("videoPolicyDetailList"),
+    videoSceneCount: document.getElementById("videoSceneCount"),
+    videoSceneList: document.getElementById("videoSceneList"),
     dropzone: document.getElementById("dropzone"),
     uploadInput: document.getElementById("uploadInput"),
     uploadPreview: document.getElementById("uploadPreview"),
@@ -701,6 +739,32 @@ function bindEvents() {
   els.suiteUploadInput.addEventListener("change", (event) => handleSuiteFiles(event.target.files));
   els.generateSuiteBtn.addEventListener("click", handleGenerateSuite);
   els.saveSuiteBtn.addEventListener("click", handleSaveSuite);
+  els.videoPresetInput?.addEventListener("change", () => {
+    state.videoScenes = [];
+    renderVideoOutputControls();
+    renderVideoSpecs();
+    renderVideoPresetCards();
+    renderVideoScenes();
+  });
+  els.videoStyleInput?.addEventListener("change", refreshVideoPlanDraft);
+  els.videoAspectInput?.addEventListener("change", () => {
+    handleVideoOutputChange();
+    renderVideoOutputControls();
+  });
+  els.videoDurationInput?.addEventListener("change", () => {
+    applyShortAdSceneDefault();
+    handleVideoOutputChange();
+    renderVideoOutputControls();
+  });
+  els.videoSceneCountInput?.addEventListener("change", () => {
+    handleVideoOutputChange();
+    renderVideoOutputControls();
+  });
+  els.videoProductNameInput?.addEventListener("input", refreshVideoPlanDraft);
+  els.videoCategoryInput?.addEventListener("input", refreshVideoPlanDraft);
+  els.videoSellingPointsInput?.addEventListener("input", refreshVideoPlanDraft);
+  els.videoUploadInput?.addEventListener("change", (event) => handleVideoFiles(event.target.files));
+  els.generateVideoPlanBtn?.addEventListener("click", handleVideoPrimaryAction);
   els.saveApiBtn?.addEventListener("click", saveSettings);
   els.testReferenceBtn.addEventListener("click", handleTestReferenceSupport);
   els.toggleKeyBtn?.addEventListener("click", toggleApiKey);
@@ -736,6 +800,17 @@ function bindEvents() {
     event.preventDefault();
     els.suiteDropzone.classList.remove("is-dragging");
     handleSuiteFiles(event.dataTransfer.files);
+  });
+
+  els.videoDropzone?.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    els.videoDropzone.classList.add("is-dragging");
+  });
+  els.videoDropzone?.addEventListener("dragleave", () => els.videoDropzone.classList.remove("is-dragging"));
+  els.videoDropzone?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    els.videoDropzone.classList.remove("is-dragging");
+    handleVideoFiles(event.dataTransfer.files);
   });
 
   els.librarySearchInput.addEventListener("input", renderLibrary);
@@ -1199,6 +1274,497 @@ function clearSuiteReference() {
   els.suiteUploadInput.value = "";
   renderSuiteReference();
   showToast("参考图已删除");
+}
+
+function selectedVideoPreset() {
+  return window.VideoPlanner.getVideoPreset(els.videoPresetInput.value);
+}
+
+function videoContext() {
+  const productName = els.videoProductNameInput.value.trim() || state.videoReference?.name || "";
+  const category = els.videoCategoryInput.value.trim();
+  const sellingPoints = els.videoSellingPointsInput.value.trim();
+  const styleText = els.videoStyleInput.options[els.videoStyleInput.selectedIndex]?.text || "医疗清爽";
+  return {
+    productName,
+    category,
+    sellingPoints,
+    style: styleText,
+    hasReference: Boolean(state.videoReference)
+  };
+}
+
+async function handleVideoFiles(fileList) {
+  const file = Array.from(fileList || []).find((entry) => entry.type.startsWith("image/"));
+  if (!file) return;
+  const url = await readFileAsDataUrl(file);
+  const dimensions = await readImageDimensions(url);
+  const detectedSize = dimensions ? `${dimensions.width}x${dimensions.height}` : "";
+  state.videoReference = {
+    id: createId("video-ref"),
+    name: file.name.replace(/\.[^.]+$/, ""),
+    url,
+    width: dimensions?.width || null,
+    height: dimensions?.height || null,
+    size: detectedSize,
+    createdAt: new Date().toISOString(),
+    source: "video-reference"
+  };
+  if (!els.videoProductNameInput.value.trim()) {
+    els.videoProductNameInput.value = state.videoReference.name;
+  }
+  state.videoScenes = [];
+  renderVideoReference();
+  renderVideoScenes();
+  updateVideoPlanButton();
+  showToast("视频商品图已载入");
+}
+
+function renderVideoReference() {
+  if (!state.videoReference) {
+    els.videoReferencePreview.className = "suite-reference video-reference-preview is-empty";
+    els.videoReferencePreview.innerHTML = "";
+    return;
+  }
+  els.videoReferencePreview.className = "suite-reference video-reference-preview";
+  els.videoReferencePreview.innerHTML = `
+    <img src="${escapeAttr(state.videoReference.url)}" alt="${escapeAttr(state.videoReference.name)}" />
+    <div>
+      <strong>${escapeHtml(state.videoReference.name)}</strong>
+      <span>${escapeHtml(state.videoReference.size || "视频外观参考")}</span>
+    </div>
+    <button class="reference-remove" type="button" data-action="clear-video-reference" aria-label="删除商品图" title="删除商品图">
+      <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+    </button>
+  `;
+  els.videoReferencePreview
+    .querySelector("[data-action='clear-video-reference']")
+    ?.addEventListener("click", clearVideoReference);
+}
+
+function clearVideoReference() {
+  state.videoReference = null;
+  resetVideoJob();
+  els.videoUploadInput.value = "";
+  renderVideoReference();
+  renderVideoScenes();
+  updateVideoPlanButton();
+  showToast("视频商品图已删除");
+}
+
+function renderVideoOutputControls(options = {}) {
+  const preset = selectedVideoPreset();
+  if (options.resetToDefaults) {
+    els.videoAspectInput.value = preset.defaultAspectRatio;
+    els.videoDurationInput.value = String(preset.defaultDurationSeconds);
+    els.videoSceneCountInput.value = String(preset.defaultSceneCount);
+  }
+  const aspectOptions = preset.aspectOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+    detail: option.output
+  }));
+  const durationOptions = preset.durationOptions.map((seconds) => ({
+    value: String(seconds),
+    label: `${seconds} 秒`,
+    detail: seconds === preset.defaultDurationSeconds ? "推荐" : ""
+  }));
+  const sceneCountOptions = preset.sceneCountOptions.map((count) => ({
+    value: String(count),
+    label: `${count} 个镜头`,
+    detail: videoSceneCountDetail(preset, count)
+  }));
+
+  renderSelectOptions(
+    els.videoAspectInput,
+    aspectOptions.map((option) => ({
+      value: option.value,
+      label: `${option.label} · ${option.detail}`
+    })),
+    preset.defaultAspectRatio
+  );
+  renderSelectOptions(
+    els.videoDurationInput,
+    durationOptions,
+    String(preset.defaultDurationSeconds)
+  );
+  renderSelectOptions(
+    els.videoSceneCountInput,
+    sceneCountOptions,
+    String(preset.defaultSceneCount)
+  );
+
+  renderVideoChoiceButtons(els.videoAspectOptions, els.videoAspectInput, aspectOptions, "画幅比例");
+  renderVideoChoiceButtons(els.videoDurationOptions, els.videoDurationInput, durationOptions, "目标时长");
+  renderVideoChoiceButtons(els.videoSceneCountOptions, els.videoSceneCountInput, sceneCountOptions, "镜头数");
+}
+
+function videoSceneCountDetail(preset, count) {
+  if (preset.id === "sponsored-brands" && Number(els.videoDurationInput.value) <= 6 && count === 1) {
+    return "6秒推荐";
+  }
+  return count === preset.defaultSceneCount ? "默认" : "";
+}
+
+function renderSelectOptions(select, options, preferredValue) {
+  const currentValue = select.value;
+  const values = options.map((option) => option.value);
+  const selectedValue = values.includes(currentValue) ? currentValue : preferredValue;
+  select.innerHTML = options
+    .map(
+      (option) =>
+        `<option value="${escapeAttr(option.value)}"${option.value === selectedValue ? " selected" : ""}>${escapeHtml(option.label)}</option>`
+    )
+    .join("");
+}
+
+function renderVideoChoiceButtons(container, select, options, groupLabel) {
+  container.innerHTML = options
+    .map((option) => {
+      const isSelected = option.value === select.value;
+      const detail = option.detail ? `<small>${escapeHtml(option.detail)}</small>` : "";
+      return `
+        <button class="video-choice-button${isSelected ? " active" : ""}" type="button" data-value="${escapeAttr(option.value)}" role="radio" aria-checked="${isSelected}" aria-label="${escapeAttr(`${groupLabel}：${option.label}`)}">
+          <span>${escapeHtml(option.label)}</span>
+          ${detail}
+        </button>
+      `;
+    })
+    .join("");
+
+  container.querySelectorAll("[data-value]").forEach((button) => {
+    button.addEventListener("click", () => selectVideoOutputOption(select, button.dataset.value));
+  });
+}
+
+function selectVideoOutputOption(select, value) {
+  if (select.value === value) return;
+  select.value = value;
+  if (select === els.videoDurationInput) applyShortAdSceneDefault();
+  handleVideoOutputChange();
+  renderVideoOutputControls();
+}
+
+function applyShortAdSceneDefault() {
+  if (selectedVideoPreset().id === "sponsored-brands" && Number(els.videoDurationInput.value) <= 6) {
+    els.videoSceneCountInput.value = "1";
+  }
+}
+
+function handleVideoOutputChange() {
+  state.videoScenes = [];
+  resetVideoJob();
+  renderVideoSpecs();
+  renderVideoScenes();
+}
+
+function renderVideoSpecs() {
+  const preset = selectedVideoPreset();
+  els.videoPresetBadge.textContent = preset.badge;
+  els.videoPresetMeta.textContent = `${preset.placement} · ${preset.objective}`;
+  const selectedAspect = selectedVideoAspectOption(preset);
+  const duration = `${els.videoDurationInput.value} 秒`;
+  const sceneCount = `${els.videoSceneCountInput.value} 个镜头`;
+  els.videoOutputHint.textContent = `已按「${videoPresetShortTitle(preset)}」筛选可用比例和时长`;
+  els.videoInlineSummary.innerHTML = `
+    <span>${escapeHtml(videoPresetShortTitle(preset))}</span>
+    <span>${escapeHtml(els.videoAspectInput.value)}</span>
+    <span>${escapeHtml(duration)}</span>
+    <span>${escapeHtml(sceneCount)}</span>
+    <span>${escapeHtml(`合规 ${preset.duration}`)}</span>
+  `;
+  const specs = [
+    ["画幅", `${els.videoAspectInput.value} · ${selectedAspect.output}`],
+    ["时长", duration],
+    ["用途", preset.badge],
+    ["文件", preset.fileSize],
+    ["合规", preset.duration]
+  ];
+  els.videoSpecCards.innerHTML = specs
+    .map(
+      ([label, value]) => `
+        <article class="video-spec-card">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </article>
+      `
+    )
+    .join("");
+  const complianceItems = [
+    "医疗设备内容避免诊断、治疗、治愈、预防疾病等功效承诺",
+    "优先使用测量、监测、便携、易读、家庭日常使用等安全表达",
+    "不要出现未经验证的认证、医生背书或绝对化承诺"
+  ];
+  els.videoComplianceList.innerHTML = complianceItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  els.videoPolicyDetailList.innerHTML = preset.notes.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+}
+
+function selectedVideoAspectOption(preset = selectedVideoPreset()) {
+  return preset.aspectOptions.find((option) => option.value === els.videoAspectInput.value) || preset.aspectOptions[0];
+}
+
+function renderVideoPresetCards() {
+  const selectedId = els.videoPresetInput.value;
+  els.videoPresetCards.innerHTML = window.VideoPlanner.getVideoPresets()
+    .map((preset) => {
+      const isSelected = preset.id === selectedId;
+      return `
+        <button class="video-preset-card${isSelected ? " active" : ""}" type="button" data-preset-id="${escapeAttr(preset.id)}" role="option" aria-selected="${isSelected}">
+          <strong>${escapeHtml(videoPresetShortTitle(preset))}</strong>
+          <small>${escapeHtml(videoPresetCardHint(preset))}</small>
+        </button>
+      `;
+    })
+    .join("");
+  els.videoPresetCards.querySelectorAll("[data-preset-id]").forEach((button) => {
+    button.addEventListener("click", () => selectVideoPreset(button.dataset.presetId));
+  });
+}
+
+function videoPresetCardHint(preset) {
+  const hints = {
+    shoppable: "商详页自然视频",
+    "sponsored-brands": "搜索和详情广告位",
+    "store-a-plus": "品牌 Store 或 A+ 模块"
+  };
+  return hints[preset.id] || preset.objective;
+}
+
+function videoPresetShortTitle(preset) {
+  const titles = {
+    shoppable: "商详页",
+    "sponsored-brands": "广告视频",
+    "store-a-plus": "Store / A+"
+  };
+  return titles[preset.id] || preset.title;
+}
+
+function selectVideoPreset(presetId) {
+  if (els.videoPresetInput.value === presetId) return;
+  els.videoPresetInput.value = presetId;
+  state.videoScenes = [];
+  resetVideoJob();
+  renderVideoOutputControls({ resetToDefaults: true });
+  renderVideoSpecs();
+  renderVideoPresetCards();
+  renderVideoScenes();
+}
+
+function handleVideoPrimaryAction() {
+  if (!state.videoReference) {
+    showToast("请先上传商品图，图生视频需要商品外观参考", true);
+    return;
+  }
+  if (state.videoJob?.status === "processing" || state.videoJob?.status === "queued") {
+    showToast("视频正在生成中，请稍候");
+    return;
+  }
+  if (state.videoScenes.length) {
+    startMockVideoGeneration();
+    return;
+  }
+  state.videoScenes = buildVideoPlan();
+  renderVideoScenes();
+  updateVideoPlanButton();
+  showToast("视频分镜已生成，可确认后继续生成视频");
+}
+
+function refreshVideoPlanDraft() {
+  state.videoScenes = [];
+  resetVideoJob();
+  renderVideoScenes();
+}
+
+function updateVideoPlanButton() {
+  const hasReference = Boolean(state.videoReference);
+  els.generateVideoPlanBtn.disabled = !hasReference;
+  if (!hasReference) {
+    els.generateVideoPlanLabel.textContent = "生成视频";
+    els.generateVideoPlanBtn.title = "请先上传商品图";
+    return;
+  }
+  if (state.videoJob?.status === "processing" || state.videoJob?.status === "queued") {
+    els.generateVideoPlanLabel.textContent = `生成中 ${state.videoJob.progress}%`;
+    els.generateVideoPlanBtn.title = "视频正在生成中";
+    return;
+  }
+  if (state.videoJob?.status === "completed") {
+    els.generateVideoPlanLabel.textContent = "重新生成视频";
+    els.generateVideoPlanBtn.title = "用当前分镜重新生成视频";
+    return;
+  }
+  const hasPlan = Boolean(state.videoScenes.length);
+  els.generateVideoPlanLabel.textContent = hasPlan ? "确认并生成视频" : "生成视频";
+  els.generateVideoPlanBtn.title = hasPlan ? "使用当前分镜生成视频" : "先生成可确认的视频分镜方案";
+}
+
+function buildVideoPlan() {
+  const context = videoContext();
+  return window.VideoPlanner.buildVideoScenes({
+    presetId: els.videoPresetInput.value,
+    productName: context.productName,
+    category: context.category,
+    sellingPoints: context.sellingPoints,
+    style: context.style,
+    hasReference: context.hasReference,
+    aspectRatio: els.videoAspectInput.value,
+    targetDurationSeconds: Number(els.videoDurationInput.value),
+    sceneCount: Number(els.videoSceneCountInput.value)
+  });
+}
+
+function renderVideoScenes() {
+  if (!state.videoReference) {
+    els.videoSceneCount.textContent = "待生成";
+    els.videoSceneList.innerHTML = "";
+    renderVideoResultState();
+    updateVideoPlanButton();
+    return;
+  }
+  if (!state.videoScenes.length) {
+    els.videoSceneCount.textContent = "待生成";
+    els.videoSceneList.innerHTML = "";
+    renderVideoResultState();
+    updateVideoPlanButton();
+    return;
+  }
+  const scenes = state.videoScenes;
+  renderVideoResultState();
+  els.videoSceneCount.textContent = `${scenes.length} 个镜头`;
+  els.videoSceneList.innerHTML = scenes
+    .map(
+      (scene, index) => `
+        <article class="video-scene-card">
+          <span>${String(index + 1).padStart(2, "0")}</span>
+          <div>
+            <div class="video-scene-head">
+              <strong>${escapeHtml(scene.name.replace(/^\d+\s*/, ""))}</strong>
+              <small>${escapeHtml(scene.duration)}</small>
+            </div>
+            <textarea class="video-scene-prompt" data-scene-index="${index}" rows="6" aria-label="${escapeAttr(scene.name)} 场景提示词">${escapeHtml(scene.prompt)}</textarea>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+  els.videoSceneList.querySelectorAll("[data-scene-index]").forEach((textarea) => {
+    textarea.addEventListener("input", () => {
+      const scene = state.videoScenes[Number(textarea.dataset.sceneIndex)];
+      if (scene) scene.prompt = textarea.value;
+    });
+  });
+  updateVideoPlanButton();
+}
+
+function renderVideoResultState() {
+  const hasPlan = Boolean(state.videoScenes.length);
+  const job = state.videoJob;
+  els.videoStoryboardDetails.hidden = !hasPlan;
+  els.videoResultPreview.classList.toggle("is-planned", hasPlan || Boolean(job));
+  if (job?.status === "processing" || job?.status === "queued") {
+    els.videoResultPreview.innerHTML = `
+      <div class="video-job-progress">
+        <strong>正在生成视频</strong>
+        <span>${escapeHtml(window.VideoMockService.videoJobSummary(job))}</span>
+        <div class="video-progress-track" aria-label="视频生成进度">
+          <span style="width: ${job.progress}%"></span>
+        </div>
+        <small>${job.progress}% · Mock provider</small>
+      </div>
+    `;
+    updateVideoPlanButton();
+    return;
+  }
+  if (job?.status === "completed") {
+    els.videoResultPreview.innerHTML = `
+      <div class="video-mock-player">
+        <div class="video-mock-frame">
+          <span>MOCK VIDEO</span>
+          <strong>${escapeHtml(job.title)}</strong>
+          <small>${escapeHtml(window.VideoMockService.videoJobSummary(job))}</small>
+        </div>
+        <div class="video-result-actions">
+          <button class="ghost-button mini-button" type="button" data-action="download-mock-video">下载 Mock 预览</button>
+          <button class="ghost-button mini-button" type="button" data-action="rerun-mock-video">重新生成</button>
+        </div>
+      </div>
+    `;
+    bindVideoResultActions();
+    updateVideoPlanButton();
+    return;
+  }
+  els.videoResultPreview.innerHTML = hasPlan
+    ? `
+      <div class="video-result-ready">
+        <strong>视频方案已生成</strong>
+        <span>确认后将用当前商品图和分镜生成成片。</span>
+      </div>
+    `
+    : `
+      <div class="empty-copy">
+        <strong>${state.videoReference ? "准备生成视频" : "生成后在这里预览视频"}</strong>
+        <span>${state.videoReference ? "点击左侧按钮后，会先生成可确认的视频方案。" : "右侧会显示成片预览、规格摘要和可编辑分镜。"}</span>
+      </div>
+    `;
+  updateVideoPlanButton();
+}
+
+function startMockVideoGeneration() {
+  const context = videoContext();
+  const preset = selectedVideoPreset();
+  resetVideoJob();
+  state.videoJob = window.VideoMockService.createMockVideoJob({
+    title: context.productName || state.videoReference?.name || "商品视频",
+    presetTitle: videoPresetShortTitle(preset),
+    aspectRatio: els.videoAspectInput.value,
+    durationSeconds: Number(els.videoDurationInput.value),
+    sceneCount: Number(els.videoSceneCountInput.value)
+  });
+  renderVideoResultState();
+  showToast("Mock 视频任务已创建");
+  const progressSteps = [18, 42, 68, 100];
+  let index = 0;
+  state.videoJobTimer = window.setInterval(() => {
+    if (!state.videoJob) return resetVideoJob();
+    state.videoJob = window.VideoMockService.advanceMockVideoJob(state.videoJob, progressSteps[index]);
+    renderVideoResultState();
+    index += 1;
+    if (index >= progressSteps.length) {
+      window.clearInterval(state.videoJobTimer);
+      state.videoJobTimer = null;
+      showToast("Mock 视频已生成");
+    }
+  }, 800);
+}
+
+function resetVideoJob() {
+  if (state.videoJobTimer) {
+    window.clearInterval(state.videoJobTimer);
+    state.videoJobTimer = null;
+  }
+  state.videoJob = null;
+}
+
+function bindVideoResultActions() {
+  els.videoResultPreview
+    .querySelector("[data-action='download-mock-video']")
+    ?.addEventListener("click", downloadMockVideoPreview);
+  els.videoResultPreview
+    .querySelector("[data-action='rerun-mock-video']")
+    ?.addEventListener("click", startMockVideoGeneration);
+}
+
+function downloadMockVideoPreview() {
+  if (!state.videoJob) return;
+  const html = `<!doctype html><meta charset="utf-8"><title>${escapeHtml(state.videoJob.title)}</title><style>body{font-family:system-ui,sans-serif;padding:32px;background:#f6fbff;color:#13233a}.card{max-width:720px;margin:auto;padding:24px;border:1px solid #cde3ee;border-radius:12px;background:white}</style><div class="card"><h1>${escapeHtml(state.videoJob.title)}</h1><p>${escapeHtml(window.VideoMockService.videoJobSummary(state.videoJob))}</p><p>这是本地 Mock 视频生成预览文件，用于验证下载链路。</p></div>`;
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = state.videoJob.downloadName || "mock-video.html";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function suiteContext() {
