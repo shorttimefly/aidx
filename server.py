@@ -30,6 +30,10 @@ ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
 DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
 DEFAULT_MODEL = "gemini-2.5-flash-image"
 UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "120"))
+PROMPT_CONFIG_KEY = "prompt_config_json"
+PROMPT_CONFIG_PATH = ROOT / "prompt-config-defaults.json"
+PROMPT_TEXT_LIMIT = 20_000
+LOCKED_PROMPT_CONFIG_KEYS = {"id", "url"}
 
 
 def now_iso() -> str:
@@ -189,6 +193,7 @@ def init_db() -> None:
         seed_setting(conn, "default_endpoint", DEFAULT_ENDPOINT)
         seed_setting(conn, "default_model", DEFAULT_MODEL)
         seed_setting(conn, "usage_note", "用量为前端根据模型返回 usage 或请求/响应文本估算的次数与 token 数。")
+        seed_setting(conn, PROMPT_CONFIG_KEY, prompt_config_json(default_prompt_config()))
 
 
 def seed_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
@@ -196,6 +201,104 @@ def seed_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
         "INSERT OR IGNORE INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)",
         (key, value, now_iso()),
     )
+
+
+def default_prompt_config() -> dict:
+    try:
+        return json.loads(PROMPT_CONFIG_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {
+            "version": 1,
+            "single": {"templateCategories": [], "templates": [], "supplementalVariantPrompt": ""},
+            "refinement": {
+                "quickEdits": [],
+                "compose": {},
+                "imageReferenceText": {"local": "", "remote": ""},
+            },
+            "suite": {
+                "visualStyles": [],
+                "contextFallbacks": {"productLabel": "", "category": "", "sellingPoints": "", "styleText": ""},
+                "compose": {},
+                "presets": [],
+            },
+            "reference": {
+                "strictRule": "",
+                "strictRuleDedupeNeedles": [],
+                "context": {},
+                "defaultName": "参考图",
+                "defaultAssetPromptLabels": {"suiteReference": "", "uploaded": ""},
+            },
+            "referenceProbe": {
+                "fallbackReference": {"name": "参考图探测", "size": "1x1", "url": ""},
+                "withReferencePrompt": "",
+                "controlPrompt": "",
+                "size": "1024x1024",
+            },
+        }
+
+
+def normalize_prompt_config(value) -> dict:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            value = {}
+    if not isinstance(value, dict):
+        value = {}
+    config = merge_prompt_config(default_prompt_config(), value)
+    validate_prompt_config_sizes(config)
+    return config
+
+
+def validate_prompt_config_sizes(config: dict) -> None:
+    for preset in config.get("suite", {}).get("presets", []):
+        for shot in preset.get("shots", []):
+            size = normalize_image_size(str(shot.get("size") or ""))
+            if not size:
+                raise AppError(HTTPStatus.BAD_REQUEST, f"无效套图尺寸：{shot.get('name') or shot.get('id')}")
+            shot["size"] = size
+    probe = config.get("referenceProbe", {})
+    size = normalize_image_size(str(probe.get("size") or ""))
+    if not size:
+        raise AppError(HTTPStatus.BAD_REQUEST, "无效探测生成尺寸")
+    probe["size"] = size
+
+
+def merge_prompt_config(default, override):
+    if isinstance(default, dict):
+        source = override if isinstance(override, dict) else {}
+        merged = {}
+        for key, default_value in default.items():
+            if key in LOCKED_PROMPT_CONFIG_KEYS or (key == "category" and "id" in default):
+                merged[key] = default_value
+            else:
+                merged[key] = merge_prompt_config(default_value, source.get(key))
+        return merged
+    if isinstance(default, list):
+        if all(isinstance(item, dict) and "id" in item for item in default):
+            override_by_id = {
+                item.get("id"): item for item in override if isinstance(item, dict)
+            } if isinstance(override, list) else {}
+            return [
+                merge_prompt_config(
+                    item,
+                    override_by_id.get(item["id"])
+                    or (override[index] if isinstance(override, list) and index < len(override) else None),
+                )
+                for index, item in enumerate(default)
+            ]
+        return override if isinstance(override, list) and len(override) == len(default) else default
+    if isinstance(default, str):
+        return trim_text(override, PROMPT_TEXT_LIMIT) if isinstance(override, str) else default
+    if isinstance(default, int):
+        return override if isinstance(override, int) else default
+    if isinstance(default, bool):
+        return override if isinstance(override, bool) else default
+    return override if override is not None else default
+
+
+def prompt_config_json(value) -> str:
+    return json.dumps(normalize_prompt_config(value), ensure_ascii=False)
 
 
 def app_settings(conn: sqlite3.Connection) -> dict:
@@ -206,6 +309,11 @@ def app_settings(conn: sqlite3.Connection) -> dict:
         "defaultModel": values.get("default_model", DEFAULT_MODEL),
         "usageNote": values.get("usage_note", ""),
     }
+
+
+def prompt_config_settings(conn: sqlite3.Connection) -> dict:
+    row = conn.execute("SELECT value FROM app_settings WHERE key=?", (PROMPT_CONFIG_KEY,)).fetchone()
+    return normalize_prompt_config(row["value"] if row else "")
 
 
 def mask_api_key(api_key: str) -> str:
@@ -333,6 +441,10 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_admin_model_config()
             if path == "/api/admin/model-config" and method == "PUT":
                 return self.handle_admin_put_model_config()
+            if path == "/api/admin/prompt-config" and method == "GET":
+                return self.handle_admin_prompt_config()
+            if path == "/api/admin/prompt-config" and method == "PUT":
+                return self.handle_admin_put_prompt_config()
             if path.startswith("/api/"):
                 raise AppError(HTTPStatus.NOT_FOUND, "接口不存在")
             return super().do_GET()
@@ -487,6 +599,7 @@ class Handler(SimpleHTTPRequestHandler):
         user = self.require_user()
         with connect() as conn:
             settings = app_settings(conn)
+            prompt_config = prompt_config_settings(conn)
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
         api_key = row["api_key"] if row else ""
         self.json_response(
@@ -499,6 +612,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "size": row["size"] if row else "1024x1024",
                     "defaultEndpoint": settings["defaultEndpoint"],
                     "defaultModel": settings["defaultModel"],
+                    "promptConfig": prompt_config,
                 }
             }
         )
@@ -927,6 +1041,25 @@ class Handler(SimpleHTTPRequestHandler):
                     (key, value, now_iso()),
                 )
         self.json_response({"ok": True})
+
+    def handle_admin_prompt_config(self) -> None:
+        self.require_admin()
+        with connect() as conn:
+            self.json_response({"promptConfig": prompt_config_settings(conn)})
+
+    def handle_admin_put_prompt_config(self) -> None:
+        self.require_admin()
+        body = self.read_json()
+        prompt_config = normalize_prompt_config(body.get("promptConfig"))
+        with connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (PROMPT_CONFIG_KEY, prompt_config_json(prompt_config), now_iso()),
+            )
+        self.json_response({"ok": True, "promptConfig": prompt_config})
 
 
 def clamp_int(value, minimum: int, maximum: int) -> int:

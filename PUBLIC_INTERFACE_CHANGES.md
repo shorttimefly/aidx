@@ -1,5 +1,23 @@
 # Public Interface Changes
 
+## 2026-06-10 - B端 prompt preset configuration
+
+B端 can now manage the prompt presets and prompt composition copy used by C端 image generation. The edit surface is stable-scope: administrators can edit titles, display labels, prompt text, composition text, suite shot descriptions, and recommended sizes, while structural IDs remain fixed.
+
+### C端 HTTP API
+
+- `GET /api/settings` now includes `promptConfig`, which C端 uses for single-image templates, suite prompts, refinement prompts, reference-image guardrails, and reference-input probe prompts.
+
+### B端 HTTP API
+
+- `GET /api/admin/prompt-config` was added. It returns the normalized global prompt configuration.
+- `PUT /api/admin/prompt-config` was added. It accepts `{ "promptConfig": ... }`, persists admin-editable prompt fields, locks structural IDs/categories, and rejects invalid image size strings.
+
+### Storage Contract
+
+- Global prompt configuration is stored in SQLite `app_settings` under `prompt_config_json`.
+- Built-in defaults are seeded from `prompt-config-defaults.json` and remain the fallback when the stored JSON is missing or invalid.
+
 ## 2026-06-10 - B端 user API Key ownership and backend generation proxy
 
 C端 no longer receives or edits the real model API Key, endpoint, or model. B端 configures each registered user's API Key, and image generation calls are proxied through the backend with the user's stored key plus the B端 default endpoint/model.

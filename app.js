@@ -14,6 +14,7 @@ const USER_TEMPLATES_KEY = "imageStudio.userTemplates";
 const AUTH_TOKEN_KEY = "imageStudio.authToken";
 const IMAGE_SIZE_MULTIPLE = 16;
 const REFERENCE_STRATEGY_KEY = "imageStudio.referenceStrategy";
+const PROMPT_CONFIG_DEFAULTS_URL = "./prompt-config-defaults.json?v=20260610-prompt-config";
 const STRICT_PRODUCT_REFERENCE_RULE = [
   "强限制：商品主体必须以随请求提供的参考图、用户上传的原图、当前基图或上一轮生成结果为唯一外观参考，必须做到 1:1 还原。",
   "只允许改变背景、场景、光线、构图、拍摄角度、留白和后期排版区域；不得重新设计商品本体。",
@@ -365,6 +366,7 @@ const state = {
   referenceFallbackNotice: "",
   suiteShotSettings: {},
   lastRequestPayload: null,
+  promptConfig: legacyPromptConfig(),
   auth: {
     token: "",
     user: null,
@@ -378,10 +380,198 @@ const state = {
 
 const els = {};
 
+function legacyPromptConfig() {
+  return {
+    version: 1,
+    single: {
+      templateCategories: [
+        { id: "all", label: "全部模板" },
+        { id: "custom", label: "我的模板" },
+        { id: "main", label: "主图" },
+        { id: "scene", label: "场景图" },
+        { id: "infographic", label: "信息图" },
+        { id: "content", label: "内容图" },
+        { id: "aplus", label: "Amazon A+" },
+        { id: "season", label: "活动图" }
+      ],
+      templates,
+      supplementalVariantPrompt:
+        "请生成第 {index} 张变体，保持同一商品和同一设计方向，但构图、角度或背景细节与前面图片有区别。"
+    },
+    refinement: {
+      quickEdits: quickEdits.map((text, index) => ({ id: `quick-${index + 1}`, text })),
+      compose: {
+        prefix: "基于当前界面显示的最新商品图继续生成一个微调版本，不回到最初原图。",
+        currentSizeLine: "当前基图尺寸：{size}",
+        previousPromptLine: "上一版提示词：{prompt}",
+        editRequestLine: "本次修改要求：{prompt}",
+        guardrailSuffix:
+          "商品主体必须和当前基图 1:1 还原，不得改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。适合电商商品图，不添加未经验证的功能、认证、品牌或夸张效果承诺。"
+      },
+      imageReferenceText: {
+        local: "当前基图：界面预览中的最新本地图片。",
+        remote: "当前基图图片地址：{url}"
+      }
+    },
+    suite: {
+      visualStyles: [
+        { id: "premium", label: "高级简洁" },
+        { id: "tech", label: "科技冷感" },
+        { id: "warm", label: "温暖生活" },
+        { id: "bold", label: "强促销视觉" },
+        { id: "minimal", label: "极简白底" }
+      ],
+      contextFallbacks: {
+        productLabel: "商品基图中的产品",
+        category: "通用电商品类",
+        sellingPoints: "根据商品外观推断核心材质、功能、使用场景和包装价值",
+        styleText: "高级简洁"
+      },
+      compose: {
+        taskLine: "任务：为「{productLabel}」生成「{presetTitle}」中的「{shotName}」。",
+        categoryLine: "品类：{category}",
+        sellingPointsLine: "核心卖点：{sellingPoints}",
+        styleLine: "视觉风格：{styleText}",
+        referenceLine:
+          "以已上传商品基图「{referenceName}」作为唯一商品外观参考，商品主体必须和原图 1:1 还原，不能改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。",
+        noReferenceLine: "如果没有可见商品基图，则根据商品名称、品类和卖点生成可信的通用电商商品视觉。",
+        aplusLine:
+          "Amazon A+ Content 重点：增强图片、自定义文本位置、品牌故事、生活方式场景、热点细节、轮播、问答和可购买对比图；图片只负责可信视觉与排版安全区，真实文字与具体参数留给后期人工排版。",
+        qualityLine: "电商摄影质感，产品真实可信，构图清晰，背景和道具服务于商品表达。",
+        negativeLine: "不要添加虚构品牌 Logo、平台商标、未经验证的认证、夸张承诺、不可读乱码文字或误导性效果。"
+      },
+      presets: Object.entries(suitePresets).map(([id, preset]) => ({ id, ...preset }))
+    },
+    reference: {
+      strictRule: STRICT_PRODUCT_REFERENCE_RULE,
+      strictRuleDedupeNeedles: ["商品主体必须以用户上传的原图", "强限制：商品主体必须以"],
+      context: {
+        primaryLine: "参考图已随请求发送。首要参考图：「{name}」{sizeText}。",
+        sizeText: "，尺寸 {size}",
+        extraLine: "其余 {count} 张参考图只用于补充角度、结构和材质细节，不得引入不同商品特征。",
+        consistencyLine:
+          "生成时必须先识别参考图中的商品主体，再保持同一件商品的轮廓、比例、颜色、材质、Logo、文字、纹理、接口、配件和包装细节一致。",
+        defaultName: "参考图 1"
+      },
+      defaultName: "参考图",
+      defaultAssetPromptLabels: {
+        suiteReference: "套图商品基图",
+        uploaded: "本地上传商品参考图"
+      }
+    },
+    referenceProbe: {
+      fallbackReference: {
+        name: "参考图探测",
+        size: "1x1",
+        url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+      },
+      withReferencePrompt:
+        "入参图片生效测试。请生成一张明亮科技感电商商品图，必须保持随请求提供的参考图商品主体一致，只允许改变背景、光线和构图，不添加文字。",
+      controlPrompt: "无入参图片对照测试。请生成一张明亮科技感电商商品图，不添加文字。",
+      size: "1024x1024"
+    }
+  };
+}
+
+async function loadPromptConfigDefaults() {
+  try {
+    const response = await fetch(PROMPT_CONFIG_DEFAULTS_URL);
+    if (response.ok) {
+      applyPromptConfig(await response.json(), { rerender: false });
+      return;
+    }
+  } catch {
+    // The in-file legacy defaults keep the app usable when the static JSON cannot be loaded.
+  }
+  applyPromptConfig(legacyPromptConfig(), { rerender: false });
+}
+
+function currentPromptConfig() {
+  return state.promptConfig || legacyPromptConfig();
+}
+
+function applyPromptConfig(config, { rerender = true } = {}) {
+  state.promptConfig = normalizePromptConfig(config);
+  if (rerender && Object.keys(els).length) renderPromptConfigDrivenUi();
+}
+
+function normalizePromptConfig(config) {
+  return mergePromptConfig(legacyPromptConfig(), config || {});
+}
+
+function mergePromptConfig(defaultValue, overrideValue) {
+  if (Array.isArray(defaultValue)) {
+    if (defaultValue.every((item) => item && typeof item === "object" && "id" in item)) {
+      const overrideById = new Map(
+        Array.isArray(overrideValue)
+          ? overrideValue.filter((item) => item && typeof item === "object").map((item) => [item.id, item])
+          : []
+      );
+      return defaultValue.map((item) => mergePromptConfig(item, overrideById.get(item.id)));
+    }
+    return Array.isArray(overrideValue) && overrideValue.length === defaultValue.length ? overrideValue : defaultValue;
+  }
+  if (defaultValue && typeof defaultValue === "object") {
+    const source = overrideValue && typeof overrideValue === "object" ? overrideValue : {};
+    return Object.fromEntries(
+      Object.entries(defaultValue).map(([key, value]) => [
+        key,
+        ["id", "category", "url"].includes(key) ? value : mergePromptConfig(value, source[key])
+      ])
+    );
+  }
+  if (typeof defaultValue === "string") return typeof overrideValue === "string" ? overrideValue : defaultValue;
+  if (typeof defaultValue === "number") return typeof overrideValue === "number" ? overrideValue : defaultValue;
+  if (typeof defaultValue === "boolean") return typeof overrideValue === "boolean" ? overrideValue : defaultValue;
+  return overrideValue ?? defaultValue;
+}
+
+function renderPromptConfigDrivenUi() {
+  renderTemplateFilterOptions();
+  renderSuiteSelectOptions();
+  renderTemplates();
+  renderQuickEdits();
+  renderSuitePlan();
+}
+
+function renderTemplateFilterOptions() {
+  if (!els.templateFilter) return;
+  const selected = els.templateFilter.value || "all";
+  const categories = currentPromptConfig().single.templateCategories || [];
+  els.templateFilter.innerHTML = categories
+    .map((category) => `<option value="${escapeAttr(category.id)}">${escapeHtml(category.label)}</option>`)
+    .join("");
+  els.templateFilter.value = categories.some((category) => category.id === selected) ? selected : "all";
+}
+
+function renderSuiteSelectOptions() {
+  if (!els.suitePresetInput || !els.suiteStyleInput) return;
+  const config = currentPromptConfig();
+  const selectedPreset = els.suitePresetInput.value;
+  const selectedStyle = els.suiteStyleInput.value;
+  els.suitePresetInput.innerHTML = (config.suite.presets || [])
+    .map((preset) => `<option value="${escapeAttr(preset.id)}">${escapeHtml(preset.title)}</option>`)
+    .join("");
+  if ((config.suite.presets || []).some((preset) => preset.id === selectedPreset)) {
+    els.suitePresetInput.value = selectedPreset;
+  }
+  els.suiteStyleInput.innerHTML = (config.suite.visualStyles || [])
+    .map((style) => `<option value="${escapeAttr(style.id)}">${escapeHtml(style.label)}</option>`)
+    .join("");
+  if ((config.suite.visualStyles || []).some((style) => style.id === selectedStyle)) {
+    els.suiteStyleInput.value = selectedStyle;
+  }
+}
+
+function promptText(template, values = {}) {
+  return String(template || "").replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => values[key] ?? "");
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   document.body.dataset.view = "suite";
   cacheElements();
   bindEvents();
+  await loadPromptConfigDefaults();
   loadSettings();
   loadAuthSession();
   loadUserTemplates();
@@ -780,6 +970,7 @@ async function loadAccountSettings() {
     endpoint: settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT,
     model: settings.model || settings.defaultModel || DEFAULT_MODEL
   };
+  applyPromptConfig(settings.promptConfig || currentPromptConfig());
   els.apiKeyInput.value = settings.apiKeyMasked || (state.auth.apiKeyConfigured ? "已配置" : "未配置");
   if (els.endpointInput) els.endpointInput.value = state.auth.modelSettings.endpoint;
   els.modelInput.value = state.auth.modelSettings.model;
@@ -799,7 +990,8 @@ async function verifySessionActive() {
 }
 
 function selectedSuitePreset() {
-  return suitePresets[els.suitePresetInput.value] || suitePresets.amazon;
+  const presets = currentPromptConfig().suite.presets || [];
+  return presets.find((preset) => preset.id === els.suitePresetInput.value) || presets[0] || legacyPromptConfig().suite.presets[0];
 }
 
 function renderSuitePlan(activeId = null, doneIds = new Set()) {
@@ -961,7 +1153,7 @@ async function handleSuiteFiles(fileList) {
     width: dimensions?.width || null,
     height: dimensions?.height || null,
     size,
-    prompt: "套图商品基图",
+    prompt: currentPromptConfig().reference.defaultAssetPromptLabels?.suiteReference || "套图商品基图",
     createdAt: new Date().toISOString(),
     source: "suite-reference"
   };
@@ -1010,38 +1202,50 @@ function clearSuiteReference() {
 }
 
 function suiteContext() {
+  const config = currentPromptConfig();
+  const fallbacks = config.suite.contextFallbacks || {};
   const productName = els.suiteProductNameInput.value.trim() || state.suiteReference?.name || "";
   const category = els.suiteCategoryInput.value.trim();
   const sellingPoints = els.suiteSellingPointsInput.value.trim();
-  const styleText = els.suiteStyleInput.options[els.suiteStyleInput.selectedIndex]?.text || "高级简洁";
+  const styleText = els.suiteStyleInput.options[els.suiteStyleInput.selectedIndex]?.text || fallbacks.styleText || "高级简洁";
   return {
     productName,
-    productLabel: productName || "商品基图中的产品",
-    category: category || "通用电商品类",
-    sellingPoints: sellingPoints || "根据商品外观推断核心材质、功能、使用场景和包装价值",
+    productLabel: productName || fallbacks.productLabel || "商品基图中的产品",
+    category: category || fallbacks.category || "通用电商品类",
+    sellingPoints: sellingPoints || fallbacks.sellingPoints || "根据商品外观推断核心材质、功能、使用场景和包装价值",
     styleText,
     referenceName: state.suiteReference?.name || ""
   };
 }
 
 function buildSuitePrompt(shot, preset, context) {
+  const compose = currentPromptConfig().suite.compose || {};
+  const values = {
+    productLabel: context.productLabel,
+    presetTitle: preset.title,
+    shotName: shot.name,
+    category: context.category,
+    sellingPoints: context.sellingPoints,
+    styleText: context.styleText,
+    referenceName: context.referenceName
+  };
   const referenceLine = state.suiteReference
-    ? `以已上传商品基图「${context.referenceName}」作为唯一商品外观参考，商品主体必须和原图 1:1 还原，不能改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。`
-    : "如果没有可见商品基图，则根据商品名称、品类和卖点生成可信的通用电商商品视觉。";
+    ? promptText(compose.referenceLine, values)
+    : compose.noReferenceLine;
   const aplusLine = preset.title.includes("A+")
-    ? "Amazon A+ Content 重点：增强图片、自定义文本位置、品牌故事、生活方式场景、热点细节、轮播、问答和可购买对比图；图片只负责可信视觉与排版安全区，真实文字与具体参数留给后期人工排版。"
+    ? compose.aplusLine
     : "";
 
   return [
-    `任务：为「${context.productLabel}」生成「${preset.title}」中的「${shot.name}」。`,
-    `品类：${context.category}`,
-    `核心卖点：${context.sellingPoints}`,
-    `视觉风格：${context.styleText}`,
+    promptText(compose.taskLine, values),
+    promptText(compose.categoryLine, values),
+    promptText(compose.sellingPointsLine, values),
+    promptText(compose.styleLine, values),
     aplusLine,
     referenceLine,
     shot.prompt,
-    "电商摄影质感，产品真实可信，构图清晰，背景和道具服务于商品表达。",
-    "不要添加虚构品牌 Logo、平台商标、未经验证的认证、夸张承诺、不可读乱码文字或误导性效果。"
+    compose.qualityLine,
+    compose.negativeLine
   ]
     .filter(Boolean)
     .join("\n");
@@ -1166,7 +1370,8 @@ function handleSaveSuite() {
 
 function renderTemplates() {
   const category = els.templateFilter.value || "all";
-  const allTemplates = [...userTemplates, ...templates];
+  const builtInTemplates = currentPromptConfig().single.templates || [];
+  const allTemplates = [...userTemplates, ...builtInTemplates];
   const visibleTemplates = category === "all" ? allTemplates : allTemplates.filter((item) => item.category === category);
   els.templateGrid.innerHTML = visibleTemplates
     .map(
@@ -1241,8 +1446,9 @@ function deleteUserTemplate(templateId) {
 }
 
 function renderQuickEdits() {
-  els.quickEditGrid.innerHTML = quickEdits
-    .map((text) => `<button class="quick-edit" type="button" data-edit="${escapeHtml(text)}">${escapeHtml(text)}</button>`)
+  const edits = currentPromptConfig().refinement.quickEdits || [];
+  els.quickEditGrid.innerHTML = edits
+    .map((edit) => `<button class="quick-edit" type="button" data-edit="${escapeHtml(edit.text)}">${escapeHtml(edit.text)}</button>`)
     .join("");
   els.quickEditGrid.querySelectorAll(".quick-edit").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1370,16 +1576,13 @@ function closeSettingsModal() {
 async function handleTestReferenceSupport() {
   if (!(await ensureApiReady())) return;
 
-  const reference = firstAvailableReferenceImage() || {
-    name: "参考图探测",
-    size: "1x1",
-    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-  };
+  const probeConfig = currentPromptConfig().referenceProbe || {};
+  const reference = firstAvailableReferenceImage() || probeConfig.fallbackReference;
   const references = normalizeReferenceImages([reference]);
   const usingFallbackReference = !firstAvailableReferenceImage();
   const probePrompt = withStrictProductReference(
     withReferenceContext(
-      "入参图片生效测试。请生成一张明亮科技感电商商品图，必须保持随请求提供的参考图商品主体一致，只允许改变背景、光线和构图，不添加文字。",
+      probeConfig.withReferencePrompt,
       references
     )
   );
@@ -1390,13 +1593,13 @@ async function handleTestReferenceSupport() {
     const referenceImages = await requestImages({
       prompt: probePrompt,
       count: 1,
-      size: "1024x1024",
+      size: probeConfig.size || "1024x1024",
       referenceImages: references
     });
     const controlImages = await requestImages({
-      prompt: withStrictProductReference("无入参图片对照测试。请生成一张明亮科技感电商商品图，不添加文字。"),
+      prompt: withStrictProductReference(probeConfig.controlPrompt),
       count: 1,
-      size: "1024x1024",
+      size: probeConfig.size || "1024x1024",
       referenceImages: []
     });
     renderReferenceProbeResult({
@@ -1496,7 +1699,7 @@ async function handleFiles(fileList) {
       width: dimensions[index]?.width || null,
       height: dimensions[index]?.height || null,
       size: normalizeImageSize(detectedSize) || detectedSize,
-      prompt: "本地上传商品参考图",
+      prompt: currentPromptConfig().reference.defaultAssetPromptLabels?.uploaded || "本地上传商品参考图",
       createdAt: new Date().toISOString(),
       source: "upload"
     };
@@ -1607,13 +1810,14 @@ async function handleRefine() {
   if (!(await ensureApiReady())) return;
 
   state.referenceFallbackNotice = "";
+  const compose = currentPromptConfig().refinement.compose || {};
   const composedPrompt = [
-    "基于当前界面显示的最新商品图继续生成一个微调版本，不回到最初原图。",
+    compose.prefix,
     imageReferenceText(state.selectedImage.url),
-    state.selectedImage.size ? `当前基图尺寸：${state.selectedImage.size}` : "",
-    state.selectedImage.prompt ? `上一版提示词：${state.selectedImage.prompt}` : "",
-    `本次修改要求：${editPrompt}`,
-    "商品主体必须和当前基图 1:1 还原，不得改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。适合电商商品图，不添加未经验证的功能、认证、品牌或夸张效果承诺。"
+    state.selectedImage.size ? promptText(compose.currentSizeLine, { size: state.selectedImage.size }) : "",
+    state.selectedImage.prompt ? promptText(compose.previousPromptLine, { prompt: state.selectedImage.prompt }) : "",
+    promptText(compose.editRequestLine, { prompt: editPrompt }),
+    compose.guardrailSuffix
   ]
     .filter(Boolean)
     .join("\n");
@@ -2062,11 +2266,12 @@ function canRetryReferencePayload(error) {
 }
 
 function normalizeReferenceImages(references) {
+  const defaultName = currentPromptConfig().reference.defaultName || "参考图";
   const seen = new Set();
   return (references || [])
     .filter((reference) => reference?.url)
     .map((reference) => ({
-      name: reference.name || "参考图",
+      name: reference.name || defaultName,
       size: reference.size || "",
       url: reference.url
     }))
@@ -2158,11 +2363,16 @@ function firstAvailableReferenceImage() {
 
 function withReferenceContext(prompt, references) {
   if (!references.length) return prompt;
+  const context = currentPromptConfig().reference.context || {};
   const primary = references[0];
+  const sizeText = primary.size ? promptText(context.sizeText, { size: primary.size }) : "";
   const lines = [
-    `参考图已随请求发送。首要参考图：「${primary.name || "参考图 1"}」${primary.size ? `，尺寸 ${primary.size}` : ""}。`,
-    references.length > 1 ? `其余 ${references.length - 1} 张参考图只用于补充角度、结构和材质细节，不得引入不同商品特征。` : "",
-    "生成时必须先识别参考图中的商品主体，再保持同一件商品的轮廓、比例、颜色、材质、Logo、文字、纹理、接口、配件和包装细节一致。"
+    promptText(context.primaryLine, {
+      name: primary.name || context.defaultName || "参考图 1",
+      sizeText
+    }),
+    references.length > 1 ? promptText(context.extraLine, { count: references.length - 1 }) : "",
+    context.consistencyLine
   ];
   return [...lines.filter(Boolean), prompt].join("\n");
 }
@@ -2180,7 +2390,7 @@ async function requestImagesExact(options) {
     const index = images.length + 1;
     const supplementalPrompt = [
       options.prompt,
-      `请生成第 ${index} 张变体，保持同一商品和同一设计方向，但构图、角度或背景细节与前面图片有区别。`
+      promptText(currentPromptConfig().single.supplementalVariantPrompt, { index })
     ].join("\n");
     const extraBatch = await requestImages({ ...options, prompt: supplementalPrompt, count: 1 });
     calls += 1;
@@ -2875,15 +3085,18 @@ function sanitizeFileName(value) {
 }
 
 function imageReferenceText(url) {
+  const textConfig = currentPromptConfig().refinement.imageReferenceText || {};
   if (!url) return "";
-  if (String(url).startsWith("data:")) return "当前基图：界面预览中的最新本地图片。";
-  return `当前基图图片地址：${url}`;
+  if (String(url).startsWith("data:")) return textConfig.local || "当前基图：界面预览中的最新本地图片。";
+  return promptText(textConfig.remote, { url });
 }
 
 function withStrictProductReference(prompt) {
   const text = String(prompt || "").trim();
-  if (text.includes("商品主体必须以用户上传的原图")) return text;
-  return [STRICT_PRODUCT_REFERENCE_RULE, text].filter(Boolean).join("\n\n");
+  const referenceConfig = currentPromptConfig().reference || {};
+  const needles = referenceConfig.strictRuleDedupeNeedles || [];
+  if (needles.some((needle) => needle && text.includes(needle))) return text;
+  return [referenceConfig.strictRule || STRICT_PRODUCT_REFERENCE_RULE, text].filter(Boolean).join("\n\n");
 }
 
 function escapeHtml(value) {

@@ -1,6 +1,13 @@
 "use strict";
 
 const ADMIN_TOKEN_KEY = "imageStudio.adminToken";
+const PROMPT_GROUPS = [
+  { id: "single", label: "单图模板" },
+  { id: "suite", label: "套图生成" },
+  { id: "refinement", label: "二次编辑" },
+  { id: "reference", label: "参考图规则" },
+  { id: "probe", label: "入参探测" }
+];
 
 const state = {
   token: localStorage.getItem(ADMIN_TOKEN_KEY) || "",
@@ -10,6 +17,9 @@ const state = {
   feedbackSources: [],
   feedbackImageSources: [],
   summary: null,
+  activeAdminView: "model",
+  promptConfig: null,
+  activePromptGroup: "single",
   selectedKeyUserId: ""
 };
 
@@ -39,6 +49,8 @@ function cacheElements() {
     adminPasswordInput: document.getElementById("adminPasswordInput"),
     adminLoginBtn: document.getElementById("adminLoginBtn"),
     adminLogoutBtn: document.getElementById("adminLogoutBtn"),
+    adminNavItems: document.querySelectorAll(".admin-nav-item"),
+    adminViews: document.querySelectorAll("[data-admin-view-panel]"),
     adminSummaryGrid: document.getElementById("adminSummaryGrid"),
     defaultEndpointInput: document.getElementById("defaultEndpointInput"),
     defaultModelInput: document.getElementById("defaultModelInput"),
@@ -53,6 +65,9 @@ function cacheElements() {
     adminUserTable: document.getElementById("adminUserTable"),
     adminLogTable: document.getElementById("adminLogTable"),
     adminFeedbackTable: document.getElementById("adminFeedbackTable"),
+    savePromptConfigBtn: document.getElementById("savePromptConfigBtn"),
+    promptGroupList: document.getElementById("promptGroupList"),
+    promptConfigEditor: document.getElementById("promptConfigEditor"),
     adminKeyModal: document.getElementById("adminKeyModal"),
     adminKeyUserText: document.getElementById("adminKeyUserText"),
     adminApiKeyInput: document.getElementById("adminApiKeyInput"),
@@ -65,6 +80,9 @@ function cacheElements() {
 }
 
 function bindEvents() {
+  els.adminNavItems.forEach((button) => {
+    button.addEventListener("click", () => switchAdminView(button.dataset.adminView));
+  });
   els.adminLoginBtn.addEventListener("click", handleAdminLogin);
   els.adminLogoutBtn.addEventListener("click", handleAdminLogout);
   els.saveModelConfigBtn.addEventListener("click", saveModelConfig);
@@ -74,6 +92,15 @@ function bindEvents() {
   els.feedbackTypeFilter.addEventListener("change", () => loadFeedbacks());
   els.feedbackSourceFilter.addEventListener("change", () => loadFeedbacks());
   els.feedbackImageSourceFilter.addEventListener("change", () => loadFeedbacks());
+  els.savePromptConfigBtn.addEventListener("click", savePromptConfig);
+  els.promptGroupList.addEventListener("click", (event) => {
+    const button = event.target.closest("[data-prompt-group]");
+    if (button) switchPromptGroup(button.dataset.promptGroup);
+  });
+  els.promptConfigEditor.addEventListener("input", (event) => {
+    const field = event.target.closest("[data-prompt-path]");
+    if (field) setPromptConfigValue(field.dataset.promptPath, field.value);
+  });
   els.closeAdminKeyModalBtn.addEventListener("click", closeUserKeyModal);
   els.cancelUserKeyBtn.addEventListener("click", closeUserKeyModal);
   els.saveUserKeyBtn.addEventListener("click", saveUserKey);
@@ -91,6 +118,19 @@ function renderShell() {
   els.adminLoginPanel.hidden = loggedIn;
   els.adminDashboard.hidden = !loggedIn;
   els.adminLogoutBtn.style.display = loggedIn ? "inline-flex" : "none";
+  switchAdminView(state.activeAdminView);
+}
+
+function switchAdminView(viewName) {
+  state.activeAdminView = viewName || "model";
+  els.adminNavItems.forEach((button) => {
+    const active = button.dataset.adminView === state.activeAdminView;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-current", active ? "page" : "false");
+  });
+  els.adminViews.forEach((view) => {
+    view.classList.toggle("active", view.dataset.adminViewPanel === state.activeAdminView);
+  });
 }
 
 async function adminFetch(path, options = {}) {
@@ -165,7 +205,7 @@ function clearAdmin() {
 }
 
 async function loadDashboard() {
-  await Promise.all([loadSummary(), loadUsers(), loadLogs(), loadFeedbacks()]);
+  await Promise.all([loadSummary(), loadUsers(), loadLogs(), loadFeedbacks(), loadPromptConfig()]);
 }
 
 async function loadSummary() {
@@ -200,6 +240,13 @@ async function loadFeedbacks(showRefreshed = false) {
   renderFeedbackFilters();
   renderFeedbacks();
   if (showRefreshed) showToast("图片反馈已刷新");
+}
+
+async function loadPromptConfig() {
+  const payload = await adminFetch("/prompt-config");
+  state.promptConfig = payload.promptConfig;
+  renderPromptGroups();
+  renderPromptConfigEditor();
 }
 
 function renderSummary(summary = {}) {
@@ -250,6 +297,249 @@ async function saveModelConfig() {
   } finally {
     setBusy(els.saveModelConfigBtn, "保存默认配置", false);
   }
+}
+
+async function savePromptConfig() {
+  if (!state.promptConfig) return;
+  setBusy(els.savePromptConfigBtn, "保存中", true);
+  try {
+    const payload = await adminFetch("/prompt-config", {
+      method: "PUT",
+      body: JSON.stringify({ promptConfig: state.promptConfig })
+    });
+    state.promptConfig = payload.promptConfig || state.promptConfig;
+    renderPromptConfigEditor();
+    showToast("提示词配置已保存");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(els.savePromptConfigBtn, "保存提示词配置", false);
+  }
+}
+
+function switchPromptGroup(groupId) {
+  state.activePromptGroup = PROMPT_GROUPS.some((group) => group.id === groupId) ? groupId : "single";
+  renderPromptGroups();
+  renderPromptConfigEditor();
+}
+
+function renderPromptGroups() {
+  els.promptGroupList.innerHTML = PROMPT_GROUPS.map(
+    (group) => `
+      <button class="admin-prompt-tab ${group.id === state.activePromptGroup ? "active" : ""}" type="button" data-prompt-group="${escapeAttr(group.id)}">
+        ${escapeHtml(group.label)}
+      </button>
+    `
+  ).join("");
+}
+
+function renderPromptConfigEditor() {
+  if (!state.promptConfig) {
+    els.promptConfigEditor.innerHTML = `<div class="empty-copy"><strong>正在加载提示词配置</strong><span>请稍候。</span></div>`;
+    return;
+  }
+  const group = state.activePromptGroup;
+  const renderers = {
+    single: renderSinglePromptConfig,
+    suite: renderSuitePromptConfig,
+    refinement: renderRefinementPromptConfig,
+    reference: renderReferencePromptConfig,
+    probe: renderProbePromptConfig
+  };
+  els.promptConfigEditor.innerHTML = (renderers[group] || renderers.single)(state.promptConfig);
+}
+
+function renderSinglePromptConfig(config) {
+  return [
+    promptSection(
+      "单图模板分类",
+      config.single.templateCategories
+        .map((category, index) =>
+          promptField(`single.templateCategories.${index}.label`, `${category.id} 显示名`, category.label, { type: "input" })
+        )
+        .join("")
+    ),
+    promptSection(
+      "单图提示词模板",
+      config.single.templates
+        .map(
+          (template, index) => `
+            <article class="admin-prompt-card">
+              <div class="admin-prompt-card-head">
+                <strong>${escapeHtml(template.title)}</strong>
+                <span>${escapeHtml(template.id)} / ${escapeHtml(template.category)}</span>
+              </div>
+              ${promptField(`single.templates.${index}.title`, "模板标题", template.title, { type: "input" })}
+              ${promptField(`single.templates.${index}.prompt`, "模板提示词", template.prompt)}
+            </article>
+          `
+        )
+        .join("")
+    ),
+    promptSection(
+      "补图变体提示词",
+      promptField("single.supplementalVariantPrompt", "补图变体文案", config.single.supplementalVariantPrompt)
+    )
+  ].join("");
+}
+
+function renderSuitePromptConfig(config) {
+  return [
+    promptSection(
+      "套图类型与图位",
+      config.suite.presets
+        .map(
+          (preset, presetIndex) => `
+            <article class="admin-prompt-card">
+              <div class="admin-prompt-card-head">
+                <strong>${escapeHtml(preset.title)}</strong>
+                <span>${escapeHtml(preset.id)}</span>
+              </div>
+              <div class="admin-prompt-grid two">
+                ${promptField(`suite.presets.${presetIndex}.title`, "套图标题", preset.title, { type: "input" })}
+              </div>
+              ${preset.shots
+                .map(
+                  (shot, shotIndex) => `
+                    <div class="admin-prompt-subcard">
+                      <div class="admin-prompt-card-head">
+                        <strong>${escapeHtml(shot.name)}</strong>
+                        <span>${escapeHtml(shot.id)}</span>
+                      </div>
+                      <div class="admin-prompt-grid two">
+                        ${promptField(`suite.presets.${presetIndex}.shots.${shotIndex}.name`, "图位名称", shot.name, { type: "input" })}
+                        ${promptField(`suite.presets.${presetIndex}.shots.${shotIndex}.size`, "推荐尺寸", shot.size, { type: "input" })}
+                      </div>
+                      ${promptField(`suite.presets.${presetIndex}.shots.${shotIndex}.description`, "图位说明", shot.description, { type: "input" })}
+                      ${promptField(`suite.presets.${presetIndex}.shots.${shotIndex}.prompt`, "图位提示词", shot.prompt)}
+                    </div>
+                  `
+                )
+                .join("")}
+            </article>
+          `
+        )
+        .join("")
+    ),
+    promptSection(
+      "视觉风格与套图拼接文案",
+      [
+        `<div class="admin-prompt-grid two">${config.suite.visualStyles
+          .map((style, index) => promptField(`suite.visualStyles.${index}.label`, `${style.id} 显示名`, style.label, { type: "input" }))
+          .join("")}</div>`,
+        `<div class="admin-prompt-grid two">
+          ${promptField("suite.contextFallbacks.productLabel", "默认商品称呼", config.suite.contextFallbacks.productLabel, { type: "input" })}
+          ${promptField("suite.contextFallbacks.category", "默认品类", config.suite.contextFallbacks.category, { type: "input" })}
+          ${promptField("suite.contextFallbacks.sellingPoints", "默认卖点", config.suite.contextFallbacks.sellingPoints)}
+          ${promptField("suite.contextFallbacks.styleText", "默认风格", config.suite.contextFallbacks.styleText, { type: "input" })}
+        </div>`,
+        ...Object.entries(config.suite.compose).map(([key, value]) =>
+          promptField(`suite.compose.${key}`, `套图拼接：${key}`, value)
+        )
+      ].join("")
+    )
+  ].join("");
+}
+
+function renderRefinementPromptConfig(config) {
+  return [
+    promptSection(
+      "快捷编辑按钮",
+      config.refinement.quickEdits
+        .map((edit, index) => promptField(`refinement.quickEdits.${index}.text`, edit.id, edit.text))
+        .join("")
+    ),
+    promptSection(
+      "二次编辑组合提示词",
+      Object.entries(config.refinement.compose)
+        .map(([key, value]) => promptField(`refinement.compose.${key}`, key, value))
+        .join("")
+    ),
+    promptSection(
+      "当前基图引用文案",
+      Object.entries(config.refinement.imageReferenceText)
+        .map(([key, value]) => promptField(`refinement.imageReferenceText.${key}`, key, value))
+        .join("")
+    )
+  ].join("");
+}
+
+function renderReferencePromptConfig(config) {
+  return [
+    promptSection("全局商品一致性强约束", promptField("reference.strictRule", "强约束提示词", config.reference.strictRule, { rows: 7 })),
+    promptSection(
+      "参考图上下文包装",
+      [
+        promptField("reference.context.primaryLine", "首要参考图行", config.reference.context.primaryLine),
+        promptField("reference.context.sizeText", "尺寸片段", config.reference.context.sizeText, { type: "input" }),
+        promptField("reference.context.extraLine", "多参考图说明", config.reference.context.extraLine),
+        promptField("reference.context.consistencyLine", "一致性说明", config.reference.context.consistencyLine),
+        promptField("reference.context.defaultName", "首图默认名", config.reference.context.defaultName, { type: "input" }),
+        promptField("reference.defaultName", "通用默认参考图名", config.reference.defaultName, { type: "input" }),
+        promptField("reference.defaultAssetPromptLabels.suiteReference", "套图基图标签", config.reference.defaultAssetPromptLabels.suiteReference, { type: "input" }),
+        promptField("reference.defaultAssetPromptLabels.uploaded", "单图上传标签", config.reference.defaultAssetPromptLabels.uploaded, { type: "input" })
+      ].join("")
+    ),
+    promptSection(
+      "重复包装识别词",
+      config.reference.strictRuleDedupeNeedles
+        .map((needle, index) => promptField(`reference.strictRuleDedupeNeedles.${index}`, `识别词 ${index + 1}`, needle, { type: "input" }))
+        .join("")
+    )
+  ].join("");
+}
+
+function renderProbePromptConfig(config) {
+  return [
+    promptSection(
+      "参考图入参探测",
+      [
+        promptField("referenceProbe.size", "探测生成尺寸", config.referenceProbe.size, { type: "input" }),
+        promptField("referenceProbe.withReferencePrompt", "带参考图测试提示词", config.referenceProbe.withReferencePrompt),
+        promptField("referenceProbe.controlPrompt", "无图对照提示词", config.referenceProbe.controlPrompt)
+      ].join("")
+    )
+  ].join("");
+}
+
+function promptSection(title, body) {
+  return `
+    <section class="admin-prompt-section">
+      <h4>${escapeHtml(title)}</h4>
+      ${body}
+    </section>
+  `;
+}
+
+function promptField(path, label, value, { type = "textarea", rows = 3 } = {}) {
+  const escapedPath = escapeAttr(path);
+  const escapedLabel = escapeHtml(label);
+  const text = String(value ?? "");
+  if (type === "input") {
+    return `
+      <label class="field admin-prompt-field">
+        <span>${escapedLabel}</span>
+        <input type="text" data-prompt-path="${escapedPath}" value="${escapeAttr(text)}" />
+      </label>
+    `;
+  }
+  return `
+    <label class="field admin-prompt-field">
+      <span>${escapedLabel}</span>
+      <textarea rows="${rows}" data-prompt-path="${escapedPath}">${escapeHtml(text)}</textarea>
+    </label>
+  `;
+}
+
+function setPromptConfigValue(path, value) {
+  const parts = String(path || "").split(".");
+  let target = state.promptConfig;
+  for (const part of parts.slice(0, -1)) {
+    target = target?.[Number.isNaN(Number(part)) ? part : Number(part)];
+  }
+  const key = parts.at(-1);
+  if (!target || !key) return;
+  target[Number.isNaN(Number(key)) ? key : Number(key)] = value;
 }
 
 function renderUsers() {

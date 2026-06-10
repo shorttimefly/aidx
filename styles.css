@@ -1601,7 +1601,8 @@ input[readonly] {
 
 .admin-login-panel,
 .admin-config-panel,
-.admin-table-panel {
+.admin-table-panel,
+.admin-prompt-panel {
   padding: 16px;
 }
 
@@ -1616,7 +1617,66 @@ input[readonly] {
 
 .admin-dashboard {
   display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  align-items: start;
   gap: 16px;
+}
+
+.admin-rail {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: rgba(255, 255, 255, 0.76);
+  box-shadow: var(--shadow-soft);
+}
+
+.admin-nav-item,
+.admin-prompt-tab {
+  min-height: 44px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 800;
+  text-align: left;
+}
+
+.admin-nav-item {
+  padding: 0 12px;
+}
+
+.admin-nav-item:hover,
+.admin-prompt-tab:hover {
+  border-color: var(--line-strong);
+  background: #ffffff;
+}
+
+.admin-nav-item.active,
+.admin-prompt-tab.active {
+  border-color: rgba(22, 119, 255, 0.24);
+  background: #eff7ff;
+  color: var(--blue);
+}
+
+.admin-content,
+.admin-view {
+  min-width: 0;
+}
+
+.admin-view {
+  display: none;
+  gap: 16px;
+}
+
+.admin-view.active {
+  display: grid;
 }
 
 .admin-summary-grid {
@@ -1661,6 +1721,85 @@ input[readonly] {
   align-items: end;
   justify-content: flex-end;
   gap: 10px;
+}
+
+.admin-prompt-layout {
+  display: grid;
+  grid-template-columns: 190px minmax(0, 1fr);
+  gap: 14px;
+}
+
+.admin-prompt-nav {
+  position: sticky;
+  top: 16px;
+  display: grid;
+  align-self: start;
+  gap: 8px;
+}
+
+.admin-prompt-tab {
+  padding: 0 10px;
+}
+
+.admin-prompt-editor {
+  display: grid;
+  min-width: 0;
+  gap: 14px;
+}
+
+.admin-prompt-section {
+  display: grid;
+  gap: 12px;
+}
+
+.admin-prompt-section h4 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.admin-prompt-card,
+.admin-prompt-subcard {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.admin-prompt-subcard {
+  background: var(--panel-subtle);
+}
+
+.admin-prompt-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.admin-prompt-card-head span {
+  color: var(--muted);
+  font-family: var(--mono-font);
+  font-size: 12px;
+}
+
+.admin-prompt-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-prompt-grid.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.admin-prompt-field {
+  margin: 0;
+}
+
+.admin-prompt-field textarea {
+  min-height: 96px;
+  resize: vertical;
 }
 
 .compact-field {
@@ -1919,6 +2058,21 @@ input[readonly] {
     justify-content: flex-start;
   }
 
+  .admin-dashboard,
+  .admin-prompt-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-rail,
+  .admin-prompt-nav {
+    position: static;
+  }
+
+  .admin-rail,
+  .admin-prompt-nav {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
   .admin-filter-row {
     justify-content: flex-start;
   }
@@ -1998,6 +2152,12 @@ input[readonly] {
   .admin-filter-row,
   .compact-field {
     width: 100%;
+  }
+
+  .admin-rail,
+  .admin-prompt-nav,
+  .admin-prompt-grid.two {
+    grid-template-columns: 1fr;
   }
 
 }
