@@ -1,8 +1,34 @@
 # Public Interface Changes
 
+## 2026-06-10 - B端 user API Key ownership and backend generation proxy
+
+C端 no longer receives or edits the real model API Key, endpoint, or model. B端 configures each registered user's API Key, and image generation calls are proxied through the backend with the user's stored key plus the B端 default endpoint/model.
+
+### C端 HTTP API
+
+- `GET /api/settings` now returns `apiKeyConfigured` and `apiKeyMasked`; it no longer returns the real `apiKey`.
+- `PUT /api/settings` is compatibility-only for C端 size preference and ignores client-supplied `apiKey`, `endpoint`, and `model`.
+- `POST /api/generate` was added. The request body accepts `prompt`, `count`, `size`, and optional `referenceImages`. It requires a logged-in user with a B端 configured API Key and returns generated images plus a sanitized request snapshot.
+- `POST /api/generation-logs` remains for compatibility, but normal C端 generation logging is now written by the backend proxy.
+
+### B端 HTTP API
+
+- `GET /api/admin/users` now returns `apiKeyMasked` in addition to `apiKeyConfigured`.
+- `PATCH /api/admin/users/:id` now supports `apiKey` to save a user's model API Key and `clearApiKey: true` to clear it. `disabled` remains a partial update field.
+
+### C端 UI
+
+- The model config modal shows a read-only masked API Key status and a read-only model field.
+- The API Key reveal button, endpoint address field, and C端 save-config action were removed.
+
+### Storage Contract
+
+- User API Keys remain stored in `user_settings.api_key` and are never returned to C端 as plaintext.
+- Backend generation logs store sanitized model request/response JSON and do not store API Keys.
+
 ## 2026-06-10 - Account-gated C端 and B端 admin console
 
-The app now requires C端 users to register/login before configuring their own model API Key. A B端 admin page was added for user management, model defaults, and generation input/output logs. There is still no package, recharge, or quota deduction flow.
+The app introduced C端 registration/login and a B端 admin page for user management, model defaults, and generation input/output logs. The newer section above supersedes the original C端 self-configured API Key behavior. There is still no package, recharge, or quota deduction flow.
 
 ### C端 HTTP API
 

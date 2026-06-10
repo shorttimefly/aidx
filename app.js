@@ -367,7 +367,12 @@ const state = {
   lastRequestPayload: null,
   auth: {
     token: "",
-    user: null
+    user: null,
+    apiKeyConfigured: false,
+    modelSettings: {
+      endpoint: DEFAULT_ENDPOINT,
+      model: DEFAULT_MODEL
+    }
   }
 };
 
@@ -506,9 +511,9 @@ function bindEvents() {
   els.suiteUploadInput.addEventListener("change", (event) => handleSuiteFiles(event.target.files));
   els.generateSuiteBtn.addEventListener("click", handleGenerateSuite);
   els.saveSuiteBtn.addEventListener("click", handleSaveSuite);
-  els.saveApiBtn.addEventListener("click", saveSettings);
+  els.saveApiBtn?.addEventListener("click", saveSettings);
   els.testReferenceBtn.addEventListener("click", handleTestReferenceSupport);
-  els.toggleKeyBtn.addEventListener("click", toggleApiKey);
+  els.toggleKeyBtn?.addEventListener("click", toggleApiKey);
   els.sizeInput.addEventListener("change", () => localStorage.setItem("imageStudio.size", els.sizeInput.value));
   els.suiteSizeInput.addEventListener("change", handleSuiteSizeChange);
   els.clearFormBtn.addEventListener("click", clearGenerationForm);
@@ -736,6 +741,12 @@ async function handleLogout() {
 function clearAuthSession() {
   state.auth.token = "";
   state.auth.user = null;
+  state.auth.apiKeyConfigured = false;
+  state.auth.modelSettings = {
+    endpoint: DEFAULT_ENDPOINT,
+    model: DEFAULT_MODEL
+  };
+  if (els.apiKeyInput) els.apiKeyInput.value = "";
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
@@ -743,7 +754,7 @@ function renderAuthState() {
   const user = state.auth.user;
   els.accountTitle.textContent = user ? "当前账号" : "未登录";
   els.accountNameText.textContent = user ? user.name || user.email : "注册后使用工具";
-  els.accountMetaText.textContent = user ? user.email : "登录后配置 API Key 并记录生成日志";
+  els.accountMetaText.textContent = user ? user.email : "登录后由管理员配置 API Key";
   els.logoutBtn.style.display = user ? "inline-flex" : "none";
   els.openAuthBtn.textContent = user ? "切换账号" : "登录 / 注册";
 }
@@ -764,10 +775,16 @@ function closeAuthModal() {
 async function loadAccountSettings() {
   const payload = await apiFetch("/settings");
   const settings = payload.settings || {};
-  els.apiKeyInput.value = settings.apiKey || "";
-  els.endpointInput.value = settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT;
-  els.modelInput.value = settings.model || settings.defaultModel || DEFAULT_MODEL;
-  const savedSize = normalizeImageSize(settings.size) || "1024x1024";
+  state.auth.apiKeyConfigured = Boolean(settings.apiKeyConfigured);
+  state.auth.modelSettings = {
+    endpoint: settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT,
+    model: settings.model || settings.defaultModel || DEFAULT_MODEL
+  };
+  els.apiKeyInput.value = settings.apiKeyMasked || (state.auth.apiKeyConfigured ? "已配置" : "未配置");
+  if (els.endpointInput) els.endpointInput.value = state.auth.modelSettings.endpoint;
+  els.modelInput.value = state.auth.modelSettings.model;
+  const localSize = normalizeImageSize(localStorage.getItem("imageStudio.size"));
+  const savedSize = localSize || normalizeImageSize(settings.size) || "1024x1024";
   applyDetectedSize(savedSize);
   els.sizeInput.value = savedSize;
   updateConnectionState();
@@ -1065,9 +1082,6 @@ async function handleGenerateSuite() {
         prompt,
         count: 1,
         size: requestedSize,
-        model: els.modelInput.value.trim() || DEFAULT_MODEL,
-        endpoint: els.endpointInput.value.trim() || DEFAULT_ENDPOINT,
-        apiKey: els.apiKeyInput.value.trim(),
         referenceImages: state.suiteReference ? [state.suiteReference] : []
       });
       const item = {
@@ -1241,15 +1255,10 @@ function renderQuickEdits() {
 }
 
 function loadSettings() {
-  els.apiKeyInput.value = localStorage.getItem("imageStudio.apiKey") || "";
-  const savedEndpoint = localStorage.getItem("imageStudio.endpoint") || "";
-  const savedModel = localStorage.getItem("imageStudio.model") || "";
-  const endpoint = isLegacyDefaultEndpoint(savedEndpoint) ? DEFAULT_ENDPOINT : savedEndpoint || DEFAULT_ENDPOINT;
-  const model = isLegacyDefaultModel(savedModel) ? DEFAULT_MODEL : savedModel || DEFAULT_MODEL;
-  els.endpointInput.value = endpoint;
-  els.modelInput.value = model;
-  localStorage.setItem("imageStudio.endpoint", endpoint);
-  localStorage.setItem("imageStudio.model", model);
+  localStorage.removeItem("imageStudio.apiKey");
+  els.apiKeyInput.value = "";
+  if (els.endpointInput) els.endpointInput.value = DEFAULT_ENDPOINT;
+  els.modelInput.value = DEFAULT_MODEL;
   const rawSavedSize = localStorage.getItem("imageStudio.size");
   const savedSize = normalizeImageSize(rawSavedSize) || "1024x1024";
   if (rawSavedSize !== savedSize) {
@@ -1280,14 +1289,11 @@ async function saveSettings() {
     await apiFetch("/settings", {
       method: "PUT",
       body: JSON.stringify({
-        apiKey: els.apiKeyInput.value.trim(),
-        endpoint: els.endpointInput.value.trim() || DEFAULT_ENDPOINT,
-        model: els.modelInput.value.trim() || DEFAULT_MODEL,
         size: els.sizeInput.value
       })
     });
     saved = true;
-    showToast("配置已保存");
+    showToast("尺寸偏好已保存");
     closeSettingsModal();
   } catch (error) {
     showToast(error.message, true);
@@ -1296,8 +1302,6 @@ async function saveSettings() {
   }
   if (!saved) return;
   localStorage.removeItem("imageStudio.apiKey");
-  localStorage.setItem("imageStudio.endpoint", els.endpointInput.value.trim() || DEFAULT_ENDPOINT);
-  localStorage.setItem("imageStudio.model", els.modelInput.value.trim() || DEFAULT_MODEL);
   localStorage.setItem("imageStudio.size", els.sizeInput.value);
   updateConnectionState();
 }
@@ -1320,8 +1324,8 @@ function updateConnectionState() {
     });
     return;
   }
-  const hasKey = Boolean(els.apiKeyInput.value.trim());
-  const text = hasKey ? "API 已就绪" : "配置 API Key";
+  const hasKey = Boolean(state.auth.apiKeyConfigured);
+  const text = hasKey ? "API 已就绪" : "等待管理员配置";
   [els.connectionState, els.singleConnectionState].forEach((button) => {
     if (!button) return;
     button.textContent = text;
@@ -1340,9 +1344,10 @@ async function ensureApiReady() {
     return false;
   }
   await verifySessionActive();
-  if (els.apiKeyInput.value.trim()) return true;
+  await loadAccountSettings();
+  if (state.auth.apiKeyConfigured) return true;
   openSettingsModal();
-  showToast("请先填写 API Key", true);
+  showToast("请联系管理员配置 API Key", true);
   return false;
 }
 
@@ -1365,9 +1370,6 @@ function closeSettingsModal() {
 async function handleTestReferenceSupport() {
   if (!(await ensureApiReady())) return;
 
-  const apiKey = els.apiKeyInput.value.trim();
-  const endpoint = els.endpointInput.value.trim() || DEFAULT_ENDPOINT;
-  const model = els.modelInput.value.trim() || DEFAULT_MODEL;
   const reference = firstAvailableReferenceImage() || {
     name: "参考图探测",
     size: "1x1",
@@ -1381,66 +1383,30 @@ async function handleTestReferenceSupport() {
       references
     )
   );
-  const body = {
-    model,
-    prompt: probePrompt,
-    n: 1,
-    size: "1024x1024"
-  };
-  const resolvedEndpoint = resolveImageEndpoint(endpoint, model);
 
   renderReferenceProbeLoading(reference, usingFallbackReference);
   setBusy(true, els.testReferenceBtn, "测试中");
   try {
-    if (isGeminiImageEndpoint(resolvedEndpoint, model)) {
-      const referenceImages = await requestImages({
-        prompt: probePrompt,
-        count: 1,
-        size: "1024x1024",
-        model,
-        endpoint: resolvedEndpoint,
-        apiKey,
-        referenceImages: references
-      });
-      const controlImages = await requestImages({
-        prompt: withStrictProductReference("无入参图片对照测试。请生成一张明亮科技感电商商品图，不添加文字。"),
-        count: 1,
-        size: "1024x1024",
-        model,
-        endpoint: resolvedEndpoint,
-        apiKey,
-        referenceImages: []
-      });
-      renderReferenceProbeResult({
-        reference,
-        referenceImage: referenceImages[0],
-        controlImage: controlImages[0],
-        strategy: "Gemini inlineData",
-        usingFallbackReference
-      });
-      showToast("Gemini 图生图入参已发送：contents.parts.inlineData");
-      return;
-    }
-    const result = await probeReferenceStrategy({ endpoint, apiKey, body, references });
-    if (result.accepted) {
-      localStorage.setItem(REFERENCE_STRATEGY_KEY, result.strategy);
-      const controlImages = await postImageRequest(endpoint, apiKey, {
-        ...body,
-        prompt: withStrictProductReference("无入参图片对照测试。请生成一张明亮科技感电商商品图，不添加文字。")
-      });
-      renderReferenceProbeResult({
-        reference,
-        referenceImage: result.images[0],
-        controlImage: controlImages[0],
-        strategy: result.strategy,
-        usingFallbackReference
-      });
-      showToast(`入参图片字段已生效：${result.strategy}`);
-      return;
-    }
-    localStorage.removeItem(REFERENCE_STRATEGY_KEY);
-    renderReferenceProbeError(`未确认支持入参图片：${result.message}`);
-    showToast(`未确认支持参考图：${result.message}`, true);
+    const referenceImages = await requestImages({
+      prompt: probePrompt,
+      count: 1,
+      size: "1024x1024",
+      referenceImages: references
+    });
+    const controlImages = await requestImages({
+      prompt: withStrictProductReference("无入参图片对照测试。请生成一张明亮科技感电商商品图，不添加文字。"),
+      count: 1,
+      size: "1024x1024",
+      referenceImages: []
+    });
+    renderReferenceProbeResult({
+      reference,
+      referenceImage: referenceImages[0],
+      controlImage: controlImages[0],
+      strategy: referenceImages[0]?.request?.strategy || "后端代理",
+      usingFallbackReference
+    });
+    showToast("入参图片已通过后端代理发送");
   } catch (error) {
     renderReferenceProbeError(error.message);
     showToast(error.message, true);
@@ -1604,9 +1570,6 @@ async function handleGenerate() {
       prompt,
       count,
       size: els.sizeInput.value,
-      model: els.modelInput.value.trim() || DEFAULT_MODEL,
-      endpoint: els.endpointInput.value.trim() || DEFAULT_ENDPOINT,
-      apiKey: els.apiKeyInput.value.trim(),
       referenceImages: state.uploaded
     });
     state.generated = images.map((image, index) => ({
@@ -1662,9 +1625,6 @@ async function handleRefine() {
       prompt: composedPrompt,
       count: 1,
       size: els.sizeInput.value,
-      model: els.modelInput.value.trim() || DEFAULT_MODEL,
-      endpoint: els.endpointInput.value.trim() || DEFAULT_ENDPOINT,
-      apiKey: els.apiKeyInput.value.trim(),
       referenceImages: state.selectedImage ? [state.selectedImage] : []
     });
     const refined = {
@@ -1705,52 +1665,37 @@ async function handleRefine() {
   }
 }
 
-async function requestImages({ prompt, count, size, model, endpoint, apiKey, referenceImages = [] }) {
+async function requestImages({ prompt, count, size, referenceImages = [] }) {
   const references = normalizeReferenceImages(referenceImages);
   const finalPrompt = withStrictProductReference(withReferenceContext(prompt, references));
   const requestSize = normalizeImageSize(size) || "1024x1024";
-  const resolvedEndpoint = resolveImageEndpoint(endpoint, model);
-  const baseBody = {
-    model,
-    prompt: finalPrompt,
-    n: count,
-    size: requestSize
-  };
-
-  if (isGeminiImageEndpoint(resolvedEndpoint, model)) {
-    const geminiBody = await buildGeminiImageRequestBody({
+  const payload = await apiFetch("/generate", {
+    method: "POST",
+    body: JSON.stringify({
       prompt: finalPrompt,
+      count,
       size: requestSize,
-      references
-    });
-    return postImageRequest(resolvedEndpoint, apiKey, geminiBody);
+      referenceImages: references
+    })
+  });
+  const images = payload.images || [];
+  if (!images.length) {
+    throw new Error("接口未返回可识别的图片地址或 b64_json");
   }
-
-  if (!references.length) {
-    return postImageRequest(resolvedEndpoint, apiKey, baseBody);
-  }
-
-  let lastReferenceError = null;
-  for (const strategy of referencePayloadStrategies(references)) {
-    try {
-      const images = await postImageRequest(resolvedEndpoint, apiKey, {
-        ...baseBody,
-        ...strategy.body
-      });
-      localStorage.setItem(REFERENCE_STRATEGY_KEY, strategy.id);
-      return images;
-    } catch (error) {
-      if (!canRetryReferencePayload(error)) throw error;
-      lastReferenceError = error;
+  const requestSnapshot = payload.request || {
+    model: payload.model || state.auth.modelSettings.model || DEFAULT_MODEL,
+    body: {
+      prompt: finalPrompt,
+      n: count,
+      size: requestSize
     }
+  };
+  recordRequestPayload(requestSnapshot);
+  if (payload.apiKeyConfigured !== undefined) {
+    state.auth.apiKeyConfigured = Boolean(payload.apiKeyConfigured);
+    updateConnectionState();
   }
-
-  localStorage.removeItem(REFERENCE_STRATEGY_KEY);
-  const fallbackImages = await postImageRequest(resolvedEndpoint, apiKey, baseBody);
-  if (lastReferenceError) {
-    state.referenceFallbackNotice = "当前接口未接受参考图字段，已降级为提示词锁定";
-  }
-  return fallbackImages;
+  return images.map((image) => ({ ...image, request: image.request || requestSnapshot }));
 }
 
 async function postImageRequest(endpoint, apiKey, body) {
@@ -2139,10 +2084,19 @@ function stripDataUrlPrefix(value) {
   return match ? match[1] : text;
 }
 
-function recordRequestPayload(endpoint, body) {
+function recordRequestPayload(endpointOrRequest, maybeBody) {
+  const request =
+    maybeBody === undefined
+      ? endpointOrRequest || {}
+      : {
+          endpoint: endpointOrRequest,
+          body: maybeBody
+        };
+  const body = request.body || {};
   const sanitized = sanitizeRequestPayload(body);
   state.lastRequestPayload = {
-    endpoint,
+    model: request.model || state.auth.modelSettings.model || DEFAULT_MODEL,
+    strategy: request.strategy || "",
     body: sanitized,
     recordedAt: new Date().toISOString()
   };
@@ -2151,14 +2105,14 @@ function recordRequestPayload(endpoint, body) {
   const imageFields = findImagePayloadFields(body);
   els.requestPayloadMeta.textContent = [
     new Date().toLocaleTimeString(),
-    strategy ? `字段策略：${strategy}` : "",
+    request.strategy || strategy ? `字段策略：${request.strategy || strategy}` : "",
     imageFields.length ? `图片字段：${imageFields.join(", ")}` : "未带图片字段"
   ]
     .filter(Boolean)
     .join(" · ");
   els.requestPayloadPreview.textContent = JSON.stringify(
     {
-      endpoint,
+      model: request.model || state.auth.modelSettings.model || DEFAULT_MODEL,
       body: sanitized
     },
     null,
@@ -2734,6 +2688,7 @@ function setDefaultAutoSaveName() {
 }
 
 function setBusy(isBusy, button, label) {
+  if (!button) return;
   state.busy = isBusy;
   button.disabled = isBusy;
   button.setAttribute("aria-busy", isBusy ? "true" : "false");

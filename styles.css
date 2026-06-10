@@ -651,6 +651,12 @@ textarea:focus {
   box-shadow: var(--glow);
 }
 
+input[readonly] {
+  background: #f5f8fb;
+  color: var(--muted);
+  cursor: default;
+}
+
 .suite-control-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1689,6 +1695,12 @@ textarea:focus {
   margin-top: 3px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.admin-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
 }
 
 .status-chip {

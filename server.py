@@ -13,9 +13,12 @@ import json
 import os
 from pathlib import Path
 import secrets
+import socket
 import sqlite3
 import time
-from urllib.parse import parse_qs, unquote, urlparse
+import urllib.error
+import urllib.request
+from urllib.parse import parse_qs, quote, unquote, urlparse
 
 
 ROOT = Path(__file__).resolve().parent
@@ -26,6 +29,7 @@ ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip().lower()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
 DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
 DEFAULT_MODEL = "gemini-2.5-flash-image"
+UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "120"))
 
 
 def now_iso() -> str:
@@ -204,7 +208,21 @@ def app_settings(conn: sqlite3.Connection) -> dict:
     }
 
 
-def row_user(row: sqlite3.Row, usage: dict | None = None, api_key_configured: bool = False) -> dict:
+def mask_api_key(api_key: str) -> str:
+    value = str(api_key or "").strip()
+    if not value:
+        return ""
+    if len(value) <= 8:
+        return "*" * len(value)
+    return f"{value[:4]}{'*' * 8}{value[-4:]}"
+
+
+def row_user(
+    row: sqlite3.Row,
+    usage: dict | None = None,
+    api_key_configured: bool = False,
+    api_key_masked: str = "",
+) -> dict:
     source = row_value(row, "source", "direct") or "direct"
     return {
         "id": row["id"],
@@ -222,6 +240,7 @@ def row_user(row: sqlite3.Row, usage: dict | None = None, api_key_configured: bo
         "createdAt": row["created_at"],
         "lastLoginAt": row["last_login_at"],
         "apiKeyConfigured": api_key_configured,
+        "apiKeyMasked": api_key_masked,
         "usage": usage
         or {
             "calls": 0,
@@ -242,6 +261,14 @@ class AppError(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+
+
+class UpstreamError(Exception):
+    def __init__(self, status: int, message: str, payload=None):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+        self.payload = payload
 
 
 class Handler(SimpleHTTPRequestHandler):
@@ -278,6 +305,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_get_settings()
             if path == "/api/settings" and method == "PUT":
                 return self.handle_put_settings()
+            if path == "/api/generate" and method == "POST":
+                return self.handle_generate()
             if path == "/api/generation-logs" and method == "POST":
                 return self.handle_create_generation_log()
             if path == "/api/image-feedback" and method == "POST":
@@ -459,12 +488,14 @@ class Handler(SimpleHTTPRequestHandler):
         with connect() as conn:
             settings = app_settings(conn)
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
+        api_key = row["api_key"] if row else ""
         self.json_response(
             {
                 "settings": {
-                    "apiKey": row["api_key"] if row else "",
-                    "endpoint": row["endpoint"] if row and row["endpoint"] else settings["defaultEndpoint"],
-                    "model": row["model"] if row and row["model"] else settings["defaultModel"],
+                    "apiKeyConfigured": bool(api_key),
+                    "apiKeyMasked": mask_api_key(api_key),
+                    "endpoint": settings["defaultEndpoint"],
+                    "model": settings["defaultModel"],
                     "size": row["size"] if row else "1024x1024",
                     "defaultEndpoint": settings["defaultEndpoint"],
                     "defaultModel": settings["defaultModel"],
@@ -475,25 +506,97 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_put_settings(self) -> None:
         user = self.require_user()
         body = self.read_json()
-        api_key = str(body.get("apiKey") or "").strip()
-        endpoint = str(body.get("endpoint") or DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
-        model = str(body.get("model") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
-        size = str(body.get("size") or "1024x1024").strip() or "1024x1024"
+        size = normalize_image_size(str(body.get("size") or "1024x1024").strip()) or "1024x1024"
         with connect() as conn:
             conn.execute(
                 """
                 INSERT INTO user_settings (user_id, api_key, endpoint, model, size, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?)
+                VALUES (?, '', '', '', ?, ?)
                 ON CONFLICT(user_id) DO UPDATE SET
-                  api_key=excluded.api_key,
-                  endpoint=excluded.endpoint,
-                  model=excluded.model,
                   size=excluded.size,
                   updated_at=excluded.updated_at
                 """,
-                (user["id"], api_key, endpoint, model, size, now_iso()),
+                (user["id"], size, now_iso()),
             )
         self.json_response({"ok": True})
+
+    def handle_generate(self) -> None:
+        user = self.require_user()
+        body = self.read_json()
+        prompt = trim_text(str(body.get("prompt") or "").strip(), 8000)
+        if not prompt:
+            raise AppError(HTTPStatus.BAD_REQUEST, "请输入提示词")
+        count = clamp_int(body.get("count") or body.get("n") or 1, 1, 8)
+        size = normalize_image_size(str(body.get("size") or "1024x1024").strip()) or "1024x1024"
+        references = normalize_reference_images(body.get("referenceImages"))
+        with connect() as conn:
+            settings = app_settings(conn)
+            row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
+        api_key = str(row["api_key"] if row else "").strip()
+        if not api_key:
+            raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置 API Key")
+        endpoint = settings["defaultEndpoint"]
+        model = settings["defaultModel"]
+        resolved_endpoint = resolve_image_endpoint(endpoint, model)
+        request_body, strategy = build_image_request_body(
+            prompt=prompt,
+            count=count,
+            size=size,
+            model=model,
+            endpoint=resolved_endpoint,
+            references=references,
+        )
+        request_snapshot = {
+            "model": model,
+            "strategy": strategy,
+            "body": sanitize_payload(request_body),
+        }
+        started_at = time.monotonic()
+        try:
+            payload = call_upstream_model(resolved_endpoint, api_key, request_body)
+            images = extract_image_results_from_payload(payload)
+            if not images:
+                raise UpstreamError(502, "接口未返回可识别的图片地址或 b64_json", payload)
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            log_generation(
+                user_id=user["id"],
+                endpoint=resolved_endpoint,
+                model=model,
+                prompt=prompt,
+                size=size,
+                count=count,
+                images=images,
+                status="completed",
+                error="",
+                request_body=request_body,
+                response_body=payload,
+                duration_ms=duration_ms,
+            )
+            self.json_response(
+                {
+                    "images": [{**image, "request": request_snapshot} for image in images],
+                    "request": request_snapshot,
+                    "model": model,
+                    "apiKeyConfigured": True,
+                }
+            )
+        except UpstreamError as error:
+            duration_ms = int((time.monotonic() - started_at) * 1000)
+            log_generation(
+                user_id=user["id"],
+                endpoint=resolved_endpoint,
+                model=model,
+                prompt=prompt,
+                size=size,
+                count=count,
+                images=[],
+                status="failed",
+                error=f"API {error.status}: {error.message}",
+                request_body=request_body,
+                response_body=error.payload,
+                duration_ms=duration_ms,
+            )
+            raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {error.status}: {error.message}")
 
     def handle_create_generation_log(self) -> None:
         user = self.require_user()
@@ -617,22 +720,51 @@ class Handler(SimpleHTTPRequestHandler):
             }
             for row in usage_rows
         }
-        key_by_user = {row["user_id"]: bool(row["api_key"]) for row in settings_rows}
+        key_by_user = {row["user_id"]: row["api_key"] for row in settings_rows}
         self.json_response(
-            {"users": [row_user(row, usage_by_user.get(row["id"]), key_by_user.get(row["id"], False)) for row in rows]}
+            {
+                "users": [
+                    row_user(
+                        row,
+                        usage_by_user.get(row["id"]),
+                        bool(key_by_user.get(row["id"], "")),
+                        mask_api_key(key_by_user.get(row["id"], "")),
+                    )
+                    for row in rows
+                ]
+            }
         )
 
     def handle_admin_update_user(self, user_id: str) -> None:
         self.require_admin()
         body = self.read_json()
-        disabled = 1 if body.get("disabled") else 0
         with connect() as conn:
-            cursor = conn.execute("UPDATE users SET disabled=? WHERE id=?", (disabled, user_id))
-            if cursor.rowcount == 0:
+            user = conn.execute("SELECT id FROM users WHERE id=?", (user_id,)).fetchone()
+            if not user:
                 raise AppError(HTTPStatus.NOT_FOUND, "用户不存在")
-            if disabled:
-                conn.execute("DELETE FROM sessions WHERE user_id=? AND role='user'", (user_id,))
+            if "disabled" in body:
+                disabled = 1 if body.get("disabled") else 0
+                conn.execute("UPDATE users SET disabled=? WHERE id=?", (disabled, user_id))
+                if disabled:
+                    conn.execute("DELETE FROM sessions WHERE user_id=? AND role='user'", (user_id,))
+            if body.get("clearApiKey"):
+                self.upsert_user_api_key(conn, user_id, "")
+            elif "apiKey" in body:
+                self.upsert_user_api_key(conn, user_id, str(body.get("apiKey") or "").strip())
         self.json_response({"ok": True})
+
+    def upsert_user_api_key(self, conn: sqlite3.Connection, user_id: str, api_key: str) -> None:
+        settings = app_settings(conn)
+        conn.execute(
+            """
+            INSERT INTO user_settings (user_id, api_key, endpoint, model, size, updated_at)
+            VALUES (?, ?, ?, ?, '1024x1024', ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+              api_key=excluded.api_key,
+              updated_at=excluded.updated_at
+            """,
+            (user_id, api_key, settings["defaultEndpoint"], settings["defaultModel"], now_iso()),
+        )
 
     def handle_admin_logs(self, query: str) -> None:
         self.require_admin()
@@ -795,6 +927,361 @@ class Handler(SimpleHTTPRequestHandler):
                     (key, value, now_iso()),
                 )
         self.json_response({"ok": True})
+
+
+def clamp_int(value, minimum: int, maximum: int) -> int:
+    try:
+        number = int(value)
+    except (TypeError, ValueError):
+        number = minimum
+    return max(minimum, min(number, maximum))
+
+
+def normalize_image_size(value: str) -> str:
+    text = str(value or "").strip().lower().replace("×", "x")
+    parts = text.split("x")
+    if len(parts) != 2:
+        return ""
+    try:
+        width = int(parts[0])
+        height = int(parts[1])
+    except ValueError:
+        return ""
+    if width <= 0 or height <= 0 or width > 4096 or height > 4096:
+        return ""
+    return f"{width}x{height}"
+
+
+def resolve_image_endpoint(endpoint: str, model: str) -> str:
+    selected_model = quote_component(model or DEFAULT_MODEL)
+    value = str(endpoint or DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
+    if "{model}" in value:
+        return value.replace("{model}", selected_model)
+    if is_gemini_image_endpoint(value, model):
+        marker = "/v1beta/models/"
+        suffix = ":generateContent"
+        lower = value.lower()
+        marker_index = lower.find(marker)
+        suffix_index = lower.find(suffix.lower(), marker_index)
+        if marker_index >= 0 and suffix_index >= 0:
+            prefix = value[: marker_index + len(marker)]
+            tail = value[suffix_index + len(suffix) :]
+            return f"{prefix}{selected_model}{suffix}{tail}"
+    return value
+
+
+def quote_component(value: str) -> str:
+    return quote(str(value or ""), safe="")
+
+
+def is_gemini_image_endpoint(endpoint: str, model: str = "") -> bool:
+    value = f"{endpoint or ''} {model or ''}".lower()
+    return "generatecontent" in value or "gemini-2.5-flash-image" in value or "gemini-3-pro-image" in value
+
+
+def build_image_request_body(
+    *,
+    prompt: str,
+    count: int,
+    size: str,
+    model: str,
+    endpoint: str,
+    references: list[dict],
+) -> tuple[dict, str]:
+    if is_gemini_image_endpoint(endpoint, model):
+        parts = [{"text": prompt}]
+        for reference in references:
+            inline_data = reference_to_inline_data(reference)
+            if inline_data:
+                parts.append({"inlineData": inline_data})
+        return (
+            {
+                "contents": [
+                    {
+                        "role": "user",
+                        "parts": parts,
+                    }
+                ],
+                "generationConfig": {
+                    "responseModalities": ["TEXT", "IMAGE"],
+                    "imageConfig": gemini_image_config_from_size(size),
+                },
+            },
+            "Gemini inlineData" if len(parts) > 1 else "Gemini text",
+        )
+    body = {
+        "model": model,
+        "prompt": prompt,
+        "n": count,
+        "size": size,
+    }
+    if references:
+        body["reference_images"] = [reference["url"] for reference in references]
+    return body, "reference_images" if references else "text"
+
+
+def normalize_reference_images(value) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    references = []
+    seen = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        url = str(item.get("url") or "").strip()
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        references.append(
+            {
+                "name": trim_text(item.get("name") or "参考图", 120),
+                "size": normalize_image_size(str(item.get("size") or "")),
+                "url": url,
+            }
+        )
+        if len(references) >= 3:
+            break
+    return references
+
+
+def reference_to_inline_data(reference: dict) -> dict | None:
+    url = str(reference.get("url") or "")
+    if not url.startswith("data:image/"):
+        return None
+    mime_type = "image/png"
+    header, _, data = url.partition(",")
+    if not data:
+        return None
+    if ";" in header and ":" in header:
+        mime_type = header.split(":", 1)[1].split(";", 1)[0] or mime_type
+    return {"data": data, "mimeType": mime_type}
+
+
+def gemini_image_config_from_size(size: str) -> dict:
+    parsed = parse_image_size(size)
+    if not parsed:
+        return {"aspectRatio": "1:1", "imageSize": "1K"}
+    width, height = parsed
+    return {
+        "aspectRatio": nearest_gemini_aspect_ratio(width, height),
+        "imageSize": "2K" if max(width, height) > 1200 else "1K",
+    }
+
+
+def parse_image_size(size: str) -> tuple[int, int] | None:
+    normalized = normalize_image_size(size)
+    if not normalized:
+        return None
+    width, height = normalized.split("x", 1)
+    return int(width), int(height)
+
+
+def nearest_gemini_aspect_ratio(width: int, height: int) -> str:
+    ratio = width / height
+    options = [
+        ("1:1", 1),
+        ("16:9", 16 / 9),
+        ("9:16", 9 / 16),
+        ("4:3", 4 / 3),
+        ("3:4", 3 / 4),
+    ]
+    return min(options, key=lambda item: abs(item[1] - ratio))[0]
+
+
+def call_upstream_model(endpoint: str, api_key: str, body: dict):
+    request = urllib.request.Request(
+        endpoint,
+        data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": authorization_header_value(api_key, endpoint),
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT_SECONDS) as response:
+            text = response.read().decode("utf-8", errors="replace")
+            return parse_upstream_payload(text)
+    except urllib.error.HTTPError as error:
+        text = error.read().decode("utf-8", errors="replace")
+        payload = parse_upstream_payload(text)
+        raise UpstreamError(error.code, upstream_error_message(payload, error.reason), payload)
+    except urllib.error.URLError as error:
+        raise UpstreamError(502, str(error.reason), {"error": str(error.reason)})
+    except (TimeoutError, socket.timeout):
+        raise UpstreamError(504, "请求远端模型超时", {"error": "timeout"})
+
+
+def authorization_header_value(api_key: str, endpoint: str) -> str:
+    value = str(api_key or "").strip()
+    if value.lower().startswith("bearer "):
+        return value
+    if is_gemini_image_endpoint(endpoint) or "aokapi.com" in str(endpoint).lower():
+        return value
+    return f"Bearer {value}"
+
+
+def parse_upstream_payload(text: str):
+    try:
+        return json.loads(text or "{}")
+    except json.JSONDecodeError:
+        return text
+
+
+def upstream_error_message(payload, fallback: str) -> str:
+    if isinstance(payload, dict):
+        error = payload.get("error")
+        if isinstance(error, dict) and error.get("message"):
+            return str(error.get("message"))
+        if error:
+            return str(error)
+        if payload.get("message"):
+            return str(payload.get("message"))
+    if isinstance(payload, str) and payload:
+        return payload[:500]
+    return str(fallback or "接口请求失败")
+
+
+def extract_image_results_from_payload(payload) -> list[dict]:
+    images: list[dict] = []
+    data = []
+    if isinstance(payload, dict):
+        if isinstance(payload.get("data"), list):
+            data = payload["data"]
+        elif isinstance(payload.get("images"), list):
+            data = payload["images"]
+    for item in data:
+        if isinstance(item, str):
+            images.append({"url": item})
+        elif isinstance(item, dict):
+            if item.get("url"):
+                images.append({"url": item["url"]})
+            elif item.get("b64_json"):
+                images.append({"url": f"data:image/png;base64,{item['b64_json']}"})
+            elif item.get("image"):
+                images.append({"url": item["image"]})
+    if isinstance(payload, dict):
+        for candidate in payload.get("candidates") or []:
+            content = candidate.get("content") if isinstance(candidate, dict) else {}
+            for part in (content or {}).get("parts") or []:
+                inline = (part.get("inlineData") or part.get("inline_data")) if isinstance(part, dict) else None
+                if inline and inline.get("data"):
+                    mime_type = inline.get("mimeType") or inline.get("mime_type") or "image/png"
+                    images.append({"url": f"data:{mime_type};base64,{inline['data']}"})
+        for choice in payload.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            content = choice.get("message", {}).get("content") if isinstance(choice.get("message"), dict) else ""
+            text = content or choice.get("text") or ""
+            images.extend({"url": url} for url in extract_data_urls_from_text(text))
+    return [image for image in images if image.get("url")]
+
+
+def extract_data_urls_from_text(text: str) -> list[str]:
+    value = str(text or "")
+    urls = []
+    cursor = 0
+    marker = "data:image/"
+    while True:
+        start = value.find(marker, cursor)
+        if start < 0:
+            break
+        end = start
+        while end < len(value) and value[end] not in {'"', "'", " ", "\n", "\r", "\t", ")", "]", "}"}:
+            end += 1
+        urls.append(value[start:end])
+        cursor = end
+    return urls
+
+
+def sanitize_payload(value):
+    if isinstance(value, list):
+        return [sanitize_payload(item) for item in value]
+    if isinstance(value, dict):
+        return {key: sanitize_payload(entry) for key, entry in value.items()}
+    if not isinstance(value, str):
+        return value
+    if value.startswith("data:image/"):
+        prefix, _, data = value.partition(",")
+        return f"{prefix},[base64 图片数据已截断，长度 {len(data)}]"
+    if len(value) >= 400 and all(char.isalnum() or char in "+/=" for char in value):
+        return f"[base64 图片数据已截断，长度 {len(value)}]"
+    return value
+
+
+def extract_token_usage(request_body, response_body) -> dict:
+    response = response_body if isinstance(response_body, dict) else {}
+    usage = response.get("usageMetadata") or response.get("usage_metadata") or response.get("usage") or {}
+    input_tokens = int(
+        usage.get("promptTokenCount")
+        or usage.get("prompt_token_count")
+        or usage.get("prompt_tokens")
+        or estimate_tokens(sanitize_payload(request_body))
+    )
+    output_tokens = int(
+        usage.get("candidatesTokenCount")
+        or usage.get("candidates_token_count")
+        or usage.get("completion_tokens")
+        or estimate_tokens(sanitize_payload(response_body))
+    )
+    total_tokens = int(
+        usage.get("totalTokenCount")
+        or usage.get("total_token_count")
+        or usage.get("total_tokens")
+        or input_tokens + output_tokens
+    )
+    return {"input": input_tokens, "output": output_tokens, "total": total_tokens}
+
+
+def estimate_tokens(value) -> int:
+    text = value if isinstance(value, str) else json.dumps(value or {}, ensure_ascii=False)
+    return max(0, (len(text) + 3) // 4)
+
+
+def log_generation(
+    *,
+    user_id: str,
+    endpoint: str,
+    model: str,
+    prompt: str,
+    size: str,
+    count: int,
+    images: list[dict],
+    status: str,
+    error: str,
+    request_body,
+    response_body,
+    duration_ms: int,
+) -> None:
+    usage = extract_token_usage(request_body, response_body)
+    with connect() as conn:
+        conn.execute(
+            """
+            INSERT INTO generation_logs
+              (id, user_id, endpoint, model, prompt, size, count, image_count, status, error,
+               request_json, response_json, input_tokens, output_tokens, total_tokens, duration_ms, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                make_id("log"),
+                user_id,
+                endpoint[:800],
+                model[:160],
+                prompt[:4000],
+                size[:80],
+                count,
+                len(images),
+                status[:32],
+                error[:2000],
+                trim_json(sanitize_payload(request_body)),
+                trim_json(sanitize_payload(response_body)),
+                usage["input"],
+                usage["output"],
+                usage["total"],
+                duration_ms,
+                now_iso(),
+            ),
+        )
 
 
 def normalize_source(value) -> dict:

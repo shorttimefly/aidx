@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>B端管理台 - AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260610-key-proxy" />
   </head>
   <body class="admin-body">
     <main class="admin-shell">
@@ -154,7 +154,36 @@
       </section>
     </main>
 
+    <div class="modal-backdrop" id="adminKeyModal" aria-hidden="true">
+      <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="adminKeyModalTitle">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">USER API KEY</p>
+            <h3 id="adminKeyModalTitle">配置用户 API Key</h3>
+          </div>
+          <button class="icon-button" type="button" id="closeAdminKeyModalBtn" aria-label="关闭" title="关闭">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="auth-note">
+            <strong id="adminKeyUserText">选择用户后配置</strong>
+            <span>保存后 C 端只会看到脱敏状态，生成请求由后端使用该 Key 调用模型。</span>
+          </div>
+          <label class="field">
+            <span>新的 API Key</span>
+            <input id="adminApiKeyInput" type="password" autocomplete="off" placeholder="粘贴新的 API Key" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-button danger" type="button" id="clearUserKeyBtn">清空 Key</button>
+          <button class="ghost-button" type="button" id="cancelUserKeyBtn">取消</button>
+          <button class="primary-button" type="button" id="saveUserKeyBtn">保存 Key</button>
+        </div>
+      </div>
+    </div>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./admin.js" defer></script>
+    <script src="./admin.js?v=20260610-key-proxy" defer></script>
   </body>
 </html>

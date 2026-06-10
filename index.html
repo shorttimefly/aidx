@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles.css?v=20260610-key-proxy" />
   </head>
   <body>
     <div class="app-shell">
@@ -51,7 +51,7 @@
         <section class="account-card" aria-label="账号状态">
           <span id="accountTitle">未登录</span>
           <strong id="accountNameText">注册后使用工具</strong>
-          <small id="accountMetaText">登录后配置 API Key 并记录生成日志</small>
+          <small id="accountMetaText">登录后由管理员配置 API Key</small>
           <div class="account-actions">
             <button class="mini-button ghost-button" id="openAuthBtn" type="button">登录 / 注册</button>
             <button class="mini-button ghost-button danger" id="logoutBtn" type="button">退出</button>
@@ -436,21 +436,13 @@
         <div class="modal-body">
           <label class="field">
             <span>模型 API Key</span>
-            <div class="secret-row">
-              <input id="apiKeyInput" type="password" autocomplete="off" placeholder="AOKAPI sk-..." />
-              <button class="icon-button" type="button" id="toggleKeyBtn" aria-label="显示或隐藏 API Key" title="显示或隐藏 API Key">
-                <svg viewBox="0 0 24 24"><path d="M2 12s3.5-6 10-6 10 6 10 6-3.5 6-10 6S2 12 2 12Z" /><path d="M12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z" /></svg>
-              </button>
-            </div>
+            <input id="apiKeyInput" type="text" autocomplete="off" placeholder="由管理员配置" readonly />
           </label>
           <div class="settings-grid">
-            <label class="field">
-              <span>接口地址</span>
-              <input id="endpointInput" type="url" value="https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/" />
-            </label>
+            <input id="endpointInput" type="hidden" value="https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/" />
             <label class="field">
               <span>模型</span>
-              <input id="modelInput" type="text" value="gemini-2.5-flash-image" />
+              <input id="modelInput" type="text" value="gemini-2.5-flash-image" readonly />
             </label>
           </div>
           <div id="referenceProbePanel" class="reference-probe-panel" aria-live="polite"></div>
@@ -465,10 +457,6 @@
         <div class="modal-actions">
           <button class="ghost-button" type="button" id="testReferenceBtn">测试入参图片</button>
           <button class="ghost-button" type="button" id="cancelSettingsBtn">取消</button>
-          <button class="primary-button" id="saveApiBtn" type="button">
-            <svg viewBox="0 0 24 24"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z" /><path d="M17 21v-8H7v8" /><path d="M7 3v5h8" /></svg>
-            保存配置
-          </button>
         </div>
       </div>
     </div>
@@ -495,8 +483,8 @@
             <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="至少 8 位" />
           </label>
           <div class="auth-note">
-            <strong>账号用于绑定 API Key、模型配置和生成日志。</strong>
-            <span>这里没有充值和配额概念，生成仍使用用户自己的模型 API Key。</span>
+            <strong>账号用于绑定管理员配置的 API Key 和生成日志。</strong>
+            <span>这里没有充值和配额概念，生成请求由后端代理调用模型。</span>
           </div>
         </div>
         <div class="modal-actions">
@@ -507,6 +495,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./app.js" defer></script>
+    <script src="./app.js?v=20260610-key-proxy" defer></script>
   </body>
 </html>

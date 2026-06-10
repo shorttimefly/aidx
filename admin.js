@@ -9,7 +9,8 @@ const state = {
   feedbacks: [],
   feedbackSources: [],
   feedbackImageSources: [],
-  summary: null
+  summary: null,
+  selectedKeyUserId: ""
 };
 
 const els = {};
@@ -52,6 +53,13 @@ function cacheElements() {
     adminUserTable: document.getElementById("adminUserTable"),
     adminLogTable: document.getElementById("adminLogTable"),
     adminFeedbackTable: document.getElementById("adminFeedbackTable"),
+    adminKeyModal: document.getElementById("adminKeyModal"),
+    adminKeyUserText: document.getElementById("adminKeyUserText"),
+    adminApiKeyInput: document.getElementById("adminApiKeyInput"),
+    closeAdminKeyModalBtn: document.getElementById("closeAdminKeyModalBtn"),
+    cancelUserKeyBtn: document.getElementById("cancelUserKeyBtn"),
+    saveUserKeyBtn: document.getElementById("saveUserKeyBtn"),
+    clearUserKeyBtn: document.getElementById("clearUserKeyBtn"),
     toast: document.getElementById("toast")
   });
 }
@@ -66,8 +74,15 @@ function bindEvents() {
   els.feedbackTypeFilter.addEventListener("change", () => loadFeedbacks());
   els.feedbackSourceFilter.addEventListener("change", () => loadFeedbacks());
   els.feedbackImageSourceFilter.addEventListener("change", () => loadFeedbacks());
+  els.closeAdminKeyModalBtn.addEventListener("click", closeUserKeyModal);
+  els.cancelUserKeyBtn.addEventListener("click", closeUserKeyModal);
+  els.saveUserKeyBtn.addEventListener("click", saveUserKey);
+  els.clearUserKeyBtn.addEventListener("click", clearUserKey);
   els.adminPasswordInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter") handleAdminLogin();
+  });
+  els.adminApiKeyInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") saveUserKey();
   });
 }
 
@@ -255,7 +270,10 @@ function renderUsers() {
             <small>${escapeHtml(user.source?.utmCampaign || user.source?.referrer || user.source?.sourcePath || "")}</small>
           </td>
           <td><span class="status-chip ${user.disabled ? "danger" : "ready"}">${user.disabled ? "已禁用" : "正常"}</span></td>
-          <td>${user.apiKeyConfigured ? "已配置" : "未配置"}</td>
+          <td>
+            <span class="status-chip ${user.apiKeyConfigured ? "ready" : "danger"}">${user.apiKeyConfigured ? "已配置" : "未配置"}</span>
+            <small>${escapeHtml(user.apiKeyMasked || "未设置")}</small>
+          </td>
           <td>${formatNumber(user.usage.calls)}</td>
           <td>${formatNumber(user.usage.images)}</td>
           <td>${formatNumber(user.usage.totalTokens)}</td>
@@ -264,9 +282,14 @@ function renderUsers() {
             <small>登录：${formatTime(user.lastLoginAt)}</small>
           </td>
           <td>
-            <button class="small-button ${user.disabled ? "" : "danger"}" type="button" data-action="toggle-user" data-user-id="${escapeAttr(user.id)}">
-              ${user.disabled ? "启用" : "禁用"}
-            </button>
+            <div class="admin-action-row">
+              <button class="small-button" type="button" data-action="config-key" data-user-id="${escapeAttr(user.id)}">
+                ${user.apiKeyConfigured ? "更新 Key" : "配置 Key"}
+              </button>
+              <button class="small-button ${user.disabled ? "" : "danger"}" type="button" data-action="toggle-user" data-user-id="${escapeAttr(user.id)}">
+                ${user.disabled ? "启用" : "禁用"}
+              </button>
+            </div>
           </td>
         </tr>
       `
@@ -274,6 +297,9 @@ function renderUsers() {
     .join("");
   els.adminUserTable.querySelectorAll("[data-action='toggle-user']").forEach((button) => {
     button.addEventListener("click", () => toggleUser(button.dataset.userId));
+  });
+  els.adminUserTable.querySelectorAll("[data-action='config-key']").forEach((button) => {
+    button.addEventListener("click", () => openUserKeyModal(button.dataset.userId));
   });
 }
 
@@ -290,6 +316,72 @@ async function toggleUser(userId) {
     showToast(disabled ? "用户已禁用" : "用户已启用");
   } catch (error) {
     showToast(error.message, true);
+  }
+}
+
+function openUserKeyModal(userId) {
+  const user = state.users.find((entry) => entry.id === userId);
+  if (!user) return;
+  state.selectedKeyUserId = userId;
+  els.adminKeyUserText.textContent = `${user.name} / ${user.email}`;
+  els.adminApiKeyInput.value = "";
+  els.adminApiKeyInput.placeholder = user.apiKeyConfigured ? "粘贴新的 API Key，留空不修改" : "粘贴新的 API Key";
+  els.clearUserKeyBtn.disabled = !user.apiKeyConfigured;
+  els.adminKeyModal.classList.add("active");
+  els.adminKeyModal.setAttribute("aria-hidden", "false");
+  window.setTimeout(() => els.adminApiKeyInput.focus(), 0);
+}
+
+function closeUserKeyModal() {
+  state.selectedKeyUserId = "";
+  els.adminApiKeyInput.value = "";
+  els.adminKeyModal.classList.remove("active");
+  els.adminKeyModal.setAttribute("aria-hidden", "true");
+}
+
+async function saveUserKey() {
+  const userId = state.selectedKeyUserId;
+  const apiKey = els.adminApiKeyInput.value.trim();
+  if (!userId) return;
+  if (!apiKey) {
+    showToast("请输入新的 API Key", true);
+    return;
+  }
+  setBusy(els.saveUserKeyBtn, "保存中", true);
+  try {
+    await adminFetch(`/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ apiKey })
+    });
+    closeUserKeyModal();
+    await Promise.all([loadUsers(), loadSummary()]);
+    showToast("用户 API Key 已保存");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(els.saveUserKeyBtn, "保存 Key", false);
+  }
+}
+
+async function clearUserKey() {
+  const userId = state.selectedKeyUserId;
+  if (!userId) return;
+  const user = state.users.find((entry) => entry.id === userId);
+  const ok = window.confirm(`清空 ${user?.email || "该用户"} 的 API Key？`);
+  if (!ok) return;
+  setBusy(els.clearUserKeyBtn, "清空中", true);
+  try {
+    await adminFetch(`/users/${encodeURIComponent(userId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ clearApiKey: true })
+    });
+    closeUserKeyModal();
+    await Promise.all([loadUsers(), loadSummary()]);
+    showToast("用户 API Key 已清空");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(els.clearUserKeyBtn, "清空 Key", false);
   }
 }
 
