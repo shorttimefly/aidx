@@ -61,19 +61,19 @@ gemini-2.5-flash-image
 
 上传参考图后，工具会按 AOKAPI NanoBanana / Gemini 图生图格式发送：提示词放在 `contents[0].parts[].text`，参考图放在 `contents[0].parts[].inlineData`，返回图片从 `candidates[].content.parts[].inlineData.data` 解析。若切回旧版 `images/generations` 接口，工具仍保留旧字段探测逻辑作为兼容兜底。
 
-B 端还可以新增独立的图片模型供应商卡片。当前内置适配：
+B 端还可以在模型供应商列表中新增独立的图片模型供应商，并通过弹窗填写 URL、Token 和模型名。当前内置适配：
 
 - `aokapi_gemini`：AOKAPI / Gemini `generateContent` 协议，使用裸 token。
 - `muskapis_image`：Muskapis OpenAI-compatible Images 协议，`POST {baseUrl}/images/generations`，使用 Bearer token 和 `response_format: "b64_json"`。
 - `openai_image`：其他 OpenAI-compatible 图片供应商，协议同 Muskapis。
 
-当用户被授权了一个或多个供应商模型时，`POST /api/generate` 会按模型优先级从小到大尝试；上游 429/5xx/网络/超时/未返回图片等失败会切到下一个模型。用户没有新授权时，完整回退到旧的单用户图片 Key、地址和模型配置。
+当用户被授权了一个或多个供应商模型时，`POST /api/generate` 会按模型优先级从小到大尝试；上游 429/5xx/网络/超时/未返回图片等失败会切到下一个模型。用户没有新授权时，优先使用 B 端列表里设定的默认模型；没有默认模型时，完整回退到旧的单用户图片 Key、地址和模型配置。
 
 ## B 端能力
 
 - 查看所有用户名、邮箱状态、注册时间、最近登录时间和图片/视频 Key 脱敏配置状态
 - 为每个注册用户配置或清空图片 Key、图片模型、图片 Base URL/地址、视频 Key、视频模型和两个视频地址
-- 配置模型供应商卡片：供应商名称、类型、Base URL、Token、启停状态，以及多个模型名和优先级
+- 配置模型供应商列表：新增/修改弹窗填写供应商名称、类型、URL、Token、模型名和优先级，并可在列表中设为默认模型
 - 在用户配置弹窗中为每个用户授权多个可用图片模型
 - 查看每个用户调用次数、生成图片数、输入 token、输出 token、总 token
 - 禁用或启用用户；禁用后用户会话失效，前端生成前会被拦截

@@ -19,11 +19,14 @@ const state = {
   feedbackImageSources: [],
   summary: null,
   modelProviders: [],
+  defaultImageModelId: "",
   activeAdminView: "model",
   promptConfig: null,
   activePromptGroup: "single",
   selectedKeyUserId: "",
-  selectedKeyMode: "image"
+  selectedKeyMode: "image",
+  selectedProviderIndex: -1,
+  selectedProviderModelIndex: -1
 };
 
 const els = {};
@@ -70,6 +73,17 @@ function cacheElements() {
     addModelProviderBtn: document.getElementById("addModelProviderBtn"),
     saveProviderConfigBtn: document.getElementById("saveProviderConfigBtn"),
     modelProviderList: document.getElementById("modelProviderList"),
+    providerConfigModal: document.getElementById("providerConfigModal"),
+    providerConfigModalTitle: document.getElementById("providerConfigModalTitle"),
+    closeProviderConfigModalBtn: document.getElementById("closeProviderConfigModalBtn"),
+    cancelProviderConfigBtn: document.getElementById("cancelProviderConfigBtn"),
+    providerNameInput: document.getElementById("providerNameInput"),
+    providerTypeInput: document.getElementById("providerTypeInput"),
+    providerBaseUrlInput: document.getElementById("providerBaseUrlInput"),
+    providerTokenInput: document.getElementById("providerTokenInput"),
+    providerModelNameInput: document.getElementById("providerModelNameInput"),
+    providerModelPriorityInput: document.getElementById("providerModelPriorityInput"),
+    providerEnabledInput: document.getElementById("providerEnabledInput"),
     refreshUsersBtn: document.getElementById("refreshUsersBtn"),
     refreshLogsBtn: document.getElementById("refreshLogsBtn"),
     refreshFeedbackBtn: document.getElementById("refreshFeedbackBtn"),
@@ -114,11 +128,14 @@ function bindEvents() {
   });
   els.adminLogoutBtn.addEventListener("click", handleAdminLogout);
   els.saveModelConfigBtn.addEventListener("click", saveModelConfig);
-  els.saveProviderConfigBtn.addEventListener("click", saveModelConfig);
   els.addModelProviderBtn.addEventListener("click", addModelProvider);
-  els.modelProviderList.addEventListener("input", handleModelProviderInput);
-  els.modelProviderList.addEventListener("change", handleModelProviderInput);
   els.modelProviderList.addEventListener("click", handleModelProviderAction);
+  els.closeProviderConfigModalBtn.addEventListener("click", closeProviderConfigModal);
+  els.cancelProviderConfigBtn.addEventListener("click", closeProviderConfigModal);
+  els.saveProviderConfigBtn.addEventListener("click", saveProviderFromModal);
+  els.providerConfigModal.addEventListener("click", (event) => {
+    if (event.target === els.providerConfigModal) closeProviderConfigModal();
+  });
   els.refreshUsersBtn.addEventListener("click", loadUsers);
   els.refreshLogsBtn.addEventListener("click", loadLogs);
   els.refreshFeedbackBtn.addEventListener("click", () => loadFeedbacks(true));
@@ -296,23 +313,13 @@ function renderModelConfig(config = {}) {
   els.defaultEndpointInput.value = config.defaultEndpoint || "";
   els.defaultModelInput.value = config.defaultModel || "";
   els.usageNoteInput.value = config.usageNote || "";
+  state.defaultImageModelId = config.defaultImageModelId || "";
   state.modelProviders = Array.isArray(config.modelProviders) ? config.modelProviders : [];
   renderModelProviders();
 }
 
 function addModelProvider() {
-  state.modelProviders.push({
-    id: "",
-    name: "新供应商",
-    providerType: "muskapis_image",
-    baseUrl: "https://api.muskapis.com/v1",
-    enabled: true,
-    editing: true,
-    apiKeyConfigured: false,
-    apiKeyMasked: "",
-    models: [{ id: "", modelName: "gpt-image-2", priority: nextProviderPriority(), enabled: true }]
-  });
-  renderModelProviders();
+  openProviderConfigModal();
 }
 
 function nextProviderPriority() {
@@ -324,66 +331,27 @@ function nextProviderPriority() {
 
 function renderModelProviders() {
   if (!state.modelProviders.length) {
-    els.modelProviderList.innerHTML = `<div class="empty-state compact-empty">暂无模型供应商</div>`;
+    els.modelProviderList.innerHTML = `
+      <div class="empty-state compact-empty">
+        <strong>暂无模型供应商</strong>
+      </div>
+    `;
     return;
   }
-  const savedProviders = state.modelProviders
-    .map((provider, providerIndex) => ({ provider, providerIndex }))
-    .filter((entry) => entry.provider.id && !entry.provider.editing);
-  const editingProviders = state.modelProviders
-    .map((provider, providerIndex) => ({ provider, providerIndex }))
-    .filter((entry) => !entry.provider.id || entry.provider.editing);
-  els.modelProviderList.innerHTML = [
-    savedProviders.length ? renderProviderTable(savedProviders) : "",
-    editingProviders
-    .map((provider, providerIndex) => {
-      const item = provider.provider || provider;
-      const itemIndex = provider.providerIndex ?? providerIndex;
-      const models = Array.isArray(item.models) ? item.models : [];
-      return `
-        <article class="admin-provider-card" data-provider-index="${itemIndex}">
-          <div class="admin-provider-card-head">
-            <label class="checkbox-row compact-checkbox">
-              <input type="checkbox" data-provider-index="${itemIndex}" data-field="enabled" ${item.enabled !== false ? "checked" : ""} />
-              <span>${item.enabled !== false ? "启用" : "停用"}</span>
-            </label>
-            <div class="admin-provider-actions">
-              ${item.id ? `<button class="small-button" type="button" data-provider-action="collapse-provider" data-provider-index="${itemIndex}">收起为列表</button>` : ""}
-              <button class="small-button danger" type="button" data-provider-action="remove-provider" data-provider-index="${itemIndex}">删除供应商</button>
-            </div>
-          </div>
-          <div class="settings-grid">
-            <label class="field">
-              <span>供应商名称</span>
-              <input type="text" data-provider-index="${itemIndex}" data-field="name" value="${escapeAttr(item.name || "")}" />
-            </label>
-            <label class="field">
-              <span>供应商类型</span>
-              <select data-provider-index="${itemIndex}" data-field="providerType">
-                ${providerTypeOptions(item.providerType)}
-              </select>
-            </label>
-            <label class="field">
-              <span>Base URL</span>
-              <input type="text" data-provider-index="${itemIndex}" data-field="baseUrl" value="${escapeAttr(item.baseUrl || "")}" placeholder="https://api.muskapis.com/v1" />
-            </label>
-            <label class="field">
-              <span>Token</span>
-              <input type="password" data-provider-index="${itemIndex}" data-field="apiKey" autocomplete="off" placeholder="${escapeAttr(item.apiKeyConfigured ? `已配置：${item.apiKeyMasked || "******"}` : "粘贴供应商 Token")}" />
-            </label>
-          </div>
-          <div class="admin-provider-model-head">
-            <strong>模型列表</strong>
-            <button class="small-button" type="button" data-provider-action="add-model" data-provider-index="${itemIndex}">新增模型</button>
-          </div>
-          <div class="admin-model-list">
-            ${models.map((model, modelIndex) => renderProviderModelRow(model, itemIndex, modelIndex)).join("") || `<div class="empty-state compact-empty">暂无模型</div>`}
-          </div>
-        </article>
-      `;
-    })
-    .join("")
-  ].filter(Boolean).join("");
+  const entries = providerTableEntries();
+  els.modelProviderList.innerHTML = entries.length
+    ? renderProviderTable(entries)
+    : `<div class="empty-state compact-empty">暂无可用模型</div>`;
+}
+
+function providerTableEntries() {
+  return state.modelProviders.flatMap((provider, providerIndex) => {
+    const models = Array.isArray(provider.models) ? provider.models : [];
+    if (!models.length) {
+      return [{ provider, providerIndex, model: null, modelIndex: -1 }];
+    }
+    return models.map((model, modelIndex) => ({ provider, providerIndex, model, modelIndex }));
+  });
 }
 
 function renderProviderTable(entries) {
@@ -392,59 +360,55 @@ function renderProviderTable(entries) {
       <table class="admin-provider-table">
         <thead>
           <tr>
+            <th>默认</th>
             <th>供应商</th>
-            <th>类型</th>
-            <th>Base URL</th>
+            <th>URL</th>
             <th>Token</th>
             <th>模型</th>
+            <th>状态</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody>
-          ${entries.map(({ provider, providerIndex }) => renderProviderTableRow(provider, providerIndex)).join("")}
+          ${entries.map((entry) => renderProviderTableRow(entry)).join("")}
         </tbody>
       </table>
     </div>
   `;
 }
 
-function renderProviderTableRow(provider, providerIndex) {
-  const models = (provider.models || [])
-    .slice()
-    .sort((first, second) => (Number(first.priority) || 100) - (Number(second.priority) || 100));
+function renderProviderTableRow({ provider, providerIndex, model, modelIndex }) {
+  const modelId = model?.id || "";
+  const isDefault = modelId && modelId === state.defaultImageModelId;
+  const isEnabled = provider.enabled !== false && model?.enabled !== false;
+  const canSetDefault = Boolean(modelId && isEnabled);
   return `
-    <tr>
+    <tr class="${isDefault ? "default-provider-row" : ""}">
+      <td>
+        <span class="status-chip ${isDefault ? "ready" : "neutral"}">${isDefault ? "当前默认" : "未设定"}</span>
+      </td>
       <td>
         <strong>${escapeHtml(provider.name || "未命名供应商")}</strong>
-        <small><span class="status-chip ${provider.enabled !== false ? "ready" : "neutral"}">${provider.enabled !== false ? "启用" : "停用"}</span></small>
+        <small>${escapeHtml(providerTypeText(provider.providerType))}</small>
       </td>
-      <td>${escapeHtml(providerTypeText(provider.providerType))}</td>
       <td><small>${escapeHtml(provider.baseUrl || "--")}</small></td>
       <td><span class="status-chip ${provider.apiKeyConfigured ? "ready" : "danger"}">${provider.apiKeyConfigured ? "已配置" : "未配置"}</span></td>
       <td>
-        ${models.length ? models.map((model) => `<small>${escapeHtml(model.modelName || "未命名模型")} · 优先级 ${escapeHtml(model.priority || 100)}</small>`).join("") : "<small>暂无模型</small>"}
+        <strong>${escapeHtml(model?.modelName || "未命名模型")}</strong>
+        <small>优先级 ${escapeHtml(model?.priority || 100)}</small>
+      </td>
+      <td>
+        <span class="status-chip ${isEnabled ? "ready" : "neutral"}">${isEnabled ? "启用" : "停用"}</span>
       </td>
       <td>
         <div class="admin-action-row">
-          <button class="small-button" type="button" data-provider-action="edit-provider" data-provider-index="${providerIndex}">编辑</button>
-          <button class="small-button danger" type="button" data-provider-action="remove-provider" data-provider-index="${providerIndex}">删除</button>
+          <button class="small-button ${isDefault ? "primary" : ""}" type="button" data-provider-action="set-default-model" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" ${canSetDefault && !isDefault ? "" : "disabled"}>${isDefault ? "已默认" : "默认模型"}</button>
+          <button class="small-button" type="button" data-provider-action="edit-provider" data-provider-index="${providerIndex}" data-model-index="${modelIndex}">修改</button>
+          <button class="small-button danger" type="button" data-provider-action="remove-provider" data-provider-index="${providerIndex}" data-model-index="${modelIndex}">删除</button>
         </div>
       </td>
     </tr>
   `;
-}
-
-function providerTypeOptions(selected) {
-  return [
-    ["aokapi_gemini", "AOKAPI / Gemini"],
-    ["muskapis_image", "Muskapis Image"],
-    ["openai_image", "OpenAI Image Compatible"]
-  ]
-    .map(
-      ([value, label]) =>
-        `<option value="${escapeAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`
-    )
-    .join("");
 }
 
 function providerTypeText(value) {
@@ -455,81 +419,167 @@ function providerTypeText(value) {
   }[value] || "OpenAI Image Compatible";
 }
 
-function renderProviderModelRow(model, providerIndex, modelIndex) {
-  return `
-    <div class="admin-model-row" data-provider-index="${providerIndex}" data-model-index="${modelIndex}">
-      <label class="checkbox-row compact-checkbox">
-        <input type="checkbox" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" data-field="modelEnabled" ${model.enabled !== false ? "checked" : ""} />
-        <span>启用</span>
-      </label>
-      <label class="field compact-field">
-        <span>Model Name</span>
-        <input type="text" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" data-field="modelName" value="${escapeAttr(model.modelName || "")}" />
-      </label>
-      <label class="field priority-field">
-        <span>优先级</span>
-        <input type="number" min="1" step="1" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" data-field="priority" value="${escapeAttr(model.priority || 100)}" />
-      </label>
-      <button class="small-button danger" type="button" data-provider-action="remove-model" data-provider-index="${providerIndex}" data-model-index="${modelIndex}">删除</button>
-    </div>
-  `;
+function defaultProviderBaseUrl(providerType) {
+  return {
+    aokapi_gemini: "https://aokapi.com/v1beta/models/{model}:generateContent/",
+    muskapis_image: "https://api.muskapis.com/v1",
+    openai_image: "https://api.openai.com/v1"
+  }[providerType] || "https://api.openai.com/v1";
 }
 
-function handleModelProviderInput(event) {
-  const target = event.target.closest("[data-field]");
-  if (!target) return;
-  const provider = state.modelProviders[Number(target.dataset.providerIndex)];
-  if (!provider) return;
-  const modelIndex = target.dataset.modelIndex;
-  const field = target.dataset.field;
-  const value = target.type === "checkbox" ? target.checked : target.value;
-  if (modelIndex !== undefined) {
-    const model = (provider.models || [])[Number(modelIndex)];
-    if (!model) return;
-    if (field === "modelEnabled") model.enabled = value;
-    if (field === "modelName") model.modelName = value;
-    if (field === "priority") model.priority = Number(value) || 100;
+function snapshotModelProviderState() {
+  return {
+    defaultImageModelId: state.defaultImageModelId,
+    modelProviders: JSON.parse(JSON.stringify(state.modelProviders))
+  };
+}
+
+function restoreModelProviderState(snapshot) {
+  state.defaultImageModelId = snapshot.defaultImageModelId;
+  state.modelProviders = snapshot.modelProviders;
+  renderModelProviders();
+}
+
+function openProviderConfigModal(providerIndex = -1, modelIndex = -1) {
+  const provider = state.modelProviders[providerIndex] || null;
+  const models = Array.isArray(provider?.models) ? provider.models : [];
+  const resolvedModelIndex = modelIndex >= 0 ? modelIndex : 0;
+  const model = models[resolvedModelIndex] || null;
+  const providerType = provider?.providerType || "muskapis_image";
+
+  state.selectedProviderIndex = provider ? providerIndex : -1;
+  state.selectedProviderModelIndex = provider ? resolvedModelIndex : -1;
+  els.providerConfigModalTitle.textContent = provider ? "修改供应商" : "增加供应商";
+  els.providerNameInput.value = provider?.name || "";
+  els.providerTypeInput.value = providerType;
+  els.providerBaseUrlInput.value = provider?.baseUrl || defaultProviderBaseUrl(providerType);
+  els.providerTokenInput.value = provider?.apiKeyMasked || provider?.apiKey || "";
+  els.providerTokenInput.placeholder = provider?.apiKeyConfigured
+    ? `已配置：${provider.apiKeyMasked || "******"}`
+    : "粘贴供应商 Token";
+  els.providerModelNameInput.value = model?.modelName || (providerType === "muskapis_image" ? "gpt-image-2" : "");
+  els.providerModelPriorityInput.value = model?.priority || nextProviderPriority();
+  els.providerEnabledInput.checked = provider?.enabled !== false;
+  els.providerConfigModal.classList.add("active");
+  els.providerConfigModal.setAttribute("aria-hidden", "false");
+  window.setTimeout(() => els.providerBaseUrlInput.focus(), 0);
+}
+
+function closeProviderConfigModal() {
+  state.selectedProviderIndex = -1;
+  state.selectedProviderModelIndex = -1;
+  els.providerNameInput.value = "";
+  els.providerTypeInput.value = "muskapis_image";
+  els.providerBaseUrlInput.value = "";
+  els.providerTokenInput.value = "";
+  els.providerModelNameInput.value = "";
+  els.providerModelPriorityInput.value = "100";
+  els.providerEnabledInput.checked = true;
+  els.providerConfigModal.classList.remove("active");
+  els.providerConfigModal.setAttribute("aria-hidden", "true");
+}
+
+async function saveProviderFromModal() {
+  const providerIndex = state.selectedProviderIndex;
+  const modelIndex = state.selectedProviderModelIndex;
+  const existingProvider = state.modelProviders[providerIndex] || null;
+  const providerType = els.providerTypeInput.value || "muskapis_image";
+  const baseUrl = els.providerBaseUrlInput.value.trim();
+  const tokenValue = els.providerTokenInput.value.trim();
+  const modelName = els.providerModelNameInput.value.trim();
+  const priority = Number(els.providerModelPriorityInput.value) || nextProviderPriority();
+  if (!baseUrl || !modelName) {
+    showToast("URL 和模型名不能为空", true);
     return;
   }
-  if (field === "enabled") provider.enabled = value;
-  if (field === "name") provider.name = value;
-  if (field === "providerType") provider.providerType = value;
-  if (field === "baseUrl") provider.baseUrl = value;
-  if (field === "apiKey") provider.apiKey = value;
+  if (!tokenValue && (!existingProvider || !existingProvider.apiKeyConfigured)) {
+    showToast("新增供应商需要填写 Token", true);
+    return;
+  }
+
+  const previousState = snapshotModelProviderState();
+  const nextProvider = existingProvider || {
+    id: "",
+    apiKeyConfigured: false,
+    apiKeyMasked: "",
+    models: []
+  };
+  nextProvider.name = els.providerNameInput.value.trim() || providerTypeText(providerType);
+  nextProvider.providerType = providerType;
+  nextProvider.baseUrl = baseUrl;
+  nextProvider.enabled = els.providerEnabledInput.checked;
+  const maskedToken = existingProvider?.apiKeyMasked || "";
+  if (tokenValue && tokenValue !== maskedToken) {
+    nextProvider.apiKey = tokenValue;
+    nextProvider.apiKeyConfigured = true;
+  } else {
+    delete nextProvider.apiKey;
+  }
+  nextProvider.models = Array.isArray(nextProvider.models) ? nextProvider.models : [];
+  const targetModelIndex = modelIndex >= 0 ? modelIndex : 0;
+  const nextModel = nextProvider.models[targetModelIndex] || { id: "", enabled: true };
+  nextModel.modelName = modelName;
+  nextModel.priority = priority;
+  nextModel.enabled = true;
+  nextProvider.models[targetModelIndex] = nextModel;
+  if (!existingProvider) state.modelProviders.push(nextProvider);
+
+  const saved = await persistModelConfig("供应商已保存", els.saveProviderConfigBtn);
+  if (saved) {
+    closeProviderConfigModal();
+  } else {
+    restoreModelProviderState(previousState);
+  }
 }
 
-function handleModelProviderAction(event) {
+async function handleModelProviderAction(event) {
   const button = event.target.closest("[data-provider-action]");
   if (!button) return;
   const providerIndex = Number(button.dataset.providerIndex);
+  const modelIndex = Number(button.dataset.modelIndex);
   const provider = state.modelProviders[providerIndex];
   if (!provider) return;
   if (button.dataset.providerAction === "edit-provider") {
-    provider.editing = true;
-    renderModelProviders();
+    openProviderConfigModal(providerIndex, Number.isNaN(modelIndex) ? 0 : modelIndex);
     return;
   }
-  if (button.dataset.providerAction === "collapse-provider") {
-    provider.editing = false;
-    renderModelProviders();
+  if (button.dataset.providerAction === "set-default-model") {
+    await setDefaultProviderModel(providerIndex, Number.isNaN(modelIndex) ? 0 : modelIndex, button);
     return;
   }
   if (button.dataset.providerAction === "remove-provider") {
+    await removeProviderModel(providerIndex, Number.isNaN(modelIndex) ? 0 : modelIndex, button);
+  }
+}
+
+async function setDefaultProviderModel(providerIndex, modelIndex, button) {
+  const provider = state.modelProviders[providerIndex];
+  const model = (provider?.models || [])[modelIndex];
+  if (!model?.id) {
+    showToast("请先保存供应商后再设为默认模型", true);
+    return;
+  }
+  const previousState = snapshotModelProviderState();
+  state.defaultImageModelId = model.id;
+  const saved = await persistModelConfig("默认模型已设置", button);
+  if (!saved) restoreModelProviderState(previousState);
+}
+
+async function removeProviderModel(providerIndex, modelIndex, button) {
+  const provider = state.modelProviders[providerIndex];
+  if (!provider) return;
+  const models = Array.isArray(provider.models) ? provider.models : [];
+  const model = models[modelIndex] || null;
+  if (!window.confirm("删除这个模型供应商配置？")) return;
+  const previousState = snapshotModelProviderState();
+  if (model?.id && state.defaultImageModelId === model.id) state.defaultImageModelId = "";
+  if (models.length <= 1) {
     state.modelProviders.splice(providerIndex, 1);
-    renderModelProviders();
-    return;
+  } else {
+    models.splice(modelIndex, 1);
   }
-  if (button.dataset.providerAction === "add-model") {
-    provider.models = Array.isArray(provider.models) ? provider.models : [];
-    provider.models.push({ id: "", modelName: "", priority: nextProviderPriority(), enabled: true });
-    renderModelProviders();
-    return;
-  }
-  if (button.dataset.providerAction === "remove-model") {
-    provider.models = Array.isArray(provider.models) ? provider.models : [];
-    provider.models.splice(Number(button.dataset.modelIndex), 1);
-    renderModelProviders();
-  }
+  const saved = await persistModelConfig("供应商已删除", button);
+  if (!saved) restoreModelProviderState(previousState);
 }
 
 function collectModelProviders() {
@@ -549,9 +599,8 @@ function collectModelProviders() {
   }));
 }
 
-async function saveModelConfig() {
-  setBusy(els.saveModelConfigBtn, "保存中", true);
-  setBusy(els.saveProviderConfigBtn, "保存中", true);
+async function persistModelConfig(successMessage = "模型配置已保存", busyButton = els.saveModelConfigBtn) {
+  setBusy(busyButton, "保存中", true);
   try {
     await adminFetch("/model-config", {
       method: "PUT",
@@ -559,17 +608,23 @@ async function saveModelConfig() {
         defaultEndpoint: els.defaultEndpointInput.value.trim(),
         defaultModel: els.defaultModelInput.value.trim(),
         usageNote: els.usageNoteInput.value.trim(),
+        defaultImageModelId: state.defaultImageModelId || "",
         modelProviders: collectModelProviders()
       })
     });
     await loadSummary();
-    showToast("模型配置已保存");
+    showToast(successMessage);
+    return true;
   } catch (error) {
     showToast(error.message, true);
+    return false;
   } finally {
-    setBusy(els.saveModelConfigBtn, "保存默认配置", false);
-    setBusy(els.saveProviderConfigBtn, "保存供应商配置", false);
+    setBusy(busyButton, "", false);
   }
+}
+
+async function saveModelConfig() {
+  return persistModelConfig("模型配置已保存", els.saveModelConfigBtn);
 }
 
 async function savePromptConfig() {

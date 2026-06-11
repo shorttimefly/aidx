@@ -12,17 +12,24 @@ const keyModal = html.match(/<div class="modal-backdrop" id="adminKeyModal"[\s\S
 
 assert.ok(modelView.includes("模型供应商"));
 assert.ok(modelView.includes('id="addModelProviderBtn"'));
-assert.ok(modelView.includes('id="saveProviderConfigBtn"'));
 assert.ok(modelView.includes('id="modelProviderList"'));
+assert.ok(html.includes('id="providerConfigModal"'));
+assert.ok(html.includes('id="providerBaseUrlInput"'));
+assert.ok(html.includes('id="providerTokenInput"'));
+assert.ok(html.includes('id="providerModelNameInput"'));
 assert.ok(keyModal.includes("可用图片模型"));
 assert.ok(keyModal.includes('id="adminAllowedImageModelList"'));
 
 assert.ok(admin.includes("modelProviders: []"));
+assert.ok(admin.includes("selectedProviderIndex"));
 assert.ok(admin.includes("function renderModelProviders"));
 assert.ok(admin.includes("renderProviderTable"));
 assert.ok(admin.includes("function collectModelProviders"));
-assert.ok(admin.includes("saveProviderConfigBtn"));
+assert.ok(admin.includes("function openProviderConfigModal"));
+assert.ok(admin.includes("function saveProviderFromModal"));
+assert.ok(admin.includes("defaultImageModelId"));
 assert.ok(admin.includes('data-provider-action="edit-provider"'));
+assert.ok(admin.includes('data-provider-action="set-default-model"'));
 assert.ok(admin.includes("allowedImageModelIds"));
 assert.ok(admin.includes("aokapi_gemini"));
 assert.ok(admin.includes("muskapis_image"));

@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>B端管理台 - AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260610-model-fields" />
+    <link rel="stylesheet" href="./styles.css?v=20260611-provider-list" />
   </head>
   <body class="admin-body">
     <main class="admin-shell">
@@ -57,8 +57,7 @@
               <div class="panel-header">
                 <h3>模型供应商</h3>
                 <div class="admin-provider-actions">
-                  <button class="ghost-button" id="addModelProviderBtn" type="button">新增供应商</button>
-                  <button class="primary-button" id="saveProviderConfigBtn" type="button">保存供应商配置</button>
+                  <button class="primary-button" id="addModelProviderBtn" type="button">增加</button>
                 </div>
               </div>
               <div class="admin-provider-list" id="modelProviderList"></div>
@@ -180,6 +179,62 @@
       </section>
     </main>
 
+    <div class="modal-backdrop" id="providerConfigModal" aria-hidden="true">
+      <div class="modal provider-config-modal" role="dialog" aria-modal="true" aria-labelledby="providerConfigModalTitle">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">MODEL PROVIDER</p>
+            <h3 id="providerConfigModalTitle">增加供应商</h3>
+          </div>
+          <button class="icon-button" type="button" id="closeProviderConfigModalBtn" aria-label="关闭" title="关闭">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="provider-modal-grid">
+            <label class="field">
+              <span>供应商名称</span>
+              <input id="providerNameInput" type="text" autocomplete="off" placeholder="例如：Muskapis" />
+            </label>
+            <label class="field">
+              <span>供应商类型</span>
+              <select id="providerTypeInput">
+                <option value="muskapis_image">Muskapis Image</option>
+                <option value="openai_image">OpenAI Image Compatible</option>
+                <option value="aokapi_gemini">AOKAPI / Gemini</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">
+            <span>URL</span>
+            <input id="providerBaseUrlInput" type="url" autocomplete="off" placeholder="https://api.muskapis.com/v1" />
+          </label>
+          <label class="field">
+            <span>Token</span>
+            <input id="providerTokenInput" type="text" autocomplete="off" placeholder="粘贴供应商 Token" />
+          </label>
+          <div class="provider-modal-grid">
+            <label class="field">
+              <span>模型名</span>
+              <input id="providerModelNameInput" type="text" autocomplete="off" placeholder="gpt-image-2" />
+            </label>
+            <label class="field">
+              <span>优先级</span>
+              <input id="providerModelPriorityInput" type="number" min="1" step="1" value="100" />
+            </label>
+          </div>
+          <label class="checkbox-row provider-enabled-row">
+            <input id="providerEnabledInput" type="checkbox" checked />
+            <span>启用供应商</span>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-button" type="button" id="cancelProviderConfigBtn">取消</button>
+          <button class="primary-button" type="button" id="saveProviderConfigBtn">保存</button>
+        </div>
+      </div>
+    </div>
+
     <div class="modal-backdrop" id="adminKeyModal" aria-hidden="true">
       <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="adminKeyModalTitle">
         <div class="modal-header">
@@ -236,6 +291,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./admin.js?v=20260610-model-fields" defer></script>
+    <script src="./admin.js?v=20260611-provider-list" defer></script>
   </body>
 </html>

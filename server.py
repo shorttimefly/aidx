@@ -55,6 +55,7 @@ UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "120
 UPSTREAM_MAX_ATTEMPTS = max(1, int(os.environ.get("UPSTREAM_MAX_ATTEMPTS", "2")))
 UPSTREAM_RETRY_DELAY_SECONDS = max(0.0, float(os.environ.get("UPSTREAM_RETRY_DELAY_SECONDS", "1")))
 PROMPT_CONFIG_KEY = "prompt_config_json"
+DEFAULT_IMAGE_MODEL_KEY = "default_image_model_id"
 PROMPT_CONFIG_PATH = ROOT / "prompt-config-defaults.json"
 PROMPT_TEXT_LIMIT = 20_000
 LOCKED_PROMPT_CONFIG_KEYS = {"id", "url"}
@@ -491,6 +492,8 @@ def app_settings(conn: sqlite3.Connection) -> dict:
 
 def model_config_settings(conn: sqlite3.Connection) -> dict:
     config = app_settings(conn)
+    row = conn.execute("SELECT value FROM app_settings WHERE key=?", (DEFAULT_IMAGE_MODEL_KEY,)).fetchone()
+    config["defaultImageModelId"] = row["value"] if row else ""
     config["modelProviders"] = model_providers_config(conn)
     return config
 
@@ -647,6 +650,45 @@ def authorized_image_model_options(conn: sqlite3.Connection, user_id: str) -> li
         }
         for row in rows
     ]
+
+
+def provider_model_option(conn: sqlite3.Connection, provider_model_id: str) -> dict | None:
+    model_id = str(provider_model_id or "").strip()
+    if not model_id:
+        return None
+    row = conn.execute(
+        """
+        SELECT
+          model_providers.id AS provider_id,
+          model_providers.name AS provider_name,
+          model_providers.provider_type,
+          model_providers.base_url,
+          model_providers.api_key,
+          model_providers.enabled AS provider_enabled,
+          provider_models.id AS provider_model_id,
+          provider_models.model_name,
+          provider_models.priority,
+          provider_models.enabled AS model_enabled
+        FROM provider_models
+        JOIN model_providers ON model_providers.id = provider_models.provider_id
+        WHERE provider_models.id=?
+        LIMIT 1
+        """,
+        (model_id,),
+    ).fetchone()
+    if not row or not row["provider_enabled"] or not row["model_enabled"]:
+        return None
+    return {
+        "providerId": row["provider_id"],
+        "providerName": row["provider_name"],
+        "providerType": normalize_provider_type(row["provider_type"]),
+        "baseUrl": row["base_url"],
+        "apiKey": row["api_key"],
+        "providerModelId": row["provider_model_id"],
+        "modelName": row["model_name"],
+        "priority": int(row["priority"] or 100),
+        "isDefault": True,
+    }
 
 
 def set_user_model_access(conn: sqlite3.Connection, user_id: str, model_ids) -> None:
@@ -1252,16 +1294,22 @@ class Handler(SimpleHTTPRequestHandler):
         references = normalize_reference_images(body.get("referenceImages"))
         with connect() as conn:
             settings = app_settings(conn)
+            model_config = model_config_settings(conn)
             prompt_config = prompt_config_settings(conn)
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
             assigned_models = user_allowed_image_models(conn, user["id"])
             authorized_models = authorized_image_model_options(conn, user["id"]) if assigned_models else []
+            default_model_option = provider_model_option(conn, model_config.get("defaultImageModelId"))
         prompt, prompt_source = resolve_generation_prompt(body, prompt_config, references)
-        if assigned_models:
-            if not authorized_models:
+        provider_models_to_try = authorized_models if assigned_models else ([default_model_option] if default_model_option else [])
+        provider_models_to_try = [option for option in provider_models_to_try if option]
+        if assigned_models or provider_models_to_try:
+            if not provider_models_to_try:
                 raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置可用图片模型")
             last_error = None
-            for attempt_index, option in enumerate(authorized_models, start=1):
+            for attempt_index, option in enumerate(provider_models_to_try, start=1):
+                if not str(option.get("apiKey") or "").strip():
+                    raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置默认模型 Token")
                 model = option["modelName"]
                 provider_type = option["providerType"]
                 resolved_endpoint = resolve_provider_image_endpoint(option, model)
@@ -1362,7 +1410,7 @@ class Handler(SimpleHTTPRequestHandler):
                         response_body=error.payload,
                         duration_ms=duration_ms,
                     )
-                    if attempt_index >= len(authorized_models) or not is_failoverable_upstream_error(error):
+                    if attempt_index >= len(provider_models_to_try) or not is_failoverable_upstream_error(error):
                         raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {error.status}: {error.message}")
             if last_error:
                 raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {last_error.status}: {last_error.message}")
@@ -1976,6 +2024,7 @@ class Handler(SimpleHTTPRequestHandler):
         endpoint = str(body.get("defaultEndpoint") or DEFAULT_ENDPOINT).strip() or DEFAULT_ENDPOINT
         model = str(body.get("defaultModel") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
         note = str(body.get("usageNote") or "").strip()
+        default_image_model_id = trim_text(str(body.get("defaultImageModelId") or "").strip(), 120)
         with connect() as conn:
             for key, value in {
                 "default_endpoint": endpoint,
@@ -1990,6 +2039,20 @@ class Handler(SimpleHTTPRequestHandler):
                     (key, value, now_iso()),
                 )
             save_model_providers(conn, body.get("modelProviders"))
+            if default_image_model_id:
+                exists = conn.execute(
+                    "SELECT id FROM provider_models WHERE id=? LIMIT 1",
+                    (default_image_model_id,),
+                ).fetchone()
+                if not exists:
+                    default_image_model_id = ""
+            conn.execute(
+                """
+                INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                """,
+                (DEFAULT_IMAGE_MODEL_KEY, default_image_model_id, now_iso()),
+            )
         self.json_response({"ok": True})
 
     def handle_admin_prompt_config(self) -> None:

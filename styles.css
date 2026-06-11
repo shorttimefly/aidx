@@ -1338,6 +1338,23 @@ input[readonly] {
   color: var(--blue);
 }
 
+.small-button.primary {
+  border-color: rgba(22, 119, 255, 0.28);
+  background: #eff7ff;
+  color: var(--blue);
+}
+
+.small-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+  transform: none;
+}
+
+.small-button:disabled:hover {
+  border-color: var(--line);
+  color: inherit;
+}
+
 .small-button.icon-only {
   padding: 0;
 }
@@ -1546,6 +1563,10 @@ input[readonly] {
 
 .auth-modal {
   width: min(480px, 100%);
+}
+
+.provider-config-modal {
+  width: min(620px, 100%);
 }
 
 .auth-tabs {
@@ -2389,7 +2410,7 @@ input[readonly] {
 
 .admin-provider-table {
   width: 100%;
-  min-width: 860px;
+  min-width: 940px;
   border-collapse: collapse;
   font-size: 13px;
 }
@@ -2406,10 +2427,15 @@ input[readonly] {
   color: var(--muted);
   font-size: 12px;
   font-weight: 900;
+  white-space: nowrap;
 }
 
 .admin-provider-table tr:last-child td {
   border-bottom: 0;
+}
+
+.admin-provider-table .default-provider-row td {
+  background: rgba(239, 247, 255, 0.62);
 }
 
 .admin-provider-table strong,
@@ -2421,6 +2447,17 @@ input[readonly] {
 .admin-provider-table small {
   color: var(--muted);
   font-size: 12px;
+}
+
+.provider-modal-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.provider-enabled-row {
+  justify-content: flex-start;
+  width: fit-content;
 }
 
 .admin-provider-card {
@@ -2965,6 +3002,7 @@ input[readonly] {
   }
 
   .settings-grid,
+  .provider-modal-grid,
   .suite-control-grid,
   .video-output-grid,
   .video-spec-grid,

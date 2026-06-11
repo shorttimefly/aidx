@@ -6,8 +6,8 @@ B端 now has a parallel image model provider catalog. It does not replace the le
 
 ### B端 HTTP API
 
-- `GET /api/admin/model-config` now returns `modelConfig.modelProviders[]` in addition to `defaultEndpoint`, `defaultModel`, and `usageNote`.
-- `PUT /api/admin/model-config` now accepts `modelProviders[]`. Each provider owns `name`, `providerType`, `baseUrl`, `apiKey`, `enabled`, and nested `models[]` with `modelName`, `priority`, and `enabled`.
+- `GET /api/admin/model-config` now returns `modelConfig.modelProviders[]` and `defaultImageModelId` in addition to `defaultEndpoint`, `defaultModel`, and `usageNote`.
+- `PUT /api/admin/model-config` now accepts `modelProviders[]` and `defaultImageModelId`. Each provider owns `name`, `providerType`, `baseUrl`, `apiKey`, `enabled`, and nested `models[]` with `modelName`, `priority`, and `enabled`.
 - Provider tokens are write-only. GET responses return `apiKeyConfigured` and `apiKeyMasked`, never plaintext `apiKey`.
 - `GET /api/admin/users` now returns `allowedImageModels[]` for each user.
 - `PATCH /api/admin/users/:id` now accepts `allowedImageModelIds[]` and updates only the new authorization table. Existing image/video Key fields keep their current behavior.
@@ -16,7 +16,7 @@ B端 now has a parallel image model provider catalog. It does not replace the le
 
 - `POST /api/generate` first checks the current user's enabled provider-model authorizations. When present, the backend calls those models by ascending `priority` and returns the first successful image response.
 - Upstream 429/5xx/network/timeout/no-image failures can fail over to the next authorized model. Login, disabled-account, missing-template, missing-prompt, missing-available-model, and similar business errors do not fail over.
-- Users with no new provider-model authorization continue to use the legacy per-user image Key/address/model flow unchanged.
+- Users with no new provider-model authorization use `defaultImageModelId` when it points to an enabled provider model. If no default provider model is configured, they continue to use the legacy per-user image Key/address/model flow unchanged.
 - Successful responses may include `provider` and `attemptCount` for the selected provider route while preserving existing `images`, `request`, `model`, and generated asset ids.
 
 ### Provider Compatibility

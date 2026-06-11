@@ -459,6 +459,46 @@ class AdminRoleTests(unittest.TestCase):
         self.assertEqual(providers[0]["models"][0]["priority"], 5)
         self.assertFalse(providers[0]["models"][1]["enabled"])
 
+    def test_admin_can_set_default_provider_model_for_c端_generation(self):
+        user_payload = self.register_user()
+        admin_token = self.builtin_admin_token()
+        providers = self.save_model_providers(admin_token)
+        default_model_id = providers[1]["models"][0]["id"]
+
+        status, _ = self.request(
+            "PUT",
+            "/api/admin/model-config",
+            {
+                "defaultEndpoint": "https://legacy.example.com/v1/images",
+                "defaultModel": "legacy-image-model",
+                "usageNote": "provider routing test",
+                "defaultImageModelId": default_model_id,
+                "modelProviders": providers,
+            },
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+        status, config_payload = self.request("GET", "/api/admin/model-config", token=admin_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(config_payload["modelConfig"]["defaultImageModelId"], default_model_id)
+
+        upstream_payload = {"data": [{"b64_json": "aW1hZ2U="}]}
+        with mock.patch("server.call_upstream_model", return_value=upstream_payload) as call_model:
+            status, payload = self.request(
+                "POST",
+                "/api/generate",
+                {"templateId": "main-white", "count": 1, "size": "1024x1024"},
+                token=user_payload["token"],
+            )
+
+        self.assertEqual(status, 200)
+        endpoint, api_key, request_body = call_model.call_args.args
+        self.assertEqual(endpoint, "https://compatible.example.com/v1/images/generations")
+        self.assertEqual(api_key, "openai-secret-key")
+        self.assertEqual(request_body["model"], "stable-success")
+        self.assertEqual(payload["model"], "stable-success")
+        self.assertEqual(payload["provider"]["modelId"], default_model_id)
+
     def test_admin_can_assign_provider_models_to_user_without_changing_legacy_key(self):
         user_payload = self.register_user()
         admin_token = self.builtin_admin_token()
