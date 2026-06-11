@@ -12,19 +12,24 @@ const keyModal = html.match(/<div class="modal-backdrop" id="adminKeyModal"[\s\S
 
 assert.ok(modelView.includes("模型供应商"));
 assert.ok(modelView.includes('id="addModelProviderBtn"'));
+assert.ok(modelView.includes('id="saveProviderConfigBtn"'));
 assert.ok(modelView.includes('id="modelProviderList"'));
 assert.ok(keyModal.includes("可用图片模型"));
 assert.ok(keyModal.includes('id="adminAllowedImageModelList"'));
 
 assert.ok(admin.includes("modelProviders: []"));
 assert.ok(admin.includes("function renderModelProviders"));
+assert.ok(admin.includes("renderProviderTable"));
 assert.ok(admin.includes("function collectModelProviders"));
+assert.ok(admin.includes("saveProviderConfigBtn"));
+assert.ok(admin.includes('data-provider-action="edit-provider"'));
 assert.ok(admin.includes("allowedImageModelIds"));
 assert.ok(admin.includes("aokapi_gemini"));
 assert.ok(admin.includes("muskapis_image"));
 assert.ok(admin.includes("openai_image"));
 
 assert.ok(styles.includes(".admin-provider-list"));
+assert.ok(styles.includes(".admin-provider-table"));
 assert.ok(styles.includes(".admin-provider-card"));
 assert.ok(styles.includes(".admin-model-row"));
 assert.ok(styles.includes(".admin-allowed-model-list"));

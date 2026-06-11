@@ -68,6 +68,7 @@ function cacheElements() {
     usageNoteInput: document.getElementById("usageNoteInput"),
     saveModelConfigBtn: document.getElementById("saveModelConfigBtn"),
     addModelProviderBtn: document.getElementById("addModelProviderBtn"),
+    saveProviderConfigBtn: document.getElementById("saveProviderConfigBtn"),
     modelProviderList: document.getElementById("modelProviderList"),
     refreshUsersBtn: document.getElementById("refreshUsersBtn"),
     refreshLogsBtn: document.getElementById("refreshLogsBtn"),
@@ -113,6 +114,7 @@ function bindEvents() {
   });
   els.adminLogoutBtn.addEventListener("click", handleAdminLogout);
   els.saveModelConfigBtn.addEventListener("click", saveModelConfig);
+  els.saveProviderConfigBtn.addEventListener("click", saveModelConfig);
   els.addModelProviderBtn.addEventListener("click", addModelProvider);
   els.modelProviderList.addEventListener("input", handleModelProviderInput);
   els.modelProviderList.addEventListener("change", handleModelProviderInput);
@@ -305,6 +307,7 @@ function addModelProvider() {
     providerType: "muskapis_image",
     baseUrl: "https://api.muskapis.com/v1",
     enabled: true,
+    editing: true,
     apiKeyConfigured: false,
     apiKeyMasked: "",
     models: [{ id: "", modelName: "gpt-image-2", priority: nextProviderPriority(), enabled: true }]
@@ -324,49 +327,111 @@ function renderModelProviders() {
     els.modelProviderList.innerHTML = `<div class="empty-state compact-empty">暂无模型供应商</div>`;
     return;
   }
-  els.modelProviderList.innerHTML = state.modelProviders
+  const savedProviders = state.modelProviders
+    .map((provider, providerIndex) => ({ provider, providerIndex }))
+    .filter((entry) => entry.provider.id && !entry.provider.editing);
+  const editingProviders = state.modelProviders
+    .map((provider, providerIndex) => ({ provider, providerIndex }))
+    .filter((entry) => !entry.provider.id || entry.provider.editing);
+  els.modelProviderList.innerHTML = [
+    savedProviders.length ? renderProviderTable(savedProviders) : "",
+    editingProviders
     .map((provider, providerIndex) => {
-      const models = Array.isArray(provider.models) ? provider.models : [];
+      const item = provider.provider || provider;
+      const itemIndex = provider.providerIndex ?? providerIndex;
+      const models = Array.isArray(item.models) ? item.models : [];
       return `
-        <article class="admin-provider-card" data-provider-index="${providerIndex}">
+        <article class="admin-provider-card" data-provider-index="${itemIndex}">
           <div class="admin-provider-card-head">
             <label class="checkbox-row compact-checkbox">
-              <input type="checkbox" data-provider-index="${providerIndex}" data-field="enabled" ${provider.enabled !== false ? "checked" : ""} />
-              <span>${provider.enabled !== false ? "启用" : "停用"}</span>
+              <input type="checkbox" data-provider-index="${itemIndex}" data-field="enabled" ${item.enabled !== false ? "checked" : ""} />
+              <span>${item.enabled !== false ? "启用" : "停用"}</span>
             </label>
-            <button class="small-button danger" type="button" data-provider-action="remove-provider" data-provider-index="${providerIndex}">删除供应商</button>
+            <div class="admin-provider-actions">
+              ${item.id ? `<button class="small-button" type="button" data-provider-action="collapse-provider" data-provider-index="${itemIndex}">收起为列表</button>` : ""}
+              <button class="small-button danger" type="button" data-provider-action="remove-provider" data-provider-index="${itemIndex}">删除供应商</button>
+            </div>
           </div>
           <div class="settings-grid">
             <label class="field">
               <span>供应商名称</span>
-              <input type="text" data-provider-index="${providerIndex}" data-field="name" value="${escapeAttr(provider.name || "")}" />
+              <input type="text" data-provider-index="${itemIndex}" data-field="name" value="${escapeAttr(item.name || "")}" />
             </label>
             <label class="field">
               <span>供应商类型</span>
-              <select data-provider-index="${providerIndex}" data-field="providerType">
-                ${providerTypeOptions(provider.providerType)}
+              <select data-provider-index="${itemIndex}" data-field="providerType">
+                ${providerTypeOptions(item.providerType)}
               </select>
             </label>
             <label class="field">
               <span>Base URL</span>
-              <input type="text" data-provider-index="${providerIndex}" data-field="baseUrl" value="${escapeAttr(provider.baseUrl || "")}" placeholder="https://api.muskapis.com/v1" />
+              <input type="text" data-provider-index="${itemIndex}" data-field="baseUrl" value="${escapeAttr(item.baseUrl || "")}" placeholder="https://api.muskapis.com/v1" />
             </label>
             <label class="field">
               <span>Token</span>
-              <input type="password" data-provider-index="${providerIndex}" data-field="apiKey" autocomplete="off" placeholder="${escapeAttr(provider.apiKeyConfigured ? `已配置：${provider.apiKeyMasked || "******"}` : "粘贴供应商 Token")}" />
+              <input type="password" data-provider-index="${itemIndex}" data-field="apiKey" autocomplete="off" placeholder="${escapeAttr(item.apiKeyConfigured ? `已配置：${item.apiKeyMasked || "******"}` : "粘贴供应商 Token")}" />
             </label>
           </div>
           <div class="admin-provider-model-head">
             <strong>模型列表</strong>
-            <button class="small-button" type="button" data-provider-action="add-model" data-provider-index="${providerIndex}">新增模型</button>
+            <button class="small-button" type="button" data-provider-action="add-model" data-provider-index="${itemIndex}">新增模型</button>
           </div>
           <div class="admin-model-list">
-            ${models.map((model, modelIndex) => renderProviderModelRow(model, providerIndex, modelIndex)).join("") || `<div class="empty-state compact-empty">暂无模型</div>`}
+            ${models.map((model, modelIndex) => renderProviderModelRow(model, itemIndex, modelIndex)).join("") || `<div class="empty-state compact-empty">暂无模型</div>`}
           </div>
         </article>
       `;
     })
-    .join("");
+    .join("")
+  ].filter(Boolean).join("");
+}
+
+function renderProviderTable(entries) {
+  return `
+    <div class="admin-provider-table-wrap">
+      <table class="admin-provider-table">
+        <thead>
+          <tr>
+            <th>供应商</th>
+            <th>类型</th>
+            <th>Base URL</th>
+            <th>Token</th>
+            <th>模型</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${entries.map(({ provider, providerIndex }) => renderProviderTableRow(provider, providerIndex)).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderProviderTableRow(provider, providerIndex) {
+  const models = (provider.models || [])
+    .slice()
+    .sort((first, second) => (Number(first.priority) || 100) - (Number(second.priority) || 100));
+  return `
+    <tr>
+      <td>
+        <strong>${escapeHtml(provider.name || "未命名供应商")}</strong>
+        <small><span class="status-chip ${provider.enabled !== false ? "ready" : "neutral"}">${provider.enabled !== false ? "启用" : "停用"}</span></small>
+      </td>
+      <td>${escapeHtml(providerTypeText(provider.providerType))}</td>
+      <td><small>${escapeHtml(provider.baseUrl || "--")}</small></td>
+      <td><span class="status-chip ${provider.apiKeyConfigured ? "ready" : "danger"}">${provider.apiKeyConfigured ? "已配置" : "未配置"}</span></td>
+      <td>
+        ${models.length ? models.map((model) => `<small>${escapeHtml(model.modelName || "未命名模型")} · 优先级 ${escapeHtml(model.priority || 100)}</small>`).join("") : "<small>暂无模型</small>"}
+      </td>
+      <td>
+        <div class="admin-action-row">
+          <button class="small-button" type="button" data-provider-action="edit-provider" data-provider-index="${providerIndex}">编辑</button>
+          <button class="small-button danger" type="button" data-provider-action="remove-provider" data-provider-index="${providerIndex}">删除</button>
+        </div>
+      </td>
+    </tr>
+  `;
 }
 
 function providerTypeOptions(selected) {
@@ -380,6 +445,14 @@ function providerTypeOptions(selected) {
         `<option value="${escapeAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`
     )
     .join("");
+}
+
+function providerTypeText(value) {
+  return {
+    aokapi_gemini: "AOKAPI / Gemini",
+    muskapis_image: "Muskapis Image",
+    openai_image: "OpenAI Image Compatible"
+  }[value] || "OpenAI Image Compatible";
 }
 
 function renderProviderModelRow(model, providerIndex, modelIndex) {
@@ -431,6 +504,16 @@ function handleModelProviderAction(event) {
   const providerIndex = Number(button.dataset.providerIndex);
   const provider = state.modelProviders[providerIndex];
   if (!provider) return;
+  if (button.dataset.providerAction === "edit-provider") {
+    provider.editing = true;
+    renderModelProviders();
+    return;
+  }
+  if (button.dataset.providerAction === "collapse-provider") {
+    provider.editing = false;
+    renderModelProviders();
+    return;
+  }
   if (button.dataset.providerAction === "remove-provider") {
     state.modelProviders.splice(providerIndex, 1);
     renderModelProviders();
@@ -468,6 +551,7 @@ function collectModelProviders() {
 
 async function saveModelConfig() {
   setBusy(els.saveModelConfigBtn, "保存中", true);
+  setBusy(els.saveProviderConfigBtn, "保存中", true);
   try {
     await adminFetch("/model-config", {
       method: "PUT",
@@ -479,11 +563,12 @@ async function saveModelConfig() {
       })
     });
     await loadSummary();
-    showToast("模型默认配置已保存");
+    showToast("模型配置已保存");
   } catch (error) {
     showToast(error.message, true);
   } finally {
     setBusy(els.saveModelConfigBtn, "保存默认配置", false);
+    setBusy(els.saveProviderConfigBtn, "保存供应商配置", false);
   }
 }
 

@@ -2372,6 +2372,57 @@ input[readonly] {
   gap: 12px;
 }
 
+.admin-provider-actions {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.admin-provider-table-wrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.admin-provider-table {
+  width: 100%;
+  min-width: 860px;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.admin-provider-table th,
+.admin-provider-table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+
+.admin-provider-table th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.admin-provider-table tr:last-child td {
+  border-bottom: 0;
+}
+
+.admin-provider-table strong,
+.admin-provider-table small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.admin-provider-table small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
 .admin-provider-card {
   display: grid;
   gap: 12px;
