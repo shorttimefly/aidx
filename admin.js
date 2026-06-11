@@ -20,6 +20,11 @@ const state = {
   summary: null,
   modelProviders: [],
   defaultImageModelId: "",
+  legacyModelConfig: {
+    defaultEndpoint: "",
+    defaultModel: "",
+    usageNote: ""
+  },
   activeAdminView: "model",
   promptConfig: null,
   activePromptGroup: "single",
@@ -66,10 +71,6 @@ function cacheElements() {
     adminNavItems: document.querySelectorAll(".admin-nav-item"),
     adminViews: document.querySelectorAll("[data-admin-view-panel]"),
     adminSummaryGrid: document.getElementById("adminSummaryGrid"),
-    defaultEndpointInput: document.getElementById("defaultEndpointInput"),
-    defaultModelInput: document.getElementById("defaultModelInput"),
-    usageNoteInput: document.getElementById("usageNoteInput"),
-    saveModelConfigBtn: document.getElementById("saveModelConfigBtn"),
     addModelProviderBtn: document.getElementById("addModelProviderBtn"),
     saveProviderConfigBtn: document.getElementById("saveProviderConfigBtn"),
     modelProviderList: document.getElementById("modelProviderList"),
@@ -127,7 +128,6 @@ function bindEvents() {
     button.addEventListener("click", () => switchAdminView(button.dataset.adminView));
   });
   els.adminLogoutBtn.addEventListener("click", handleAdminLogout);
-  els.saveModelConfigBtn.addEventListener("click", saveModelConfig);
   els.addModelProviderBtn.addEventListener("click", addModelProvider);
   els.modelProviderList.addEventListener("click", handleModelProviderAction);
   els.closeProviderConfigModalBtn.addEventListener("click", closeProviderConfigModal);
@@ -310,9 +310,11 @@ function renderSummary(summary = {}) {
 }
 
 function renderModelConfig(config = {}) {
-  els.defaultEndpointInput.value = config.defaultEndpoint || "";
-  els.defaultModelInput.value = config.defaultModel || "";
-  els.usageNoteInput.value = config.usageNote || "";
+  state.legacyModelConfig = {
+    defaultEndpoint: config.defaultEndpoint || "",
+    defaultModel: config.defaultModel || "",
+    usageNote: config.usageNote || ""
+  };
   state.defaultImageModelId = config.defaultImageModelId || "";
   state.modelProviders = Array.isArray(config.modelProviders) ? config.modelProviders : [];
   renderModelProviders();
@@ -599,15 +601,15 @@ function collectModelProviders() {
   }));
 }
 
-async function persistModelConfig(successMessage = "模型配置已保存", busyButton = els.saveModelConfigBtn) {
+async function persistModelConfig(successMessage = "模型配置已保存", busyButton = null) {
   setBusy(busyButton, "保存中", true);
   try {
     await adminFetch("/model-config", {
       method: "PUT",
       body: JSON.stringify({
-        defaultEndpoint: els.defaultEndpointInput.value.trim(),
-        defaultModel: els.defaultModelInput.value.trim(),
-        usageNote: els.usageNoteInput.value.trim(),
+        defaultEndpoint: state.legacyModelConfig.defaultEndpoint,
+        defaultModel: state.legacyModelConfig.defaultModel,
+        usageNote: state.legacyModelConfig.usageNote,
         defaultImageModelId: state.defaultImageModelId || "",
         modelProviders: collectModelProviders()
       })
@@ -621,10 +623,6 @@ async function persistModelConfig(successMessage = "模型配置已保存", busy
   } finally {
     setBusy(busyButton, "", false);
   }
-}
-
-async function saveModelConfig() {
-  return persistModelConfig("模型配置已保存", els.saveModelConfigBtn);
 }
 
 async function savePromptConfig() {
@@ -1273,6 +1271,7 @@ function renderFeedbacks() {
 }
 
 function setBusy(button, text, busy) {
+  if (!button) return;
   button.disabled = busy;
   button.dataset.originalText = button.dataset.originalText || button.textContent;
   button.textContent = busy ? text : button.dataset.originalText;

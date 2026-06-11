@@ -13,6 +13,11 @@ const keyModal = html.match(/<div class="modal-backdrop" id="adminKeyModal"[\s\S
 assert.ok(modelView.includes("模型供应商"));
 assert.ok(modelView.includes('id="addModelProviderBtn"'));
 assert.ok(modelView.includes('id="modelProviderList"'));
+assert.ok(!modelView.includes("模型默认配置"));
+assert.ok(!modelView.includes('id="saveModelConfigBtn"'));
+assert.ok(!modelView.includes('id="defaultEndpointInput"'));
+assert.ok(!modelView.includes('id="defaultModelInput"'));
+assert.ok(!modelView.includes('id="usageNoteInput"'));
 assert.ok(html.includes('id="providerConfigModal"'));
 assert.ok(html.includes('id="providerBaseUrlInput"'));
 assert.ok(html.includes('id="providerTokenInput"'));

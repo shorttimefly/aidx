@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>B端管理台 - AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260611-provider-list" />
+    <link rel="stylesheet" href="./styles.css?v=20260611-provider-list-v2" />
   </head>
   <body class="admin-body">
     <main class="admin-shell">
@@ -31,27 +31,6 @@
         <section class="admin-content">
           <section class="admin-view active" data-admin-view-panel="model">
             <section class="admin-summary-grid" id="adminSummaryGrid"></section>
-
-            <section class="panel admin-config-panel">
-              <div class="panel-header">
-                <h3>模型默认配置</h3>
-                <button class="primary-button" id="saveModelConfigBtn" type="button">保存默认配置</button>
-              </div>
-              <div class="settings-grid">
-                <label class="field">
-                  <span>默认 Base URL / 接口地址</span>
-                  <input id="defaultEndpointInput" type="text" placeholder="https://aokapi.com/v1beta/models/{model}:generateContent/" />
-                </label>
-                <label class="field">
-                  <span>默认模型</span>
-                  <input id="defaultModelInput" type="text" />
-                </label>
-              </div>
-              <label class="field admin-note-field">
-                <span>用量说明</span>
-                <textarea id="usageNoteInput" rows="3"></textarea>
-              </label>
-            </section>
 
             <section class="panel admin-provider-panel">
               <div class="panel-header">
@@ -291,6 +270,6 @@
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./admin.js?v=20260611-provider-list" defer></script>
+    <script src="./admin.js?v=20260611-provider-list-v2" defer></script>
   </body>
 </html>
