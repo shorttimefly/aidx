@@ -6,6 +6,7 @@ from __future__ import annotations
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import base64
+import copy
 import errno
 import hashlib
 import hmac
@@ -13,8 +14,12 @@ import json
 import os
 from pathlib import Path
 import secrets
+import shutil
 import socket
 import sqlite3
+import subprocess
+import tempfile
+import traceback
 import time
 import urllib.error
 import urllib.request
@@ -28,9 +33,27 @@ SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "14"))
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip().lower()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
 OLD_DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
+OLD_GEMINI3_PREVIEW_MODEL = "gemini-3-pro-image-preview"
+GEMINI3_IMAGE_MODEL = "gemini-3-pro-image"
+OLD_GEMINI3_PREVIEW_ENDPOINT = f"https://aokapi.com/v1beta/models/{OLD_GEMINI3_PREVIEW_MODEL}:generateContent/"
 DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/{model}:generateContent/"
 DEFAULT_MODEL = "gemini-2.5-flash-image"
+PROVIDER_TYPE_AOKAPI_GEMINI = "aokapi_gemini"
+PROVIDER_TYPE_MUSKAPIS_IMAGE = "muskapis_image"
+PROVIDER_TYPE_OPENAI_IMAGE = "openai_image"
+VALID_IMAGE_PROVIDER_TYPES = {
+    PROVIDER_TYPE_AOKAPI_GEMINI,
+    PROVIDER_TYPE_MUSKAPIS_IMAGE,
+    PROVIDER_TYPE_OPENAI_IMAGE,
+}
+DEFAULT_PROVIDER_BASE_URLS = {
+    PROVIDER_TYPE_AOKAPI_GEMINI: DEFAULT_ENDPOINT,
+    PROVIDER_TYPE_MUSKAPIS_IMAGE: "https://api.muskapis.com/v1",
+    PROVIDER_TYPE_OPENAI_IMAGE: "https://api.openai.com/v1",
+}
 UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "120"))
+UPSTREAM_MAX_ATTEMPTS = max(1, int(os.environ.get("UPSTREAM_MAX_ATTEMPTS", "2")))
+UPSTREAM_RETRY_DELAY_SECONDS = max(0.0, float(os.environ.get("UPSTREAM_RETRY_DELAY_SECONDS", "1")))
 PROMPT_CONFIG_KEY = "prompt_config_json"
 PROMPT_CONFIG_PATH = ROOT / "prompt-config-defaults.json"
 PROMPT_TEXT_LIMIT = 20_000
@@ -157,13 +180,30 @@ def ensure_users_schema(conn: sqlite3.Connection) -> None:
 
 
 def migrate_default_endpoint(conn: sqlite3.Connection) -> None:
+    timestamp = now_iso()
     conn.execute(
         "UPDATE app_settings SET value=?, updated_at=? WHERE key='default_endpoint' AND value=?",
-        (DEFAULT_ENDPOINT, now_iso(), OLD_DEFAULT_ENDPOINT),
+        (DEFAULT_ENDPOINT, timestamp, OLD_DEFAULT_ENDPOINT),
     )
     conn.execute(
         "UPDATE user_settings SET endpoint=?, updated_at=? WHERE endpoint=?",
-        (DEFAULT_ENDPOINT, now_iso(), OLD_DEFAULT_ENDPOINT),
+        (DEFAULT_ENDPOINT, timestamp, OLD_DEFAULT_ENDPOINT),
+    )
+    conn.execute(
+        "UPDATE app_settings SET value=?, updated_at=? WHERE key='default_endpoint' AND value=?",
+        (DEFAULT_ENDPOINT, timestamp, OLD_GEMINI3_PREVIEW_ENDPOINT),
+    )
+    conn.execute(
+        "UPDATE user_settings SET endpoint=?, updated_at=? WHERE endpoint=?",
+        (DEFAULT_ENDPOINT, timestamp, OLD_GEMINI3_PREVIEW_ENDPOINT),
+    )
+    conn.execute(
+        "UPDATE app_settings SET value=?, updated_at=? WHERE key='default_model' AND value=?",
+        (GEMINI3_IMAGE_MODEL, timestamp, OLD_GEMINI3_PREVIEW_MODEL),
+    )
+    conn.execute(
+        "UPDATE user_settings SET model=?, updated_at=? WHERE model=?",
+        (GEMINI3_IMAGE_MODEL, timestamp, OLD_GEMINI3_PREVIEW_MODEL),
     )
 
 
@@ -210,6 +250,35 @@ def init_db() -> None:
               updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS model_providers (
+              id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              provider_type TEXT NOT NULL,
+              base_url TEXT NOT NULL,
+              api_key TEXT NOT NULL DEFAULT '',
+              enabled INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS provider_models (
+              id TEXT PRIMARY KEY,
+              provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,
+              model_name TEXT NOT NULL,
+              priority INTEGER NOT NULL DEFAULT 100,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS user_model_access (
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              provider_model_id TEXT NOT NULL REFERENCES provider_models(id) ON DELETE CASCADE,
+              enabled INTEGER NOT NULL DEFAULT 1,
+              created_at TEXT NOT NULL,
+              PRIMARY KEY (user_id, provider_model_id)
+            );
+
             CREATE TABLE IF NOT EXISTS generation_logs (
               id TEXT PRIMARY KEY,
               user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -227,6 +296,21 @@ def init_db() -> None:
               output_tokens INTEGER NOT NULL DEFAULT 0,
               total_tokens INTEGER NOT NULL DEFAULT 0,
               duration_ms INTEGER NOT NULL DEFAULT 0,
+              created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS generated_assets (
+              id TEXT PRIMARY KEY,
+              user_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+              log_id TEXT NOT NULL DEFAULT '',
+              image_url TEXT NOT NULL,
+              name TEXT NOT NULL DEFAULT '',
+              endpoint TEXT NOT NULL DEFAULT '',
+              model TEXT NOT NULL DEFAULT '',
+              prompt TEXT NOT NULL DEFAULT '',
+              size TEXT NOT NULL DEFAULT '',
+              source TEXT NOT NULL DEFAULT 'generation',
+              request_json TEXT NOT NULL DEFAULT '{}',
               created_at TEXT NOT NULL
             );
 
@@ -254,8 +338,11 @@ def init_db() -> None:
 
             CREATE INDEX IF NOT EXISTS idx_logs_user_created ON generation_logs(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_logs_created ON generation_logs(created_at);
+            CREATE INDEX IF NOT EXISTS idx_generated_assets_user_created ON generated_assets(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_feedback_created ON image_feedback(created_at);
             CREATE INDEX IF NOT EXISTS idx_feedback_source ON image_feedback(user_source, image_source, created_at);
+            CREATE INDEX IF NOT EXISTS idx_provider_models_provider_priority ON provider_models(provider_id, priority);
+            CREATE INDEX IF NOT EXISTS idx_user_model_access_user ON user_model_access(user_id, enabled);
             """
         )
         ensure_column(conn, "users", "disabled", "INTEGER NOT NULL DEFAULT 0")
@@ -294,7 +381,13 @@ def default_prompt_config() -> dict:
     except (OSError, json.JSONDecodeError):
         return {
             "version": 1,
-            "single": {"templateCategories": [], "templates": [], "supplementalVariantPrompt": ""},
+            "single": {
+                "defaultTemplateCategory": "aplus",
+                "defaultTemplateId": "aplus-brand-story",
+                "templateCategories": [],
+                "templates": [],
+                "supplementalVariantPrompt": "",
+            },
             "refinement": {
                 "quickEdits": [],
                 "compose": {},
@@ -396,9 +489,316 @@ def app_settings(conn: sqlite3.Connection) -> dict:
     }
 
 
+def model_config_settings(conn: sqlite3.Connection) -> dict:
+    config = app_settings(conn)
+    config["modelProviders"] = model_providers_config(conn)
+    return config
+
+
+def normalize_provider_type(value) -> str:
+    provider_type = str(value or "").strip().lower()
+    if provider_type in VALID_IMAGE_PROVIDER_TYPES:
+        return provider_type
+    if provider_type in {"muskapis", "muskapi"}:
+        return PROVIDER_TYPE_MUSKAPIS_IMAGE
+    if provider_type in {"aokapi", "gemini"}:
+        return PROVIDER_TYPE_AOKAPI_GEMINI
+    if provider_type in {"openai", "openai_compatible", "compatible"}:
+        return PROVIDER_TYPE_OPENAI_IMAGE
+    return PROVIDER_TYPE_OPENAI_IMAGE
+
+
+def provider_type_label(provider_type: str) -> str:
+    return {
+        PROVIDER_TYPE_AOKAPI_GEMINI: "AOKAPI / Gemini",
+        PROVIDER_TYPE_MUSKAPIS_IMAGE: "Muskapis Image",
+        PROVIDER_TYPE_OPENAI_IMAGE: "OpenAI Image Compatible",
+    }.get(provider_type, "OpenAI Image Compatible")
+
+
+def normalize_provider_base_url(base_url: str, provider_type: str) -> str:
+    value = str(base_url or "").strip()
+    if not value:
+        value = DEFAULT_PROVIDER_BASE_URLS.get(provider_type, DEFAULT_PROVIDER_BASE_URLS[PROVIDER_TYPE_OPENAI_IMAGE])
+    return trim_text(value.rstrip("/"), 800)
+
+
+def normalize_provider_model_name(value: str, provider_type: str) -> str:
+    model_name = trim_text(str(value or "").strip(), 160)
+    if model_name:
+        return model_name
+    if provider_type == PROVIDER_TYPE_MUSKAPIS_IMAGE:
+        return "gpt-image-2"
+    return DEFAULT_MODEL
+
+
+def row_provider_model(row: sqlite3.Row) -> dict:
+    return {
+        "id": row["id"],
+        "providerId": row["provider_id"],
+        "modelName": row["model_name"],
+        "priority": int(row["priority"] or 100),
+        "enabled": bool(row["enabled"]),
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+    }
+
+
+def row_model_provider(provider: sqlite3.Row, models: list[dict] | None = None) -> dict:
+    api_key = row_value(provider, "api_key", "")
+    provider_type = normalize_provider_type(row_value(provider, "provider_type", ""))
+    return {
+        "id": provider["id"],
+        "name": provider["name"],
+        "providerType": provider_type,
+        "providerTypeLabel": provider_type_label(provider_type),
+        "baseUrl": provider["base_url"],
+        "enabled": bool(provider["enabled"]),
+        "apiKeyConfigured": bool(str(api_key or "").strip()),
+        "apiKeyMasked": mask_api_key(api_key),
+        "createdAt": provider["created_at"],
+        "updatedAt": provider["updated_at"],
+        "models": models or [],
+    }
+
+
+def model_providers_config(conn: sqlite3.Connection) -> list[dict]:
+    providers = conn.execute("SELECT * FROM model_providers ORDER BY created_at ASC, name ASC").fetchall()
+    model_rows = conn.execute("SELECT * FROM provider_models ORDER BY priority ASC, created_at ASC").fetchall()
+    models_by_provider: dict[str, list[dict]] = {}
+    for row in model_rows:
+        models_by_provider.setdefault(row["provider_id"], []).append(row_provider_model(row))
+    return [row_model_provider(provider, models_by_provider.get(provider["id"], [])) for provider in providers]
+
+
+def user_allowed_image_models(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+          user_model_access.enabled AS access_enabled,
+          provider_models.id AS model_id,
+          provider_models.provider_id,
+          provider_models.model_name,
+          provider_models.priority,
+          provider_models.enabled AS model_enabled,
+          model_providers.name AS provider_name,
+          model_providers.provider_type,
+          model_providers.base_url,
+          model_providers.enabled AS provider_enabled
+        FROM user_model_access
+        JOIN provider_models ON provider_models.id = user_model_access.provider_model_id
+        JOIN model_providers ON model_providers.id = provider_models.provider_id
+        WHERE user_model_access.user_id=? AND user_model_access.enabled=1
+        ORDER BY provider_models.priority ASC, model_providers.name ASC, provider_models.model_name ASC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [
+        {
+            "id": row["model_id"],
+            "providerId": row["provider_id"],
+            "providerName": row["provider_name"],
+            "providerType": normalize_provider_type(row["provider_type"]),
+            "baseUrl": row["base_url"],
+            "modelName": row["model_name"],
+            "priority": int(row["priority"] or 100),
+            "enabled": bool(row["access_enabled"]) and bool(row["model_enabled"]) and bool(row["provider_enabled"]),
+            "modelEnabled": bool(row["model_enabled"]),
+            "providerEnabled": bool(row["provider_enabled"]),
+        }
+        for row in rows
+    ]
+
+
+def authorized_image_model_options(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    rows = conn.execute(
+        """
+        SELECT
+          model_providers.id AS provider_id,
+          model_providers.name AS provider_name,
+          model_providers.provider_type,
+          model_providers.base_url,
+          model_providers.api_key,
+          provider_models.id AS provider_model_id,
+          provider_models.model_name,
+          provider_models.priority
+        FROM user_model_access
+        JOIN provider_models ON provider_models.id = user_model_access.provider_model_id
+        JOIN model_providers ON model_providers.id = provider_models.provider_id
+        WHERE user_model_access.user_id=?
+          AND user_model_access.enabled=1
+          AND provider_models.enabled=1
+          AND model_providers.enabled=1
+          AND TRIM(model_providers.api_key)<>''
+        ORDER BY provider_models.priority ASC, model_providers.name ASC, provider_models.model_name ASC
+        """,
+        (user_id,),
+    ).fetchall()
+    return [
+        {
+            "providerId": row["provider_id"],
+            "providerName": row["provider_name"],
+            "providerType": normalize_provider_type(row["provider_type"]),
+            "baseUrl": row["base_url"],
+            "apiKey": row["api_key"],
+            "providerModelId": row["provider_model_id"],
+            "modelName": row["model_name"],
+            "priority": int(row["priority"] or 100),
+        }
+        for row in rows
+    ]
+
+
+def set_user_model_access(conn: sqlite3.Connection, user_id: str, model_ids) -> None:
+    if not isinstance(model_ids, list):
+        raise AppError(HTTPStatus.BAD_REQUEST, "可用图片模型格式错误")
+    unique_ids = []
+    seen = set()
+    for value in model_ids:
+        model_id = trim_text(str(value or "").strip(), 120)
+        if model_id and model_id not in seen:
+            unique_ids.append(model_id)
+            seen.add(model_id)
+    if unique_ids:
+        placeholders = ",".join("?" for _ in unique_ids)
+        existing = {
+            row["id"]
+            for row in conn.execute(
+                f"SELECT id FROM provider_models WHERE id IN ({placeholders})",
+                unique_ids,
+            ).fetchall()
+        }
+        missing = [model_id for model_id in unique_ids if model_id not in existing]
+        if missing:
+            raise AppError(HTTPStatus.BAD_REQUEST, "可用图片模型不存在")
+    timestamp = now_iso()
+    conn.execute("DELETE FROM user_model_access WHERE user_id=?", (user_id,))
+    conn.executemany(
+        """
+        INSERT INTO user_model_access (user_id, provider_model_id, enabled, created_at)
+        VALUES (?, ?, 1, ?)
+        """,
+        [(user_id, model_id, timestamp) for model_id in unique_ids],
+    )
+
+
+def save_model_providers(conn: sqlite3.Connection, providers) -> None:
+    if providers is None:
+        return
+    if not isinstance(providers, list):
+        raise AppError(HTTPStatus.BAD_REQUEST, "模型供应商配置格式错误")
+    existing_providers = {
+        row["id"]: row for row in conn.execute("SELECT * FROM model_providers").fetchall()
+    }
+    keep_provider_ids = []
+    keep_model_ids = []
+    timestamp = now_iso()
+    for index, item in enumerate(providers, start=1):
+        if not isinstance(item, dict):
+            continue
+        provider_id = trim_text(str(item.get("id") or "").strip(), 120)
+        if not provider_id or provider_id not in existing_providers:
+            provider_id = make_id("provider")
+        provider_type = normalize_provider_type(item.get("providerType") or item.get("provider_type"))
+        name = trim_text(str(item.get("name") or provider_type_label(provider_type)).strip(), 160)
+        base_url = normalize_provider_base_url(item.get("baseUrl") or item.get("base_url"), provider_type)
+        existing_api_key = row_value(existing_providers.get(provider_id), "api_key", "")
+        if item.get("clearApiKey"):
+            api_key = ""
+        elif "apiKey" in item:
+            incoming_key = str(item.get("apiKey") or "").strip()
+            api_key = incoming_key or existing_api_key
+        elif "api_key" in item:
+            incoming_key = str(item.get("api_key") or "").strip()
+            api_key = incoming_key or existing_api_key
+        else:
+            api_key = existing_api_key
+        enabled = 1 if item.get("enabled", True) else 0
+        created_at = row_value(existing_providers.get(provider_id), "created_at", timestamp) or timestamp
+        conn.execute(
+            """
+            INSERT INTO model_providers
+              (id, name, provider_type, base_url, api_key, enabled, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+              name=excluded.name,
+              provider_type=excluded.provider_type,
+              base_url=excluded.base_url,
+              api_key=excluded.api_key,
+              enabled=excluded.enabled,
+              updated_at=excluded.updated_at
+            """,
+            (provider_id, name, provider_type, base_url, api_key, enabled, created_at, timestamp),
+        )
+        keep_provider_ids.append(provider_id)
+        existing_models = {
+            row["id"]: row
+            for row in conn.execute(
+                "SELECT * FROM provider_models WHERE provider_id=?",
+                (provider_id,),
+            ).fetchall()
+        }
+        model_items = item.get("models") if isinstance(item.get("models"), list) else []
+        for model_index, model_item in enumerate(model_items, start=1):
+            if not isinstance(model_item, dict):
+                continue
+            model_id = trim_text(str(model_item.get("id") or "").strip(), 120)
+            if not model_id or model_id not in existing_models:
+                model_id = make_id("pmodel")
+            model_name = normalize_provider_model_name(
+                model_item.get("modelName") or model_item.get("model_name"),
+                provider_type,
+            )
+            priority = clamp_int(model_item.get("priority"), 1, 1_000_000)
+            if priority == 1 and model_item.get("priority") in (None, ""):
+                priority = index * 100 + model_index
+            model_enabled = 1 if model_item.get("enabled", True) else 0
+            model_created_at = row_value(existing_models.get(model_id), "created_at", timestamp) or timestamp
+            conn.execute(
+                """
+                INSERT INTO provider_models
+                  (id, provider_id, model_name, priority, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                  provider_id=excluded.provider_id,
+                  model_name=excluded.model_name,
+                  priority=excluded.priority,
+                  enabled=excluded.enabled,
+                  updated_at=excluded.updated_at
+                """,
+                (model_id, provider_id, model_name, priority, model_enabled, model_created_at, timestamp),
+            )
+            keep_model_ids.append(model_id)
+    if keep_model_ids:
+        placeholders = ",".join("?" for _ in keep_model_ids)
+        conn.execute(f"DELETE FROM provider_models WHERE id NOT IN ({placeholders})", keep_model_ids)
+    else:
+        conn.execute("DELETE FROM provider_models")
+    if keep_provider_ids:
+        placeholders = ",".join("?" for _ in keep_provider_ids)
+        conn.execute(f"DELETE FROM model_providers WHERE id NOT IN ({placeholders})", keep_provider_ids)
+    else:
+        conn.execute("DELETE FROM model_providers")
+
+
 def prompt_config_settings(conn: sqlite3.Connection) -> dict:
     row = conn.execute("SELECT value FROM app_settings WHERE key=?", (PROMPT_CONFIG_KEY,)).fetchone()
     return normalize_prompt_config(row["value"] if row else "")
+
+
+def client_prompt_config(config: dict) -> dict:
+    safe_config = copy.deepcopy(normalize_prompt_config(config))
+    safe_config.get("single", {})["templateCategories"] = [
+        category for category in safe_config.get("single", {}).get("templateCategories", []) if category.get("id") != "custom"
+    ]
+    safe_config.get("single", {}).pop("supplementalVariantPrompt", None)
+    for template in safe_config.get("single", {}).get("templates", []):
+        template.pop("prompt", None)
+    for preset in safe_config.get("suite", {}).get("presets", []):
+        for shot in preset.get("shots", []):
+            shot.pop("prompt", None)
+    safe_config.get("suite", {})["compose"] = {}
+    return safe_config
 
 
 def mask_api_key(api_key: str) -> str:
@@ -422,6 +822,7 @@ def row_user(
     video_model: str = "",
     video_endpoint_primary: str = "",
     video_endpoint_secondary: str = "",
+    allowed_image_models: list[dict] | None = None,
 ) -> dict:
     source = row_value(row, "source", "direct") or "direct"
     return {
@@ -451,6 +852,7 @@ def row_user(
         "videoModel": video_model,
         "videoEndpointPrimary": video_endpoint_primary,
         "videoEndpointSecondary": video_endpoint_secondary,
+        "allowedImageModels": allowed_image_models or [],
         "usage": usage
         or {
             "calls": 0,
@@ -568,6 +970,8 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_put_settings()
             if path == "/api/generate" and method == "POST":
                 return self.handle_generate()
+            if path == "/api/generated-assets" and method == "GET":
+                return self.handle_generated_assets(parsed.query)
             if path == "/api/generation-logs" and method == "POST":
                 return self.handle_create_generation_log()
             if path == "/api/image-feedback" and method == "POST":
@@ -598,12 +1002,15 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_admin_prompt_config()
             if path == "/api/admin/prompt-config" and method == "PUT":
                 return self.handle_admin_put_prompt_config()
+            if path == "/prompt-config-defaults.json":
+                raise AppError(HTTPStatus.NOT_FOUND, "接口不存在")
             if path.startswith("/api/"):
                 raise AppError(HTTPStatus.NOT_FOUND, "接口不存在")
             return super().do_GET()
         except AppError as error:
             self.json_response({"error": error.message}, error.status)
         except Exception as error:
+            traceback.print_exc()
             self.json_response({"error": str(error)}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
     def read_json(self) -> dict:
@@ -815,7 +1222,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "size": row["size"] if row else "1024x1024",
                     "defaultEndpoint": settings["defaultEndpoint"],
                     "defaultModel": settings["defaultModel"],
-                    "promptConfig": prompt_config,
+                    "promptConfig": client_prompt_config(prompt_config),
                 }
             }
         )
@@ -840,15 +1247,126 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_generate(self) -> None:
         user = self.require_user()
         body = self.read_json()
-        prompt = trim_text(str(body.get("prompt") or "").strip(), 8000)
-        if not prompt:
-            raise AppError(HTTPStatus.BAD_REQUEST, "请输入提示词")
         count = clamp_int(body.get("count") or body.get("n") or 1, 1, 8)
         size = normalize_image_size(str(body.get("size") or "1024x1024").strip()) or "1024x1024"
         references = normalize_reference_images(body.get("referenceImages"))
         with connect() as conn:
             settings = app_settings(conn)
+            prompt_config = prompt_config_settings(conn)
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
+            assigned_models = user_allowed_image_models(conn, user["id"])
+            authorized_models = authorized_image_model_options(conn, user["id"]) if assigned_models else []
+        prompt, prompt_source = resolve_generation_prompt(body, prompt_config, references)
+        if assigned_models:
+            if not authorized_models:
+                raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置可用图片模型")
+            last_error = None
+            for attempt_index, option in enumerate(authorized_models, start=1):
+                model = option["modelName"]
+                provider_type = option["providerType"]
+                resolved_endpoint = resolve_provider_image_endpoint(option, model)
+                request_body, strategy = build_provider_image_request_body(
+                    prompt=prompt,
+                    count=count,
+                    size=size,
+                    model=model,
+                    endpoint=resolved_endpoint,
+                    provider_type=provider_type,
+                    references=references,
+                )
+                request_snapshot = {
+                    "model": model,
+                    "providerId": option["providerId"],
+                    "providerName": option["providerName"],
+                    "providerType": provider_type,
+                    "providerModelId": option["providerModelId"],
+                    "strategy": strategy,
+                    "body": public_request_snapshot_body(
+                        request_body,
+                        prompt_source=prompt_source,
+                        template_id=body.get("templateId"),
+                        count=count,
+                        size=size,
+                        reference_count=len(references),
+                    ),
+                }
+                started_at = time.monotonic()
+                try:
+                    payload = call_upstream_model_with_retry(resolved_endpoint, option["apiKey"], request_body)
+                    images = extract_image_results_from_payload(payload)
+                    if not images:
+                        raise UpstreamError(502, "接口未返回可识别的图片地址或 b64_json", payload)
+                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    log_id = log_generation(
+                        user_id=user["id"],
+                        endpoint=resolved_endpoint,
+                        model=model,
+                        prompt=prompt,
+                        size=size,
+                        count=count,
+                        images=images,
+                        status="completed",
+                        error="",
+                        request_body=request_body,
+                        response_body=payload,
+                        duration_ms=duration_ms,
+                    )
+                    generated_assets = save_generated_assets(
+                        user_id=user["id"],
+                        log_id=log_id,
+                        endpoint=resolved_endpoint,
+                        model=model,
+                        prompt=prompt,
+                        size=size,
+                        images=images,
+                        request_snapshot=request_snapshot,
+                    )
+                    self.json_response(
+                        {
+                            "images": [
+                                {
+                                    **image,
+                                    "request": request_snapshot,
+                                    "remoteAssetId": generated_assets[index]["id"] if index < len(generated_assets) else "",
+                                    "generatedAssetId": generated_assets[index]["id"] if index < len(generated_assets) else "",
+                                }
+                                for index, image in enumerate(images)
+                            ],
+                            "request": request_snapshot,
+                            "model": model,
+                            "provider": {
+                                "id": option["providerId"],
+                                "name": option["providerName"],
+                                "type": provider_type,
+                                "modelId": option["providerModelId"],
+                            },
+                            "attemptCount": attempt_index,
+                            "apiKeyConfigured": True,
+                        }
+                    )
+                    return
+                except UpstreamError as error:
+                    last_error = error
+                    duration_ms = int((time.monotonic() - started_at) * 1000)
+                    log_generation(
+                        user_id=user["id"],
+                        endpoint=resolved_endpoint,
+                        model=model,
+                        prompt=prompt,
+                        size=size,
+                        count=count,
+                        images=[],
+                        status="failed",
+                        error=f"API {error.status}: {error.message}",
+                        request_body=request_body,
+                        response_body=error.payload,
+                        duration_ms=duration_ms,
+                    )
+                    if attempt_index >= len(authorized_models) or not is_failoverable_upstream_error(error):
+                        raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {error.status}: {error.message}")
+            if last_error:
+                raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {last_error.status}: {last_error.message}")
+
         api_key = str(row["api_key"] if row else "").strip()
         if not api_key:
             raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置 API Key")
@@ -866,16 +1384,23 @@ class Handler(SimpleHTTPRequestHandler):
         request_snapshot = {
             "model": model,
             "strategy": strategy,
-            "body": sanitize_payload(request_body),
+            "body": public_request_snapshot_body(
+                request_body,
+                prompt_source=prompt_source,
+                template_id=body.get("templateId"),
+                count=count,
+                size=size,
+                reference_count=len(references),
+            ),
         }
         started_at = time.monotonic()
         try:
-            payload = call_upstream_model(resolved_endpoint, api_key, request_body)
+            payload = call_upstream_model_with_retry(resolved_endpoint, api_key, request_body)
             images = extract_image_results_from_payload(payload)
             if not images:
                 raise UpstreamError(502, "接口未返回可识别的图片地址或 b64_json", payload)
             duration_ms = int((time.monotonic() - started_at) * 1000)
-            log_generation(
+            log_id = log_generation(
                 user_id=user["id"],
                 endpoint=resolved_endpoint,
                 model=model,
@@ -889,9 +1414,27 @@ class Handler(SimpleHTTPRequestHandler):
                 response_body=payload,
                 duration_ms=duration_ms,
             )
+            generated_assets = save_generated_assets(
+                user_id=user["id"],
+                log_id=log_id,
+                endpoint=resolved_endpoint,
+                model=model,
+                prompt=prompt,
+                size=size,
+                images=images,
+                request_snapshot=request_snapshot,
+            )
             self.json_response(
                 {
-                    "images": [{**image, "request": request_snapshot} for image in images],
+                    "images": [
+                        {
+                            **image,
+                            "request": request_snapshot,
+                            "remoteAssetId": generated_assets[index]["id"] if index < len(generated_assets) else "",
+                            "generatedAssetId": generated_assets[index]["id"] if index < len(generated_assets) else "",
+                        }
+                        for index, image in enumerate(images)
+                    ],
                     "request": request_snapshot,
                     "model": model,
                     "apiKeyConfigured": True,
@@ -914,6 +1457,23 @@ class Handler(SimpleHTTPRequestHandler):
                 duration_ms=duration_ms,
             )
             raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {error.status}: {error.message}")
+
+    def handle_generated_assets(self, query: str) -> None:
+        user = self.require_user()
+        params = parse_qs(query)
+        limit = clamp_int(params.get("limit", ["30"])[0], 1, 100)
+        with connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT id, log_id, image_url, name, endpoint, model, prompt, size, source, request_json, created_at
+                FROM generated_assets
+                WHERE user_id=?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (user["id"], limit),
+            ).fetchall()
+        self.json_response({"assets": [row_generated_asset(row) for row in rows]})
 
     def handle_create_generation_log(self) -> None:
         user = self.require_user()
@@ -1029,7 +1589,7 @@ class Handler(SimpleHTTPRequestHandler):
                   (SELECT COUNT(*) FROM image_feedback WHERE feedback_type='downvote') AS downvotes
                 """
             ).fetchone()
-            settings = app_settings(conn)
+            settings = model_config_settings(conn)
         self.json_response({"summary": dict(summary), "modelConfig": settings})
 
     def handle_admin_users(self) -> None:
@@ -1052,6 +1612,27 @@ class Handler(SimpleHTTPRequestHandler):
                 FROM user_settings
                 """
             ).fetchall()
+            access_rows = conn.execute(
+                """
+                SELECT
+                  user_model_access.user_id,
+                  user_model_access.enabled AS access_enabled,
+                  provider_models.id AS model_id,
+                  provider_models.provider_id,
+                  provider_models.model_name,
+                  provider_models.priority,
+                  provider_models.enabled AS model_enabled,
+                  model_providers.name AS provider_name,
+                  model_providers.provider_type,
+                  model_providers.base_url,
+                  model_providers.enabled AS provider_enabled
+                FROM user_model_access
+                JOIN provider_models ON provider_models.id = user_model_access.provider_model_id
+                JOIN model_providers ON model_providers.id = provider_models.provider_id
+                WHERE user_model_access.enabled=1
+                ORDER BY provider_models.priority ASC, model_providers.name ASC, provider_models.model_name ASC
+                """
+            ).fetchall()
         usage_by_user = {
             row["user_id"]: {
                 "calls": row["calls"],
@@ -1063,6 +1644,22 @@ class Handler(SimpleHTTPRequestHandler):
             for row in usage_rows
         }
         settings_by_user = {row["user_id"]: row for row in settings_rows}
+        access_by_user: dict[str, list[dict]] = {}
+        for row in access_rows:
+            access_by_user.setdefault(row["user_id"], []).append(
+                {
+                    "id": row["model_id"],
+                    "providerId": row["provider_id"],
+                    "providerName": row["provider_name"],
+                    "providerType": normalize_provider_type(row["provider_type"]),
+                    "baseUrl": row["base_url"],
+                    "modelName": row["model_name"],
+                    "priority": int(row["priority"] or 100),
+                    "enabled": bool(row["access_enabled"]) and bool(row["model_enabled"]) and bool(row["provider_enabled"]),
+                    "modelEnabled": bool(row["model_enabled"]),
+                    "providerEnabled": bool(row["provider_enabled"]),
+                }
+            )
         self.json_response(
             {
                 "users": [
@@ -1078,6 +1675,7 @@ class Handler(SimpleHTTPRequestHandler):
                         row_value(settings_by_user.get(row["id"]), "video_model", ""),
                         row_value(settings_by_user.get(row["id"]), "video_endpoint_primary", ""),
                         row_value(settings_by_user.get(row["id"]), "video_endpoint_secondary", ""),
+                        access_by_user.get(row["id"], []),
                     )
                     for row in rows
                 ]
@@ -1151,6 +1749,8 @@ class Handler(SimpleHTTPRequestHandler):
                     endpoint_primary=body.get("videoEndpointPrimary"),
                     endpoint_secondary=body.get("videoEndpointSecondary"),
                 )
+            if "allowedImageModelIds" in body:
+                set_user_model_access(conn, user_id, body.get("allowedImageModelIds"))
         self.json_response({"ok": True})
 
     def upsert_user_image_config(
@@ -1368,7 +1968,7 @@ class Handler(SimpleHTTPRequestHandler):
     def handle_admin_model_config(self) -> None:
         self.require_admin()
         with connect() as conn:
-            self.json_response({"modelConfig": app_settings(conn)})
+            self.json_response({"modelConfig": model_config_settings(conn)})
 
     def handle_admin_put_model_config(self) -> None:
         self.require_admin()
@@ -1389,6 +1989,7 @@ class Handler(SimpleHTTPRequestHandler):
                     """,
                     (key, value, now_iso()),
                 )
+            save_model_providers(conn, body.get("modelProviders"))
         self.json_response({"ok": True})
 
     def handle_admin_prompt_config(self) -> None:
@@ -1502,6 +2103,146 @@ def build_image_request_body(
     return body, "reference_images" if references else "text"
 
 
+def provider_value(provider: dict | sqlite3.Row, camel_key: str, snake_key: str = ""):
+    if isinstance(provider, sqlite3.Row):
+        key = snake_key or camel_key
+        return row_value(provider, key, "")
+    if isinstance(provider, dict):
+        return provider.get(camel_key) if camel_key in provider else provider.get(snake_key or camel_key)
+    return ""
+
+
+def resolve_provider_image_endpoint(provider: dict | sqlite3.Row, model: str) -> str:
+    provider_type = normalize_provider_type(provider_value(provider, "providerType", "provider_type"))
+    base_url = normalize_provider_base_url(provider_value(provider, "baseUrl", "base_url"), provider_type)
+    if provider_type == PROVIDER_TYPE_AOKAPI_GEMINI:
+        return resolve_image_endpoint(base_url, model)
+    value = base_url.rstrip("/")
+    if value.lower().endswith("/images/generations"):
+        return value
+    return f"{value}/images/generations"
+
+
+def build_provider_image_request_body(
+    *,
+    prompt: str,
+    count: int,
+    size: str,
+    model: str,
+    endpoint: str,
+    provider_type: str,
+    references: list[dict],
+) -> tuple[dict, str]:
+    normalized_type = normalize_provider_type(provider_type)
+    if normalized_type == PROVIDER_TYPE_AOKAPI_GEMINI:
+        return build_image_request_body(
+            prompt=prompt,
+            count=count,
+            size=size,
+            model=model,
+            endpoint=endpoint,
+            references=references,
+        )
+    return (
+        {
+            "model": model,
+            "prompt": prompt,
+            "n": count,
+            "size": size,
+            "response_format": "b64_json",
+        },
+        "OpenAI image b64_json",
+    )
+
+
+def resolve_generation_prompt(body: dict, prompt_config: dict, references: list[dict]) -> tuple[str, str]:
+    template_id = trim_text(str(body.get("templateId") or body.get("template_id") or "").strip(), 120)
+    if template_id:
+        prompt = single_template_prompt(prompt_config, template_id)
+        if not prompt:
+            raise AppError(HTTPStatus.BAD_REQUEST, "模板不存在或已停用")
+        variant_index = clamp_int(body.get("variantIndex") or body.get("variant_index") or 0, 0, 999)
+        if variant_index > 1:
+            supplemental = prompt_text(
+                prompt_config.get("single", {}).get("supplementalVariantPrompt", ""),
+                {"index": variant_index},
+            )
+            prompt = "\n".join(part for part in (prompt, supplemental) if part)
+        return with_strict_product_reference(
+            with_reference_context(prompt, references, prompt_config),
+            prompt_config,
+        ), "template"
+
+    prompt = trim_text(str(body.get("prompt") or "").strip(), 8000)
+    if not prompt:
+        raise AppError(HTTPStatus.BAD_REQUEST, "请选择模板")
+    return prompt, "prompt"
+
+
+def single_template_prompt(prompt_config: dict, template_id: str) -> str:
+    for template in prompt_config.get("single", {}).get("templates", []):
+        if str(template.get("id") or "") == template_id:
+            return trim_text(str(template.get("prompt") or "").strip(), 8000)
+    return ""
+
+
+def prompt_text(template: str, values: dict) -> str:
+    text = str(template or "")
+    for key, value in values.items():
+        text = text.replace("{" + str(key) + "}", str(value))
+    return text
+
+
+def with_reference_context(prompt: str, references: list[dict], prompt_config: dict) -> str:
+    if not references:
+        return prompt
+    context = prompt_config.get("reference", {}).get("context", {})
+    primary = references[0]
+    size_text = prompt_text(context.get("sizeText", "，尺寸 {size}"), {"size": primary.get("size")}) if primary.get("size") else ""
+    lines = [
+        prompt_text(
+            context.get("primaryLine", "参考图已随请求发送。首要参考图：「{name}」{sizeText}。"),
+            {
+                "name": primary.get("name") or context.get("defaultName", "参考图 1"),
+                "sizeText": size_text,
+            },
+        ),
+        prompt_text(context.get("extraLine", ""), {"count": len(references) - 1}) if len(references) > 1 else "",
+        context.get("consistencyLine", ""),
+        prompt,
+    ]
+    return "\n".join(line for line in lines if line)
+
+
+def with_strict_product_reference(prompt: str, prompt_config: dict) -> str:
+    text = str(prompt or "").strip()
+    reference_config = prompt_config.get("reference", {})
+    for needle in reference_config.get("strictRuleDedupeNeedles", []):
+        if needle and needle in text:
+            return text
+    strict_rule = reference_config.get("strictRule") or ""
+    return "\n\n".join(part for part in (strict_rule, text) if part)
+
+
+def public_request_snapshot_body(
+    request_body: dict,
+    *,
+    prompt_source: str,
+    template_id,
+    count: int,
+    size: str,
+    reference_count: int,
+):
+    if prompt_source == "template":
+        return {
+            "templateId": str(template_id or ""),
+            "count": count,
+            "size": size,
+            "referenceImageCount": reference_count,
+        }
+    return sanitize_payload(request_body)
+
+
 def normalize_reference_images(value) -> list[dict]:
     if not isinstance(value, list):
         return []
@@ -1571,12 +2312,25 @@ def nearest_gemini_aspect_ratio(width: int, height: int) -> str:
 
 
 def call_upstream_model(endpoint: str, api_key: str, body: dict):
+    if should_use_curl_transport(endpoint):
+        try:
+            return call_upstream_model_curl(endpoint, api_key, body)
+        except FileNotFoundError:
+            pass
+        except subprocess.TimeoutExpired:
+            raise UpstreamError(504, "请求远端模型超时", {"error": "curl timeout"})
+        except UpstreamError:
+            raise
+        except Exception as error:
+            raise UpstreamError(502, str(error), {"error": str(error)})
     request = urllib.request.Request(
         endpoint,
         data=json.dumps(body, ensure_ascii=False).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
             "Authorization": authorization_header_value(api_key, endpoint),
+            "Connection": "close",
+            "User-Agent": "image-editor-tool/1.0",
         },
         method="POST",
     )
@@ -1592,6 +2346,110 @@ def call_upstream_model(endpoint: str, api_key: str, body: dict):
         raise UpstreamError(502, str(error.reason), {"error": str(error.reason)})
     except (TimeoutError, socket.timeout):
         raise UpstreamError(504, "请求远端模型超时", {"error": "timeout"})
+    except Exception as error:
+        raise UpstreamError(502, str(error), {"error": str(error)})
+
+
+def call_upstream_model_with_retry(endpoint: str, api_key: str, body: dict):
+    last_error = None
+    for attempt in range(1, UPSTREAM_MAX_ATTEMPTS + 1):
+        try:
+            return call_upstream_model(endpoint, api_key, body)
+        except UpstreamError as error:
+            last_error = error
+            if attempt >= UPSTREAM_MAX_ATTEMPTS or not is_retryable_upstream_error(error):
+                raise
+            if UPSTREAM_RETRY_DELAY_SECONDS:
+                time.sleep(UPSTREAM_RETRY_DELAY_SECONDS)
+    raise last_error or UpstreamError(502, "接口请求失败", {"error": "retry exhausted"})
+
+
+def is_retryable_upstream_error(error: UpstreamError) -> bool:
+    message = str(error.message or "").lower()
+    payload = error.payload if isinstance(error.payload, dict) else {}
+    payload_error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(payload_error, dict):
+        code = str(payload_error.get("code") or "").lower()
+        error_type = str(payload_error.get("type") or "").lower()
+        if code == "upstream_overloaded" or error_type == "rate_limit_error":
+            return True
+        if code == "network_proxy_dns" and error_type == "server_error":
+            return True
+    if error.status in {429, 500, 502, 503, 504} and (
+        "overloaded" in message
+        or "please retry" in message
+        or "rate limit" in message
+        or "upload image failed" in message
+        or "upstream connect error" in message
+        or "disconnect/reset" in message
+        or "connection termination" in message
+        ):
+        return True
+    return False
+
+
+def is_failoverable_upstream_error(error: UpstreamError) -> bool:
+    if error.status in {429, 500, 502, 503, 504}:
+        return True
+    message = str(error.message or "").lower()
+    return "timeout" in message or "timed out" in message or "connection" in message or "未返回可识别" in message
+
+
+def should_use_curl_transport(endpoint: str) -> bool:
+    return "aokapi.com" in str(endpoint or "").lower() and bool(shutil.which("curl"))
+
+
+def call_upstream_model_curl(endpoint: str, api_key: str, body: dict):
+    marker = "\n__AIDX_HTTP_STATUS__:"
+    body_path = ""
+    try:
+        with tempfile.NamedTemporaryFile("w", encoding="utf-8", delete=False) as body_file:
+            json.dump(body, body_file, ensure_ascii=False)
+            body_path = body_file.name
+        config = "\n".join(
+            [
+                "silent",
+                "show-error",
+                f"max-time = {curl_config_quote(str(UPSTREAM_TIMEOUT_SECONDS))}",
+                'request = "POST"',
+                f"url = {curl_config_quote(endpoint)}",
+                f"header = {curl_config_quote('Content-Type: application/json')}",
+                f"header = {curl_config_quote('Authorization: ' + authorization_header_value(api_key, endpoint))}",
+                f"data-binary = {curl_config_quote('@' + body_path)}",
+                f"write-out = {curl_config_quote(marker + '%{http_code}')}",
+            ]
+        )
+        completed = subprocess.run(
+            ["curl", "--config", "-"],
+            input=config.encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=UPSTREAM_TIMEOUT_SECONDS + 10,
+            check=False,
+        )
+    finally:
+        if body_path:
+            try:
+                os.unlink(body_path)
+            except FileNotFoundError:
+                pass
+    stdout = completed.stdout.decode("utf-8", errors="replace")
+    stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+    if completed.returncode != 0:
+        raise UpstreamError(502, stderr or stdout or f"curl exited with {completed.returncode}", {"error": stderr or stdout})
+    body_text, _, status_text = stdout.rpartition(marker)
+    try:
+        status = int(status_text.strip() or "0")
+    except ValueError:
+        raise UpstreamError(502, stdout or "curl response missing HTTP status", {"error": stdout})
+    payload = parse_upstream_payload(body_text)
+    if status < 200 or status >= 300:
+        raise UpstreamError(status or 502, upstream_error_message(payload, f"HTTP {status}"), payload)
+    return payload
+
+
+def curl_config_quote(value: str) -> str:
+    return '"' + str(value or "").replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n") + '"'
 
 
 def authorization_header_value(api_key: str, endpoint: str) -> str:
@@ -1734,8 +2592,9 @@ def log_generation(
     request_body,
     response_body,
     duration_ms: int,
-) -> None:
+) -> str:
     usage = extract_token_usage(request_body, response_body)
+    log_id = make_id("log")
     with connect() as conn:
         conn.execute(
             """
@@ -1745,7 +2604,7 @@ def log_generation(
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                make_id("log"),
+                log_id,
                 user_id,
                 endpoint[:800],
                 model[:160],
@@ -1764,6 +2623,76 @@ def log_generation(
                 now_iso(),
             ),
         )
+    return log_id
+
+
+def save_generated_assets(
+    *,
+    user_id: str,
+    log_id: str,
+    endpoint: str,
+    model: str,
+    prompt: str,
+    size: str,
+    images: list[dict],
+    request_snapshot: dict,
+) -> list[dict]:
+    created_at = now_iso()
+    name_stamp = created_at.replace("-", "").replace(":", "").replace("T", "-").replace("Z", "")
+    records = []
+    for index, image in enumerate(images, start=1):
+        url = str(image.get("url") or "").strip()
+        if not url:
+            continue
+        records.append(
+            {
+                "id": make_id("asset"),
+                "user_id": user_id,
+                "log_id": log_id,
+                "image_url": url,
+                "name": trim_text(str(image.get("name") or f"生成图 {name_stamp}-{index}"), 160),
+                "endpoint": trim_text(endpoint, 800),
+                "model": trim_text(model, 160),
+                "prompt": trim_text(prompt, 4000),
+                "size": trim_text(size, 80),
+                "source": trim_text(str(image.get("source") or "generation"), 80),
+                "request_json": trim_json(request_snapshot),
+                "created_at": created_at,
+            }
+        )
+    if not records:
+        return []
+    with connect() as conn:
+        conn.executemany(
+            """
+            INSERT INTO generated_assets
+              (id, user_id, log_id, image_url, name, endpoint, model, prompt, size, source, request_json, created_at)
+            VALUES
+              (:id, :user_id, :log_id, :image_url, :name, :endpoint, :model, :prompt, :size, :source, :request_json, :created_at)
+            """,
+            records,
+        )
+    return [{"id": record["id"], "createdAt": record["created_at"]} for record in records]
+
+
+def row_generated_asset(row: sqlite3.Row) -> dict:
+    request = parse_json_field(row["request_json"])
+    request_body = request.get("body") if isinstance(request, dict) and isinstance(request.get("body"), dict) else {}
+    template_id = str(request_body.get("templateId") or "").strip()
+    prompt = f"模板：{template_id}" if template_id else row["prompt"]
+    return {
+        "id": row["id"],
+        "logId": row["log_id"],
+        "url": row["image_url"],
+        "name": row["name"],
+        "endpoint": row["endpoint"],
+        "model": row["model"],
+        "prompt": prompt,
+        "size": row["size"],
+        "source": row["source"],
+        "request": request,
+        "createdAt": row["created_at"],
+    }
 
 
 def normalize_source(value) -> dict:

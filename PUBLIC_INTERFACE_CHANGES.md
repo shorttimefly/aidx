@@ -1,5 +1,91 @@
 # Public Interface Changes
 
+## 2026-06-11 - Admin model provider routing
+
+B端 now has a parallel image model provider catalog. It does not replace the legacy per-user `user_settings.api_key/endpoint/model` image configuration; legacy generation remains the fallback when a user has no new provider-model authorization.
+
+### B端 HTTP API
+
+- `GET /api/admin/model-config` now returns `modelConfig.modelProviders[]` in addition to `defaultEndpoint`, `defaultModel`, and `usageNote`.
+- `PUT /api/admin/model-config` now accepts `modelProviders[]`. Each provider owns `name`, `providerType`, `baseUrl`, `apiKey`, `enabled`, and nested `models[]` with `modelName`, `priority`, and `enabled`.
+- Provider tokens are write-only. GET responses return `apiKeyConfigured` and `apiKeyMasked`, never plaintext `apiKey`.
+- `GET /api/admin/users` now returns `allowedImageModels[]` for each user.
+- `PATCH /api/admin/users/:id` now accepts `allowedImageModelIds[]` and updates only the new authorization table. Existing image/video Key fields keep their current behavior.
+
+### C端 HTTP API
+
+- `POST /api/generate` first checks the current user's enabled provider-model authorizations. When present, the backend calls those models by ascending `priority` and returns the first successful image response.
+- Upstream 429/5xx/network/timeout/no-image failures can fail over to the next authorized model. Login, disabled-account, missing-template, missing-prompt, missing-available-model, and similar business errors do not fail over.
+- Users with no new provider-model authorization continue to use the legacy per-user image Key/address/model flow unchanged.
+- Successful responses may include `provider` and `attemptCount` for the selected provider route while preserving existing `images`, `request`, `model`, and generated asset ids.
+
+### Provider Compatibility
+
+- `aokapi_gemini` uses the existing Gemini `generateContent` body and bare-token authorization.
+- `muskapis_image` uses `POST {baseUrl}/images/generations`, Bearer authorization, and `{ model, prompt, n, size, response_format: "b64_json" }`.
+- `openai_image` uses the same OpenAI-compatible Images protocol as Muskapis.
+
+### Storage Contract
+
+- SQLite now includes `model_providers`, `provider_models`, and `user_model_access`.
+- `user_settings.api_key`, `user_settings.endpoint`, and `user_settings.model` remain the legacy image configuration and are not removed or repurposed.
+
+## 2026-06-11 - Recoverable generated assets for C端 library
+
+Successful backend-proxied image generations are now persisted as recoverable generated assets so C端 can import completed results into the browser material library after refresh or reopen.
+
+### C端 HTTP API
+
+- `GET /api/generated-assets?limit=50` was added. It requires the current C端 user session and returns only that user's recent successful generated assets.
+- `POST /api/generate` success items now include `remoteAssetId`/`generatedAssetId` for the server-side generated asset record.
+- Template-generated assets return a safe display prompt such as `模板：main-white`; backend template prompt text remains hidden from C端.
+
+### C端 UI
+
+- After login/bootstrap, C端 fetches recent generated assets and imports any not-yet-imported records into the browser IndexedDB material library.
+- Imported local assets store `remoteAssetId` so manual saves and automatic recovery do not duplicate the same generated image.
+
+### Storage Contract
+
+- `generated_assets` stores the full generated image URL or data URL separately from `generation_logs`.
+- `generation_logs.response_json` remains sanitized and may truncate base64 image payloads; it is still for audit/log review, not material recovery.
+- C端 local folders and image assets remain in browser IndexedDB. The server-side asset table is a recovery source and is scoped by `user_id`.
+
+## 2026-06-11 - Transient upstream image retry
+
+### C端 HTTP API
+
+- `POST /api/generate` now retries transient upstream image-model failures once before returning an error.
+- Retry is limited to errors that indicate upstream overload/rate-limit/retryable 429/5xx conditions, such as `upstream_overloaded`, `rate_limit_error`, and transient image-upload proxy failures like `network_proxy_dns`.
+- Optional runtime tuning variables were added: `UPSTREAM_MAX_ATTEMPTS` (default `2`) and `UPSTREAM_RETRY_DELAY_SECONDS` (default `1`).
+
+### Compatibility
+
+- Request and success response shapes are unchanged.
+- Persistent upstream overload still returns the existing C端 `远端接口 <status>: <message>` error after retry attempts are exhausted.
+
+## 2026-06-10 - C端 server-side single template generation
+
+C端 single-image template prompts are now resolved on the backend instead of being exposed to the browser.
+
+### C端 HTTP API
+
+- `GET /api/settings` returns C端-safe prompt config metadata for single templates; `single.templates[].prompt` is omitted.
+- Direct static access to `prompt-config-defaults.json` is blocked from the browser.
+- `POST /api/generate` accepts `templateId` and optional `variantIndex`; the backend resolves the template prompt from the B端 prompt configuration.
+- `POST /api/generate` keeps the legacy `prompt` field for compatibility paths such as reference probing and refinement.
+- For `templateId` generation, the response request snapshot returns `templateId`, `count`, `size`, and reference count instead of prompt text.
+
+### C端 UI
+
+- C端 now opens on 单图 by default.
+- 套图 is greyed out and disabled while the module is parked.
+- The single-image prompt textarea and local custom-template save action were removed; users select a backend-managed template card instead.
+
+### Runtime
+
+- AOKAPI image calls use a local curl transport when available to avoid LibreSSL EOF failures from Python urllib; other providers keep the existing urllib path.
+
 ## 2026-06-10 - C端 username/email auth modes
 
 C端 registration and login now let users choose username plus password or email plus password.

@@ -52,6 +52,14 @@
                 <textarea id="usageNoteInput" rows="3"></textarea>
               </label>
             </section>
+
+            <section class="panel admin-provider-panel">
+              <div class="panel-header">
+                <h3>模型供应商</h3>
+                <button class="ghost-button" id="addModelProviderBtn" type="button">新增供应商</button>
+              </div>
+              <div class="admin-provider-list" id="modelProviderList"></div>
+            </section>
           </section>
 
           <section class="admin-view" data-admin-view-panel="feedback">
@@ -197,6 +205,12 @@
             <span>图片模型</span>
             <input id="adminImageModelInput" type="text" autocomplete="off" placeholder="gemini-2.5-flash-image" />
           </label>
+          <section class="admin-allowed-model-section" id="adminAllowedImageModelSection">
+            <div class="field">
+              <span>可用图片模型</span>
+              <div class="admin-allowed-model-list" id="adminAllowedImageModelList"></div>
+            </div>
+          </section>
           <label class="field" id="adminVideoModelField">
             <span>视频模型</span>
             <input id="adminVideoModelInput" type="text" autocomplete="off" placeholder="例如：veo-3-fast" />

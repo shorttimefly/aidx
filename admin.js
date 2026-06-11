@@ -1,5 +1,6 @@
 "use strict";
 
+const APP_BASE_PATH = detectAppBasePath();
 const ADMIN_TOKEN_KEY = "imageStudio.adminToken";
 const PROMPT_GROUPS = [
   { id: "single", label: "单图模板" },
@@ -17,6 +18,7 @@ const state = {
   feedbackSources: [],
   feedbackImageSources: [],
   summary: null,
+  modelProviders: [],
   activeAdminView: "model",
   promptConfig: null,
   activePromptGroup: "single",
@@ -25,6 +27,16 @@ const state = {
 };
 
 const els = {};
+
+function detectAppBasePath() {
+  const marker = "/aidx-runtime";
+  const pathname = window.location.pathname || "";
+  return pathname === marker || pathname.startsWith(`${marker}/`) ? marker : "";
+}
+
+function appRoute(path) {
+  return `${APP_BASE_PATH}${path}`;
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
@@ -55,6 +67,8 @@ function cacheElements() {
     defaultModelInput: document.getElementById("defaultModelInput"),
     usageNoteInput: document.getElementById("usageNoteInput"),
     saveModelConfigBtn: document.getElementById("saveModelConfigBtn"),
+    addModelProviderBtn: document.getElementById("addModelProviderBtn"),
+    modelProviderList: document.getElementById("modelProviderList"),
     refreshUsersBtn: document.getElementById("refreshUsersBtn"),
     refreshLogsBtn: document.getElementById("refreshLogsBtn"),
     refreshFeedbackBtn: document.getElementById("refreshFeedbackBtn"),
@@ -77,6 +91,8 @@ function cacheElements() {
     adminImageEndpointInput: document.getElementById("adminImageEndpointInput"),
     adminImageModelField: document.getElementById("adminImageModelField"),
     adminImageModelInput: document.getElementById("adminImageModelInput"),
+    adminAllowedImageModelSection: document.getElementById("adminAllowedImageModelSection"),
+    adminAllowedImageModelList: document.getElementById("adminAllowedImageModelList"),
     adminVideoModelField: document.getElementById("adminVideoModelField"),
     adminVideoModelInput: document.getElementById("adminVideoModelInput"),
     adminVideoEndpointPrimaryField: document.getElementById("adminVideoEndpointPrimaryField"),
@@ -97,6 +113,10 @@ function bindEvents() {
   });
   els.adminLogoutBtn.addEventListener("click", handleAdminLogout);
   els.saveModelConfigBtn.addEventListener("click", saveModelConfig);
+  els.addModelProviderBtn.addEventListener("click", addModelProvider);
+  els.modelProviderList.addEventListener("input", handleModelProviderInput);
+  els.modelProviderList.addEventListener("change", handleModelProviderInput);
+  els.modelProviderList.addEventListener("click", handleModelProviderAction);
   els.refreshUsersBtn.addEventListener("click", loadUsers);
   els.refreshLogsBtn.addEventListener("click", loadLogs);
   els.refreshFeedbackBtn.addEventListener("click", () => loadFeedbacks(true));
@@ -140,7 +160,7 @@ function switchAdminView(viewName) {
 }
 
 async function adminFetch(path, options = {}) {
-  const response = await fetch(`/api/admin${path}`, {
+  const response = await fetch(appRoute(`/api/admin${path}`), {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -274,6 +294,176 @@ function renderModelConfig(config = {}) {
   els.defaultEndpointInput.value = config.defaultEndpoint || "";
   els.defaultModelInput.value = config.defaultModel || "";
   els.usageNoteInput.value = config.usageNote || "";
+  state.modelProviders = Array.isArray(config.modelProviders) ? config.modelProviders : [];
+  renderModelProviders();
+}
+
+function addModelProvider() {
+  state.modelProviders.push({
+    id: "",
+    name: "新供应商",
+    providerType: "muskapis_image",
+    baseUrl: "https://api.muskapis.com/v1",
+    enabled: true,
+    apiKeyConfigured: false,
+    apiKeyMasked: "",
+    models: [{ id: "", modelName: "gpt-image-2", priority: nextProviderPriority(), enabled: true }]
+  });
+  renderModelProviders();
+}
+
+function nextProviderPriority() {
+  const priorities = state.modelProviders.flatMap((provider) =>
+    (provider.models || []).map((model) => Number(model.priority) || 0)
+  );
+  return (Math.max(0, ...priorities) || 0) + 10;
+}
+
+function renderModelProviders() {
+  if (!state.modelProviders.length) {
+    els.modelProviderList.innerHTML = `<div class="empty-state compact-empty">暂无模型供应商</div>`;
+    return;
+  }
+  els.modelProviderList.innerHTML = state.modelProviders
+    .map((provider, providerIndex) => {
+      const models = Array.isArray(provider.models) ? provider.models : [];
+      return `
+        <article class="admin-provider-card" data-provider-index="${providerIndex}">
+          <div class="admin-provider-card-head">
+            <label class="checkbox-row compact-checkbox">
+              <input type="checkbox" data-provider-index="${providerIndex}" data-field="enabled" ${provider.enabled !== false ? "checked" : ""} />
+              <span>${provider.enabled !== false ? "启用" : "停用"}</span>
+            </label>
+            <button class="small-button danger" type="button" data-provider-action="remove-provider" data-provider-index="${providerIndex}">删除供应商</button>
+          </div>
+          <div class="settings-grid">
+            <label class="field">
+              <span>供应商名称</span>
+              <input type="text" data-provider-index="${providerIndex}" data-field="name" value="${escapeAttr(provider.name || "")}" />
+            </label>
+            <label class="field">
+              <span>供应商类型</span>
+              <select data-provider-index="${providerIndex}" data-field="providerType">
+                ${providerTypeOptions(provider.providerType)}
+              </select>
+            </label>
+            <label class="field">
+              <span>Base URL</span>
+              <input type="text" data-provider-index="${providerIndex}" data-field="baseUrl" value="${escapeAttr(provider.baseUrl || "")}" placeholder="https://api.muskapis.com/v1" />
+            </label>
+            <label class="field">
+              <span>Token</span>
+              <input type="password" data-provider-index="${providerIndex}" data-field="apiKey" autocomplete="off" placeholder="${escapeAttr(provider.apiKeyConfigured ? `已配置：${provider.apiKeyMasked || "******"}` : "粘贴供应商 Token")}" />
+            </label>
+          </div>
+          <div class="admin-provider-model-head">
+            <strong>模型列表</strong>
+            <button class="small-button" type="button" data-provider-action="add-model" data-provider-index="${providerIndex}">新增模型</button>
+          </div>
+          <div class="admin-model-list">
+            ${models.map((model, modelIndex) => renderProviderModelRow(model, providerIndex, modelIndex)).join("") || `<div class="empty-state compact-empty">暂无模型</div>`}
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function providerTypeOptions(selected) {
+  return [
+    ["aokapi_gemini", "AOKAPI / Gemini"],
+    ["muskapis_image", "Muskapis Image"],
+    ["openai_image", "OpenAI Image Compatible"]
+  ]
+    .map(
+      ([value, label]) =>
+        `<option value="${escapeAttr(value)}" ${value === selected ? "selected" : ""}>${escapeHtml(label)}</option>`
+    )
+    .join("");
+}
+
+function renderProviderModelRow(model, providerIndex, modelIndex) {
+  return `
+    <div class="admin-model-row" data-provider-index="${providerIndex}" data-model-index="${modelIndex}">
+      <label class="checkbox-row compact-checkbox">
+        <input type="checkbox" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" data-field="modelEnabled" ${model.enabled !== false ? "checked" : ""} />
+        <span>启用</span>
+      </label>
+      <label class="field compact-field">
+        <span>Model Name</span>
+        <input type="text" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" data-field="modelName" value="${escapeAttr(model.modelName || "")}" />
+      </label>
+      <label class="field priority-field">
+        <span>优先级</span>
+        <input type="number" min="1" step="1" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" data-field="priority" value="${escapeAttr(model.priority || 100)}" />
+      </label>
+      <button class="small-button danger" type="button" data-provider-action="remove-model" data-provider-index="${providerIndex}" data-model-index="${modelIndex}">删除</button>
+    </div>
+  `;
+}
+
+function handleModelProviderInput(event) {
+  const target = event.target.closest("[data-field]");
+  if (!target) return;
+  const provider = state.modelProviders[Number(target.dataset.providerIndex)];
+  if (!provider) return;
+  const modelIndex = target.dataset.modelIndex;
+  const field = target.dataset.field;
+  const value = target.type === "checkbox" ? target.checked : target.value;
+  if (modelIndex !== undefined) {
+    const model = (provider.models || [])[Number(modelIndex)];
+    if (!model) return;
+    if (field === "modelEnabled") model.enabled = value;
+    if (field === "modelName") model.modelName = value;
+    if (field === "priority") model.priority = Number(value) || 100;
+    return;
+  }
+  if (field === "enabled") provider.enabled = value;
+  if (field === "name") provider.name = value;
+  if (field === "providerType") provider.providerType = value;
+  if (field === "baseUrl") provider.baseUrl = value;
+  if (field === "apiKey") provider.apiKey = value;
+}
+
+function handleModelProviderAction(event) {
+  const button = event.target.closest("[data-provider-action]");
+  if (!button) return;
+  const providerIndex = Number(button.dataset.providerIndex);
+  const provider = state.modelProviders[providerIndex];
+  if (!provider) return;
+  if (button.dataset.providerAction === "remove-provider") {
+    state.modelProviders.splice(providerIndex, 1);
+    renderModelProviders();
+    return;
+  }
+  if (button.dataset.providerAction === "add-model") {
+    provider.models = Array.isArray(provider.models) ? provider.models : [];
+    provider.models.push({ id: "", modelName: "", priority: nextProviderPriority(), enabled: true });
+    renderModelProviders();
+    return;
+  }
+  if (button.dataset.providerAction === "remove-model") {
+    provider.models = Array.isArray(provider.models) ? provider.models : [];
+    provider.models.splice(Number(button.dataset.modelIndex), 1);
+    renderModelProviders();
+  }
+}
+
+function collectModelProviders() {
+  return state.modelProviders.map((provider) => ({
+    id: provider.id || "",
+    name: String(provider.name || "").trim(),
+    providerType: provider.providerType || "openai_image",
+    baseUrl: String(provider.baseUrl || "").trim(),
+    apiKey: String(provider.apiKey || "").trim(),
+    enabled: provider.enabled !== false,
+    models: (provider.models || []).map((model) => ({
+      id: model.id || "",
+      modelName: String(model.modelName || "").trim(),
+      priority: Number(model.priority) || 100,
+      enabled: model.enabled !== false
+    }))
+  }));
 }
 
 async function saveModelConfig() {
@@ -284,7 +474,8 @@ async function saveModelConfig() {
       body: JSON.stringify({
         defaultEndpoint: els.defaultEndpointInput.value.trim(),
         defaultModel: els.defaultModelInput.value.trim(),
-        usageNote: els.usageNoteInput.value.trim()
+        usageNote: els.usageNoteInput.value.trim(),
+        modelProviders: collectModelProviders()
       })
     });
     await loadSummary();
@@ -584,6 +775,7 @@ function renderUsers() {
             <small>${escapeHtml(user.imageApiKeyMasked || user.apiKeyMasked || "未设置")}</small>
             <small>模型：${escapeHtml(user.imageModel || "默认模型")}</small>
             <small>地址：${escapeHtml(user.imageEndpoint || "未设置")}</small>
+            <small>可用模型：${formatNumber((user.allowedImageModels || []).length)} 个</small>
           </td>
           <td>
             <span class="status-chip ${user.videoApiKeyConfigured ? "ready" : "danger"}">${user.videoApiKeyConfigured ? "已配置" : "未配置"}</span>
@@ -667,6 +859,46 @@ async function toggleUserRole(userId) {
   }
 }
 
+function renderAllowedImageModelList(user) {
+  if (!els.adminAllowedImageModelList) return;
+  const selectedIds = new Set((user?.allowedImageModels || []).map((model) => model.id));
+  const providers = state.modelProviders.filter((provider) => (provider.models || []).length);
+  if (!providers.length) {
+    els.adminAllowedImageModelList.innerHTML = `<div class="empty-state compact-empty">暂无可授权图片模型</div>`;
+    return;
+  }
+  els.adminAllowedImageModelList.innerHTML = providers
+    .map((provider) => {
+      const models = (provider.models || []).map((model) => {
+        const modelId = model.id || "";
+        const disabled = !provider.enabled || model.enabled === false || !modelId;
+        return `
+          <label class="checkbox-row admin-allowed-model-row ${disabled ? "muted" : ""}">
+            <input type="checkbox" value="${escapeAttr(modelId)}" ${selectedIds.has(modelId) ? "checked" : ""} ${disabled ? "disabled" : ""} />
+            <span>
+              <strong>${escapeHtml(model.modelName || "未命名模型")}</strong>
+              <small>优先级 ${escapeHtml(model.priority || 100)} · ${disabled ? "不可用" : "可用"}</small>
+            </span>
+          </label>
+        `;
+      });
+      return `
+        <section class="admin-allowed-provider-group">
+          <h4>${escapeHtml(provider.name || "未命名供应商")}</h4>
+          ${models.join("")}
+        </section>
+      `;
+    })
+    .join("");
+}
+
+function selectedAllowedImageModelIds() {
+  if (!els.adminAllowedImageModelList) return [];
+  return Array.from(els.adminAllowedImageModelList.querySelectorAll("input[type='checkbox']:checked"))
+    .map((input) => input.value)
+    .filter(Boolean);
+}
+
 function openUserKeyModal(userId, mode = "image") {
   const user = state.users.find((entry) => entry.id === userId);
   if (!user) return;
@@ -692,6 +924,7 @@ function openUserKeyModal(userId, mode = "image") {
       : "粘贴图片 Key";
   els.adminImageEndpointField.hidden = isVideo;
   els.adminImageModelField.hidden = isVideo;
+  els.adminAllowedImageModelSection.hidden = isVideo;
   els.adminVideoModelField.hidden = !isVideo;
   els.adminVideoEndpointPrimaryField.hidden = !isVideo;
   els.adminVideoEndpointSecondaryField.hidden = !isVideo;
@@ -700,6 +933,7 @@ function openUserKeyModal(userId, mode = "image") {
   els.adminVideoModelInput.value = user.videoModel || "";
   els.adminVideoEndpointPrimaryInput.value = user.videoEndpointPrimary || "";
   els.adminVideoEndpointSecondaryInput.value = user.videoEndpointSecondary || "";
+  renderAllowedImageModelList(user);
   els.clearUserKeyBtn.disabled = isVideo ? !user.videoApiKeyConfigured : !imageKeyConfigured;
   els.clearUserKeyBtn.textContent = isVideo ? "清空视频 Key" : "清空图片 Key";
   els.saveUserKeyBtn.textContent = isVideo ? "保存视频配置" : "保存图片配置";
@@ -717,6 +951,7 @@ function closeUserKeyModal() {
   els.adminVideoModelInput.value = "";
   els.adminVideoEndpointPrimaryInput.value = "";
   els.adminVideoEndpointSecondaryInput.value = "";
+  els.adminAllowedImageModelList.innerHTML = "";
   els.adminKeyModal.classList.remove("active");
   els.adminKeyModal.setAttribute("aria-hidden", "true");
 }
@@ -734,7 +969,8 @@ async function saveUserKey() {
       }
     : {
         imageModel: els.adminImageModelInput.value.trim(),
-        imageEndpoint: els.adminImageEndpointInput.value.trim()
+        imageEndpoint: els.adminImageEndpointInput.value.trim(),
+        allowedImageModelIds: selectedAllowedImageModelIds()
       };
   if (apiKey) {
     if (isVideo) body.videoApiKey = apiKey;
@@ -779,7 +1015,8 @@ async function clearUserKey() {
       : {
           clearImageApiKey: true,
           imageModel: els.adminImageModelInput.value.trim(),
-          imageEndpoint: els.adminImageEndpointInput.value.trim()
+          imageEndpoint: els.adminImageEndpointInput.value.trim(),
+          allowedImageModelIds: selectedAllowedImageModelIds()
         };
     await adminFetch(`/users/${encodeURIComponent(userId)}`, {
       method: "PATCH",
