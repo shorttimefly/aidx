@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>B端管理台登录 - AI智能图片编辑器</title>
+    <link rel="stylesheet" href="./styles.css?v=20260610-admin-login" />
+  </head>
+  <body class="admin-body">
+    <main class="admin-shell admin-login-shell">
+      <header class="admin-header">
+        <div>
+          <p class="eyebrow">BUSINESS CONSOLE</p>
+          <h1>B端管理台登录</h1>
+        </div>
+        <div class="admin-header-actions">
+          <a class="ghost-button" href="./index.html">返回C端</a>
+        </div>
+      </header>
+
+      <section class="panel admin-login-panel">
+        <div class="panel-header">
+          <h3>管理员登录</h3>
+        </div>
+        <div class="admin-login-grid">
+          <label class="field">
+            <span>管理员账号</span>
+            <input id="adminEmailInput" type="text" autocomplete="username" placeholder="请输入管理员账号" />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="adminPasswordInput" type="password" autocomplete="current-password" placeholder="请输入密码" />
+          </label>
+          <button class="primary-button" id="adminLoginBtn" type="button">进入管理台</button>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./admin-login.js?v=20260610-admin-login" defer></script>
+  </body>
+</html>

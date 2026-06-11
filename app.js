@@ -7,13 +7,21 @@ const STORES = {
   assets: "assets"
 };
 
-const DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/";
+const DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/{model}:generateContent/";
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_FOLDER_NAME = "未分类素材";
 const USER_TEMPLATES_KEY = "imageStudio.userTemplates";
 const AUTH_TOKEN_KEY = "imageStudio.authToken";
 const IMAGE_SIZE_MULTIPLE = 16;
 const REFERENCE_STRATEGY_KEY = "imageStudio.referenceStrategy";
+const PROMPT_CONFIG_DEFAULTS_URL = "./prompt-config-defaults.json?v=20260610-prompt-display-label";
+const SUITE_STYLE_DISPLAY_LABELS = {
+  premium: "清爽质感",
+  tech: "现代冷调",
+  warm: "自然生活",
+  bold: "活动吸睛",
+  minimal: "纯净白底"
+};
 const STRICT_PRODUCT_REFERENCE_RULE = [
   "强限制：商品主体必须以随请求提供的参考图、用户上传的原图、当前基图或上一轮生成结果为唯一外观参考，必须做到 1:1 还原。",
   "只允许改变背景、场景、光线、构图、拍摄角度、留白和后期排版区域；不得重新设计商品本体。",
@@ -365,10 +373,17 @@ const state = {
   referenceFallbackNotice: "",
   suiteShotSettings: {},
   lastRequestPayload: null,
+  promptConfig: legacyPromptConfig(),
+  videoReference: null,
+  videoScenes: [],
+  videoJob: null,
+  videoJobTimer: null,
+  activeAuthMode: "login",
   auth: {
     token: "",
     user: null,
     apiKeyConfigured: false,
+    videoApiKeyConfigured: false,
     modelSettings: {
       endpoint: DEFAULT_ENDPOINT,
       model: DEFAULT_MODEL
@@ -378,10 +393,208 @@ const state = {
 
 const els = {};
 
+function legacyPromptConfig() {
+  return {
+    version: 1,
+    single: {
+      templateCategories: [
+        { id: "all", label: "全部模板" },
+        { id: "custom", label: "我的模板" },
+        { id: "main", label: "主图" },
+        { id: "scene", label: "场景图" },
+        { id: "infographic", label: "信息图" },
+        { id: "content", label: "内容图" },
+        { id: "aplus", label: "Amazon A+" },
+        { id: "season", label: "活动图" }
+      ],
+      templates,
+      supplementalVariantPrompt:
+        "请生成第 {index} 张变体，保持同一商品和同一设计方向，但构图、角度或背景细节与前面图片有区别。"
+    },
+    refinement: {
+      quickEdits: quickEdits.map((text, index) => ({ id: `quick-${index + 1}`, text })),
+      compose: {
+        prefix: "基于当前界面显示的最新商品图继续生成一个微调版本，不回到最初原图。",
+        currentSizeLine: "当前基图尺寸：{size}",
+        previousPromptLine: "上一版提示词：{prompt}",
+        editRequestLine: "本次修改要求：{prompt}",
+        guardrailSuffix:
+          "商品主体必须和当前基图 1:1 还原，不得改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。适合电商商品图，不添加未经验证的功能、认证、品牌或夸张效果承诺。"
+      },
+      imageReferenceText: {
+        local: "当前基图：界面预览中的最新本地图片。",
+        remote: "当前基图图片地址：{url}"
+      }
+    },
+    suite: {
+      visualStyles: [
+        { id: "premium", label: "高级简洁", displayLabel: "清爽质感" },
+        { id: "tech", label: "科技冷感", displayLabel: "现代冷调" },
+        { id: "warm", label: "温暖生活", displayLabel: "自然生活" },
+        { id: "bold", label: "强促销视觉", displayLabel: "活动吸睛" },
+        { id: "minimal", label: "极简白底", displayLabel: "纯净白底" }
+      ],
+      contextFallbacks: {
+        productLabel: "商品基图中的产品",
+        category: "通用电商品类",
+        sellingPoints: "根据商品外观推断核心材质、功能、使用场景和包装价值",
+        styleText: "高级简洁"
+      },
+      compose: {
+        taskLine: "任务：为「{productLabel}」生成「{presetTitle}」中的「{shotName}」。",
+        categoryLine: "品类：{category}",
+        sellingPointsLine: "核心卖点：{sellingPoints}",
+        styleLine: "视觉风格：{styleText}",
+        referenceLine:
+          "以已上传商品基图「{referenceName}」作为唯一商品外观参考，商品主体必须和原图 1:1 还原，不能改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。",
+        noReferenceLine: "如果没有可见商品基图，则根据商品名称、品类和卖点生成可信的通用电商商品视觉。",
+        aplusLine:
+          "Amazon A+ Content 重点：增强图片、自定义文本位置、品牌故事、生活方式场景、热点细节、轮播、问答和可购买对比图；图片只负责可信视觉与排版安全区，真实文字与具体参数留给后期人工排版。",
+        qualityLine: "电商摄影质感，产品真实可信，构图清晰，背景和道具服务于商品表达。",
+        negativeLine: "不要添加虚构品牌 Logo、平台商标、未经验证的认证、夸张承诺、不可读乱码文字或误导性效果。"
+      },
+      presets: Object.entries(suitePresets).map(([id, preset]) => ({ id, ...preset }))
+    },
+    reference: {
+      strictRule: STRICT_PRODUCT_REFERENCE_RULE,
+      strictRuleDedupeNeedles: ["商品主体必须以用户上传的原图", "强限制：商品主体必须以"],
+      context: {
+        primaryLine: "参考图已随请求发送。首要参考图：「{name}」{sizeText}。",
+        sizeText: "，尺寸 {size}",
+        extraLine: "其余 {count} 张参考图只用于补充角度、结构和材质细节，不得引入不同商品特征。",
+        consistencyLine:
+          "生成时必须先识别参考图中的商品主体，再保持同一件商品的轮廓、比例、颜色、材质、Logo、文字、纹理、接口、配件和包装细节一致。",
+        defaultName: "参考图 1"
+      },
+      defaultName: "参考图",
+      defaultAssetPromptLabels: {
+        suiteReference: "套图商品基图",
+        uploaded: "本地上传商品参考图"
+      }
+    },
+    referenceProbe: {
+      fallbackReference: {
+        name: "参考图探测",
+        size: "1x1",
+        url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+      },
+      withReferencePrompt:
+        "入参图片生效测试。请生成一张明亮科技感电商商品图，必须保持随请求提供的参考图商品主体一致，只允许改变背景、光线和构图，不添加文字。",
+      controlPrompt: "无入参图片对照测试。请生成一张明亮科技感电商商品图，不添加文字。",
+      size: "1024x1024"
+    }
+  };
+}
+
+async function loadPromptConfigDefaults() {
+  try {
+    const response = await fetch(PROMPT_CONFIG_DEFAULTS_URL);
+    if (response.ok) {
+      applyPromptConfig(await response.json(), { rerender: false });
+      return;
+    }
+  } catch {
+    // The in-file legacy defaults keep the app usable when the static JSON cannot be loaded.
+  }
+  applyPromptConfig(legacyPromptConfig(), { rerender: false });
+}
+
+function currentPromptConfig() {
+  return state.promptConfig || legacyPromptConfig();
+}
+
+function applyPromptConfig(config, { rerender = true } = {}) {
+  state.promptConfig = normalizePromptConfig(config);
+  if (rerender && Object.keys(els).length) renderPromptConfigDrivenUi();
+}
+
+function normalizePromptConfig(config) {
+  return mergePromptConfig(legacyPromptConfig(), config || {});
+}
+
+function mergePromptConfig(defaultValue, overrideValue) {
+  if (Array.isArray(defaultValue)) {
+    if (defaultValue.every((item) => item && typeof item === "object" && "id" in item)) {
+      const overrideById = new Map(
+        Array.isArray(overrideValue)
+          ? overrideValue.filter((item) => item && typeof item === "object").map((item) => [item.id, item])
+          : []
+      );
+      return defaultValue.map((item) => mergePromptConfig(item, overrideById.get(item.id)));
+    }
+    return Array.isArray(overrideValue) && overrideValue.length === defaultValue.length ? overrideValue : defaultValue;
+  }
+  if (defaultValue && typeof defaultValue === "object") {
+    const source = overrideValue && typeof overrideValue === "object" ? overrideValue : {};
+    return Object.fromEntries(
+      Object.entries(defaultValue).map(([key, value]) => [
+        key,
+        ["id", "category", "url"].includes(key) ? value : mergePromptConfig(value, source[key])
+      ])
+    );
+  }
+  if (typeof defaultValue === "string") return typeof overrideValue === "string" ? overrideValue : defaultValue;
+  if (typeof defaultValue === "number") return typeof overrideValue === "number" ? overrideValue : defaultValue;
+  if (typeof defaultValue === "boolean") return typeof overrideValue === "boolean" ? overrideValue : defaultValue;
+  return overrideValue ?? defaultValue;
+}
+
+function renderPromptConfigDrivenUi() {
+  renderTemplateFilterOptions();
+  renderSuiteSelectOptions();
+  renderTemplates();
+  renderQuickEdits();
+  renderSuitePlan();
+}
+
+function renderTemplateFilterOptions() {
+  if (!els.templateFilter) return;
+  const selected = els.templateFilter.value || "all";
+  const categories = currentPromptConfig().single.templateCategories || [];
+  els.templateFilter.innerHTML = categories
+    .map((category) => `<option value="${escapeAttr(category.id)}">${escapeHtml(category.label)}</option>`)
+    .join("");
+  els.templateFilter.value = categories.some((category) => category.id === selected) ? selected : "all";
+}
+
+function renderSuiteSelectOptions() {
+  if (!els.suitePresetInput || !els.suiteStyleInput) return;
+  const config = currentPromptConfig();
+  const selectedPreset = els.suitePresetInput.value;
+  const selectedStyle = els.suiteStyleInput.value;
+  els.suitePresetInput.innerHTML = (config.suite.presets || [])
+    .map((preset) => `<option value="${escapeAttr(preset.id)}">${escapeHtml(preset.title)}</option>`)
+    .join("");
+  if ((config.suite.presets || []).some((preset) => preset.id === selectedPreset)) {
+    els.suitePresetInput.value = selectedPreset;
+  }
+  els.suiteStyleInput.innerHTML = (config.suite.visualStyles || [])
+    .map((style, index) => `<option value="${escapeAttr(style.id)}">${escapeHtml(suiteStyleDisplayLabel(style, index))}</option>`)
+    .join("");
+  if ((config.suite.visualStyles || []).some((style) => style.id === selectedStyle)) {
+    els.suiteStyleInput.value = selectedStyle;
+  }
+}
+
+function promptText(template, values = {}) {
+  return String(template || "").replace(/\{([a-zA-Z0-9_]+)\}/g, (_, key) => values[key] ?? "");
+}
+
+function suiteStyleDisplayLabel(style, index = 0) {
+  const displayLabel = typeof style?.displayLabel === "string" ? style.displayLabel.trim() : "";
+  return displayLabel || SUITE_STYLE_DISPLAY_LABELS[style?.id] || `风格 ${index + 1}`;
+}
+
+function selectedSuiteVisualStyle() {
+  const styles = currentPromptConfig().suite.visualStyles || [];
+  return styles.find((style) => style.id === els.suiteStyleInput.value);
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   document.body.dataset.view = "suite";
   cacheElements();
   bindEvents();
+  await loadPromptConfigDefaults();
   loadSettings();
   loadAuthSession();
   loadUserTemplates();
@@ -389,6 +602,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderSuiteReference();
   renderTemplates();
   renderQuickEdits();
+  renderVideoOutputControls();
+  renderVideoSpecs();
+  renderVideoPresetCards();
+  renderVideoReference();
+  renderVideoScenes();
+  updateVideoPlanButton();
   state.db = await openDb();
   await ensureDefaultFolder();
   await refreshLibrary();
@@ -403,7 +622,7 @@ function cacheElements() {
     views: document.querySelectorAll(".view"),
     accountTitle: document.getElementById("accountTitle"),
     accountNameText: document.getElementById("accountNameText"),
-    accountMetaText: document.getElementById("accountMetaText"),
+    accountKeyStatus: document.getElementById("accountKeyStatus"),
     openAuthBtn: document.getElementById("openAuthBtn"),
     logoutBtn: document.getElementById("logoutBtn"),
     connectionState: document.getElementById("connectionState"),
@@ -424,6 +643,34 @@ function cacheElements() {
     saveSuiteBtn: document.getElementById("saveSuiteBtn"),
     suiteShotList: document.getElementById("suiteShotList"),
     suiteResultGrid: document.getElementById("suiteResultGrid"),
+    videoDropzone: document.getElementById("videoDropzone"),
+    videoUploadInput: document.getElementById("videoUploadInput"),
+    videoReferencePreview: document.getElementById("videoReferencePreview"),
+    videoProductNameInput: document.getElementById("videoProductNameInput"),
+    videoCategoryInput: document.getElementById("videoCategoryInput"),
+    videoSellingPointsInput: document.getElementById("videoSellingPointsInput"),
+    videoPresetInput: document.getElementById("videoPresetInput"),
+    videoPresetCards: document.getElementById("videoPresetCards"),
+    videoStyleInput: document.getElementById("videoStyleInput"),
+    videoAspectInput: document.getElementById("videoAspectInput"),
+    videoAspectOptions: document.getElementById("videoAspectOptions"),
+    videoDurationInput: document.getElementById("videoDurationInput"),
+    videoDurationOptions: document.getElementById("videoDurationOptions"),
+    videoOutputHint: document.getElementById("videoOutputHint"),
+    videoSceneCountInput: document.getElementById("videoSceneCountInput"),
+    videoSceneCountOptions: document.getElementById("videoSceneCountOptions"),
+    generateVideoPlanBtn: document.getElementById("generateVideoPlanBtn"),
+    generateVideoPlanLabel: document.getElementById("generateVideoPlanLabel"),
+    videoInlineSummary: document.getElementById("videoInlineSummary"),
+    videoResultPreview: document.getElementById("videoResultPreview"),
+    videoStoryboardDetails: document.getElementById("videoStoryboardDetails"),
+    videoPresetBadge: document.getElementById("videoPresetBadge"),
+    videoPresetMeta: document.getElementById("videoPresetMeta"),
+    videoSpecCards: document.getElementById("videoSpecCards"),
+    videoComplianceList: document.getElementById("videoComplianceList"),
+    videoPolicyDetailList: document.getElementById("videoPolicyDetailList"),
+    videoSceneCount: document.getElementById("videoSceneCount"),
+    videoSceneList: document.getElementById("videoSceneList"),
     dropzone: document.getElementById("dropzone"),
     uploadInput: document.getElementById("uploadInput"),
     uploadPreview: document.getElementById("uploadPreview"),
@@ -479,11 +726,12 @@ function cacheElements() {
     closeSettingsModalBtn: document.getElementById("closeSettingsModalBtn"),
     cancelSettingsBtn: document.getElementById("cancelSettingsBtn"),
     authModal: document.getElementById("authModal"),
+    authTypeInput: document.getElementById("authTypeInput"),
+    authModeTabs: document.querySelectorAll("[data-auth-mode]"),
+    authNameLabel: document.getElementById("authNameLabel"),
     authNameInput: document.getElementById("authNameInput"),
-    authEmailInput: document.getElementById("authEmailInput"),
     authPasswordInput: document.getElementById("authPasswordInput"),
-    loginBtn: document.getElementById("loginBtn"),
-    registerBtn: document.getElementById("registerBtn"),
+    authSubmitBtn: document.getElementById("authSubmitBtn"),
     toast: document.getElementById("toast")
   });
 }
@@ -498,8 +746,11 @@ function bindEvents() {
   els.connectionState.addEventListener("click", openSettingsModal);
   els.singleConnectionState.addEventListener("click", openSettingsModal);
   els.openAuthBtn.addEventListener("click", () => openAuthModal({ locked: false }));
-  els.loginBtn.addEventListener("click", () => handleAuth("login"));
-  els.registerBtn.addEventListener("click", () => handleAuth("register"));
+  els.authSubmitBtn.addEventListener("click", handleAuth);
+  els.authModeTabs.forEach((button) => {
+    button.addEventListener("click", () => switchAuthMode(button.dataset.authMode));
+  });
+  els.authTypeInput.addEventListener("change", updateAuthTypeUi);
   els.logoutBtn.addEventListener("click", handleLogout);
   els.suitePresetInput.addEventListener("change", () => {
     resetSuiteShotSettings();
@@ -511,6 +762,32 @@ function bindEvents() {
   els.suiteUploadInput.addEventListener("change", (event) => handleSuiteFiles(event.target.files));
   els.generateSuiteBtn.addEventListener("click", handleGenerateSuite);
   els.saveSuiteBtn.addEventListener("click", handleSaveSuite);
+  els.videoPresetInput?.addEventListener("change", () => {
+    state.videoScenes = [];
+    renderVideoOutputControls();
+    renderVideoSpecs();
+    renderVideoPresetCards();
+    renderVideoScenes();
+  });
+  els.videoStyleInput?.addEventListener("change", refreshVideoPlanDraft);
+  els.videoAspectInput?.addEventListener("change", () => {
+    handleVideoOutputChange();
+    renderVideoOutputControls();
+  });
+  els.videoDurationInput?.addEventListener("change", () => {
+    applyShortAdSceneDefault();
+    handleVideoOutputChange();
+    renderVideoOutputControls();
+  });
+  els.videoSceneCountInput?.addEventListener("change", () => {
+    handleVideoOutputChange();
+    renderVideoOutputControls();
+  });
+  els.videoProductNameInput?.addEventListener("input", refreshVideoPlanDraft);
+  els.videoCategoryInput?.addEventListener("input", refreshVideoPlanDraft);
+  els.videoSellingPointsInput?.addEventListener("input", refreshVideoPlanDraft);
+  els.videoUploadInput?.addEventListener("change", (event) => handleVideoFiles(event.target.files));
+  els.generateVideoPlanBtn?.addEventListener("click", handleVideoPrimaryAction);
   els.saveApiBtn?.addEventListener("click", saveSettings);
   els.testReferenceBtn.addEventListener("click", handleTestReferenceSupport);
   els.toggleKeyBtn?.addEventListener("click", toggleApiKey);
@@ -546,6 +823,17 @@ function bindEvents() {
     event.preventDefault();
     els.suiteDropzone.classList.remove("is-dragging");
     handleSuiteFiles(event.dataTransfer.files);
+  });
+
+  els.videoDropzone?.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    els.videoDropzone.classList.add("is-dragging");
+  });
+  els.videoDropzone?.addEventListener("dragleave", () => els.videoDropzone.classList.remove("is-dragging"));
+  els.videoDropzone?.addEventListener("drop", (event) => {
+    event.preventDefault();
+    els.videoDropzone.classList.remove("is-dragging");
+    handleVideoFiles(event.dataTransfer.files);
   });
 
   els.librarySearchInput.addEventListener("input", renderLibrary);
@@ -686,22 +974,23 @@ function portMismatchMessage() {
   return "点踩接口未在当前后端生效；请重启 server.py 后再试。";
 }
 
-async function handleAuth(mode) {
-  const email = els.authEmailInput.value.trim();
-  const password = els.authPasswordInput.value;
+async function handleAuth() {
+  const mode = state.activeAuthMode;
+  const authType = els.authTypeInput.value === "email" ? "email" : "username";
   const name = els.authNameInput.value.trim();
-  if (!email || !password) {
-    showToast("请输入邮箱和密码", true);
+  const password = els.authPasswordInput.value;
+  if (!name || !password) {
+    showToast(authType === "email" ? "请输入邮箱和密码" : "请输入用户名和密码", true);
     return;
   }
   if (mode === "register" && password.length < 8) {
     showToast("注册密码至少 8 位", true);
     return;
   }
-  const button = mode === "register" ? els.registerBtn : els.loginBtn;
+  const button = els.authSubmitBtn;
   setBusy(true, button, mode === "register" ? "注册中" : "登录中");
   try {
-    const requestBody = { email, password, name };
+    const requestBody = authType === "email" ? { authType, email: name, password } : { authType, name, password };
     if (mode === "register") requestBody.source = collectUserSource();
     const payload = await apiFetch(mode === "register" ? "/auth/register" : "/auth/login", {
       method: "POST",
@@ -742,6 +1031,7 @@ function clearAuthSession() {
   state.auth.token = "";
   state.auth.user = null;
   state.auth.apiKeyConfigured = false;
+  state.auth.videoApiKeyConfigured = false;
   state.auth.modelSettings = {
     endpoint: DEFAULT_ENDPOINT,
     model: DEFAULT_MODEL
@@ -753,17 +1043,54 @@ function clearAuthSession() {
 function renderAuthState() {
   const user = state.auth.user;
   els.accountTitle.textContent = user ? "当前账号" : "未登录";
-  els.accountNameText.textContent = user ? user.name || user.email : "注册后使用工具";
-  els.accountMetaText.textContent = user ? user.email : "登录后由管理员配置 API Key";
+  els.accountNameText.textContent = user ? user.name || "已登录账号" : "注册后使用工具";
+  renderAccountKeyStatus();
   els.logoutBtn.style.display = user ? "inline-flex" : "none";
   els.openAuthBtn.textContent = user ? "切换账号" : "登录 / 注册";
 }
 
+function renderAccountKeyStatus() {
+  if (!els.accountKeyStatus) return;
+  const loggedIn = Boolean(state.auth.user);
+  const imageReady = loggedIn && Boolean(state.auth.apiKeyConfigured);
+  const videoReady = loggedIn && Boolean(state.auth.videoApiKeyConfigured);
+  const statusItems = [
+    { label: "图片 Key", ready: imageReady, text: loggedIn ? (imageReady ? "已配置" : "未配置") : "登录后查看" },
+    { label: "视频 Key", ready: videoReady, text: loggedIn ? (videoReady ? "已配置" : "未配置") : "登录后查看" }
+  ];
+  els.accountKeyStatus.innerHTML = statusItems
+    .map((item) => {
+      const statusClass = !loggedIn ? "neutral" : item.ready ? "ready" : "missing";
+      return `<span class="${statusClass}"><b>${escapeHtml(item.label)}</b><em>${escapeHtml(item.text)}</em></span>`;
+    })
+    .join("");
+}
+
+function updateAuthTypeUi() {
+  const authType = els.authTypeInput.value === "email" ? "email" : "username";
+  els.authNameLabel.textContent = authType === "email" ? "邮箱" : "用户名";
+  els.authNameInput.type = authType === "email" ? "email" : "text";
+  els.authNameInput.autocomplete = authType === "email" ? "email" : "username";
+  els.authNameInput.placeholder = authType === "email" ? "you@example.com" : "例如：AIECO Studio";
+}
+
+function switchAuthMode(mode) {
+  state.activeAuthMode = mode === "register" ? "register" : "login";
+  els.authModeTabs.forEach((button) => {
+    const active = button.dataset.authMode === state.activeAuthMode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+  els.authSubmitBtn.textContent = state.activeAuthMode === "register" ? "注册并进入" : "登录";
+}
+
 function openAuthModal({ locked = false } = {}) {
+  switchAuthMode("login");
+  updateAuthTypeUi();
   els.authModal.dataset.locked = locked ? "true" : "false";
   els.authModal.classList.add("active");
   els.authModal.setAttribute("aria-hidden", "false");
-  window.setTimeout(() => els.authEmailInput.focus(), 0);
+  window.setTimeout(() => els.authNameInput.focus(), 0);
 }
 
 function closeAuthModal() {
@@ -775,11 +1102,13 @@ function closeAuthModal() {
 async function loadAccountSettings() {
   const payload = await apiFetch("/settings");
   const settings = payload.settings || {};
-  state.auth.apiKeyConfigured = Boolean(settings.apiKeyConfigured);
+  state.auth.apiKeyConfigured = Boolean(settings.imageApiKeyConfigured ?? settings.apiKeyConfigured);
+  state.auth.videoApiKeyConfigured = Boolean(settings.videoApiKeyConfigured);
   state.auth.modelSettings = {
     endpoint: settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT,
     model: settings.model || settings.defaultModel || DEFAULT_MODEL
   };
+  applyPromptConfig(settings.promptConfig || currentPromptConfig());
   els.apiKeyInput.value = settings.apiKeyMasked || (state.auth.apiKeyConfigured ? "已配置" : "未配置");
   if (els.endpointInput) els.endpointInput.value = state.auth.modelSettings.endpoint;
   els.modelInput.value = state.auth.modelSettings.model;
@@ -787,6 +1116,7 @@ async function loadAccountSettings() {
   const savedSize = localSize || normalizeImageSize(settings.size) || "1024x1024";
   applyDetectedSize(savedSize);
   els.sizeInput.value = savedSize;
+  renderAuthState();
   updateConnectionState();
 }
 
@@ -799,7 +1129,8 @@ async function verifySessionActive() {
 }
 
 function selectedSuitePreset() {
-  return suitePresets[els.suitePresetInput.value] || suitePresets.amazon;
+  const presets = currentPromptConfig().suite.presets || [];
+  return presets.find((preset) => preset.id === els.suitePresetInput.value) || presets[0] || legacyPromptConfig().suite.presets[0];
 }
 
 function renderSuitePlan(activeId = null, doneIds = new Set()) {
@@ -961,7 +1292,7 @@ async function handleSuiteFiles(fileList) {
     width: dimensions?.width || null,
     height: dimensions?.height || null,
     size,
-    prompt: "套图商品基图",
+    prompt: currentPromptConfig().reference.defaultAssetPromptLabels?.suiteReference || "套图商品基图",
     createdAt: new Date().toISOString(),
     source: "suite-reference"
   };
@@ -1009,39 +1340,542 @@ function clearSuiteReference() {
   showToast("参考图已删除");
 }
 
+function selectedVideoPreset() {
+  return window.VideoPlanner.getVideoPreset(els.videoPresetInput.value);
+}
+
+function videoContext() {
+  const productName = els.videoProductNameInput.value.trim() || state.videoReference?.name || "";
+  const category = els.videoCategoryInput.value.trim();
+  const sellingPoints = els.videoSellingPointsInput.value.trim();
+  const styleText = els.videoStyleInput.options[els.videoStyleInput.selectedIndex]?.text || "医疗清爽";
+  return {
+    productName,
+    category,
+    sellingPoints,
+    style: styleText,
+    hasReference: Boolean(state.videoReference)
+  };
+}
+
+async function handleVideoFiles(fileList) {
+  const file = Array.from(fileList || []).find((entry) => entry.type.startsWith("image/"));
+  if (!file) return;
+  const url = await readFileAsDataUrl(file);
+  const dimensions = await readImageDimensions(url);
+  const detectedSize = dimensions ? `${dimensions.width}x${dimensions.height}` : "";
+  state.videoReference = {
+    id: createId("video-ref"),
+    name: file.name.replace(/\.[^.]+$/, ""),
+    url,
+    width: dimensions?.width || null,
+    height: dimensions?.height || null,
+    size: detectedSize,
+    createdAt: new Date().toISOString(),
+    source: "video-reference"
+  };
+  if (!els.videoProductNameInput.value.trim()) {
+    els.videoProductNameInput.value = state.videoReference.name;
+  }
+  state.videoScenes = [];
+  renderVideoReference();
+  renderVideoScenes();
+  updateVideoPlanButton();
+  showToast("视频商品图已载入");
+}
+
+function renderVideoReference() {
+  if (!state.videoReference) {
+    els.videoReferencePreview.className = "suite-reference video-reference-preview is-empty";
+    els.videoReferencePreview.innerHTML = "";
+    return;
+  }
+  els.videoReferencePreview.className = "suite-reference video-reference-preview";
+  els.videoReferencePreview.innerHTML = `
+    <img src="${escapeAttr(state.videoReference.url)}" alt="${escapeAttr(state.videoReference.name)}" />
+    <div>
+      <strong>${escapeHtml(state.videoReference.name)}</strong>
+      <span>${escapeHtml(state.videoReference.size || "视频外观参考")}</span>
+    </div>
+    <button class="reference-remove" type="button" data-action="clear-video-reference" aria-label="删除商品图" title="删除商品图">
+      <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+    </button>
+  `;
+  els.videoReferencePreview
+    .querySelector("[data-action='clear-video-reference']")
+    ?.addEventListener("click", clearVideoReference);
+}
+
+function clearVideoReference() {
+  state.videoReference = null;
+  resetVideoJob();
+  els.videoUploadInput.value = "";
+  renderVideoReference();
+  renderVideoScenes();
+  updateVideoPlanButton();
+  showToast("视频商品图已删除");
+}
+
+function renderVideoOutputControls(options = {}) {
+  const preset = selectedVideoPreset();
+  if (options.resetToDefaults) {
+    els.videoAspectInput.value = preset.defaultAspectRatio;
+    els.videoDurationInput.value = String(preset.defaultDurationSeconds);
+    els.videoSceneCountInput.value = String(preset.defaultSceneCount);
+  }
+  const aspectOptions = preset.aspectOptions.map((option) => ({
+    value: option.value,
+    label: option.label,
+    detail: option.output
+  }));
+  const durationOptions = preset.durationOptions.map((seconds) => ({
+    value: String(seconds),
+    label: `${seconds} 秒`,
+    detail: seconds === preset.defaultDurationSeconds ? "推荐" : ""
+  }));
+  const sceneCountOptions = preset.sceneCountOptions.map((count) => ({
+    value: String(count),
+    label: `${count} 个镜头`,
+    detail: videoSceneCountDetail(preset, count)
+  }));
+
+  renderSelectOptions(
+    els.videoAspectInput,
+    aspectOptions.map((option) => ({
+      value: option.value,
+      label: `${option.label} · ${option.detail}`
+    })),
+    preset.defaultAspectRatio
+  );
+  renderSelectOptions(
+    els.videoDurationInput,
+    durationOptions,
+    String(preset.defaultDurationSeconds)
+  );
+  renderSelectOptions(
+    els.videoSceneCountInput,
+    sceneCountOptions,
+    String(preset.defaultSceneCount)
+  );
+
+  renderVideoChoiceButtons(els.videoAspectOptions, els.videoAspectInput, aspectOptions, "画幅比例");
+  renderVideoChoiceButtons(els.videoDurationOptions, els.videoDurationInput, durationOptions, "目标时长");
+  renderVideoChoiceButtons(els.videoSceneCountOptions, els.videoSceneCountInput, sceneCountOptions, "镜头数");
+}
+
+function videoSceneCountDetail(preset, count) {
+  if (preset.id === "sponsored-brands" && Number(els.videoDurationInput.value) <= 6 && count === 1) {
+    return "6秒推荐";
+  }
+  return count === preset.defaultSceneCount ? "默认" : "";
+}
+
+function renderSelectOptions(select, options, preferredValue) {
+  const currentValue = select.value;
+  const values = options.map((option) => option.value);
+  const selectedValue = values.includes(currentValue) ? currentValue : preferredValue;
+  select.innerHTML = options
+    .map(
+      (option) =>
+        `<option value="${escapeAttr(option.value)}"${option.value === selectedValue ? " selected" : ""}>${escapeHtml(option.label)}</option>`
+    )
+    .join("");
+}
+
+function renderVideoChoiceButtons(container, select, options, groupLabel) {
+  container.innerHTML = options
+    .map((option) => {
+      const isSelected = option.value === select.value;
+      const detail = option.detail ? `<small>${escapeHtml(option.detail)}</small>` : "";
+      return `
+        <button class="video-choice-button${isSelected ? " active" : ""}" type="button" data-value="${escapeAttr(option.value)}" role="radio" aria-checked="${isSelected}" aria-label="${escapeAttr(`${groupLabel}：${option.label}`)}">
+          <span>${escapeHtml(option.label)}</span>
+          ${detail}
+        </button>
+      `;
+    })
+    .join("");
+
+  container.querySelectorAll("[data-value]").forEach((button) => {
+    button.addEventListener("click", () => selectVideoOutputOption(select, button.dataset.value));
+  });
+}
+
+function selectVideoOutputOption(select, value) {
+  if (select.value === value) return;
+  select.value = value;
+  if (select === els.videoDurationInput) applyShortAdSceneDefault();
+  handleVideoOutputChange();
+  renderVideoOutputControls();
+}
+
+function applyShortAdSceneDefault() {
+  if (selectedVideoPreset().id === "sponsored-brands" && Number(els.videoDurationInput.value) <= 6) {
+    els.videoSceneCountInput.value = "1";
+  }
+}
+
+function handleVideoOutputChange() {
+  state.videoScenes = [];
+  resetVideoJob();
+  renderVideoSpecs();
+  renderVideoScenes();
+}
+
+function renderVideoSpecs() {
+  const preset = selectedVideoPreset();
+  els.videoPresetBadge.textContent = preset.badge;
+  els.videoPresetMeta.textContent = `${preset.placement} · ${preset.objective}`;
+  const selectedAspect = selectedVideoAspectOption(preset);
+  const duration = `${els.videoDurationInput.value} 秒`;
+  const sceneCount = `${els.videoSceneCountInput.value} 个镜头`;
+  els.videoOutputHint.textContent = `已按「${videoPresetShortTitle(preset)}」筛选可用比例和时长`;
+  els.videoInlineSummary.innerHTML = `
+    <span>${escapeHtml(videoPresetShortTitle(preset))}</span>
+    <span>${escapeHtml(els.videoAspectInput.value)}</span>
+    <span>${escapeHtml(duration)}</span>
+    <span>${escapeHtml(sceneCount)}</span>
+    <span>${escapeHtml(`合规 ${preset.duration}`)}</span>
+  `;
+  const specs = [
+    ["画幅", `${els.videoAspectInput.value} · ${selectedAspect.output}`],
+    ["时长", duration],
+    ["用途", preset.badge],
+    ["文件", preset.fileSize],
+    ["合规", preset.duration]
+  ];
+  els.videoSpecCards.innerHTML = specs
+    .map(
+      ([label, value]) => `
+        <article class="video-spec-card">
+          <span>${escapeHtml(label)}</span>
+          <strong>${escapeHtml(value)}</strong>
+        </article>
+      `
+    )
+    .join("");
+  const complianceItems = [
+    "医疗设备内容避免诊断、治疗、治愈、预防疾病等功效承诺",
+    "优先使用测量、监测、便携、易读、家庭日常使用等安全表达",
+    "不要出现未经验证的认证、医生背书或绝对化承诺"
+  ];
+  els.videoComplianceList.innerHTML = complianceItems.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+  els.videoPolicyDetailList.innerHTML = preset.notes.map((item) => `<li>${escapeHtml(item)}</li>`).join("");
+}
+
+function selectedVideoAspectOption(preset = selectedVideoPreset()) {
+  return preset.aspectOptions.find((option) => option.value === els.videoAspectInput.value) || preset.aspectOptions[0];
+}
+
+function renderVideoPresetCards() {
+  const selectedId = els.videoPresetInput.value;
+  els.videoPresetCards.innerHTML = window.VideoPlanner.getVideoPresets()
+    .map((preset) => {
+      const isSelected = preset.id === selectedId;
+      return `
+        <button class="video-preset-card${isSelected ? " active" : ""}" type="button" data-preset-id="${escapeAttr(preset.id)}" role="option" aria-selected="${isSelected}">
+          <strong>${escapeHtml(videoPresetShortTitle(preset))}</strong>
+          <small>${escapeHtml(videoPresetCardHint(preset))}</small>
+        </button>
+      `;
+    })
+    .join("");
+  els.videoPresetCards.querySelectorAll("[data-preset-id]").forEach((button) => {
+    button.addEventListener("click", () => selectVideoPreset(button.dataset.presetId));
+  });
+}
+
+function videoPresetCardHint(preset) {
+  const hints = {
+    shoppable: "商详页自然视频",
+    "sponsored-brands": "搜索和详情广告位",
+    "store-a-plus": "品牌 Store 或 A+ 模块"
+  };
+  return hints[preset.id] || preset.objective;
+}
+
+function videoPresetShortTitle(preset) {
+  const titles = {
+    shoppable: "商详页",
+    "sponsored-brands": "广告视频",
+    "store-a-plus": "Store / A+"
+  };
+  return titles[preset.id] || preset.title;
+}
+
+function selectVideoPreset(presetId) {
+  if (els.videoPresetInput.value === presetId) return;
+  els.videoPresetInput.value = presetId;
+  state.videoScenes = [];
+  resetVideoJob();
+  renderVideoOutputControls({ resetToDefaults: true });
+  renderVideoSpecs();
+  renderVideoPresetCards();
+  renderVideoScenes();
+}
+
+function handleVideoPrimaryAction() {
+  if (!state.videoReference) {
+    showToast("请先上传商品图，图生视频需要商品外观参考", true);
+    return;
+  }
+  if (state.videoJob?.status === "processing" || state.videoJob?.status === "queued") {
+    showToast("视频正在生成中，请稍候");
+    return;
+  }
+  if (state.videoScenes.length) {
+    startMockVideoGeneration();
+    return;
+  }
+  state.videoScenes = buildVideoPlan();
+  renderVideoScenes();
+  updateVideoPlanButton();
+  showToast("视频分镜已生成，可确认后继续生成视频");
+}
+
+function refreshVideoPlanDraft() {
+  state.videoScenes = [];
+  resetVideoJob();
+  renderVideoScenes();
+}
+
+function updateVideoPlanButton() {
+  const hasReference = Boolean(state.videoReference);
+  els.generateVideoPlanBtn.disabled = !hasReference;
+  if (!hasReference) {
+    els.generateVideoPlanLabel.textContent = "生成视频";
+    els.generateVideoPlanBtn.title = "请先上传商品图";
+    return;
+  }
+  if (state.videoJob?.status === "processing" || state.videoJob?.status === "queued") {
+    els.generateVideoPlanLabel.textContent = `生成中 ${state.videoJob.progress}%`;
+    els.generateVideoPlanBtn.title = "视频正在生成中";
+    return;
+  }
+  if (state.videoJob?.status === "completed") {
+    els.generateVideoPlanLabel.textContent = "重新生成视频";
+    els.generateVideoPlanBtn.title = "用当前分镜重新生成视频";
+    return;
+  }
+  const hasPlan = Boolean(state.videoScenes.length);
+  els.generateVideoPlanLabel.textContent = hasPlan ? "确认并生成视频" : "生成视频";
+  els.generateVideoPlanBtn.title = hasPlan ? "使用当前分镜生成视频" : "先生成可确认的视频分镜方案";
+}
+
+function buildVideoPlan() {
+  const context = videoContext();
+  return window.VideoPlanner.buildVideoScenes({
+    presetId: els.videoPresetInput.value,
+    productName: context.productName,
+    category: context.category,
+    sellingPoints: context.sellingPoints,
+    style: context.style,
+    hasReference: context.hasReference,
+    aspectRatio: els.videoAspectInput.value,
+    targetDurationSeconds: Number(els.videoDurationInput.value),
+    sceneCount: Number(els.videoSceneCountInput.value)
+  });
+}
+
+function renderVideoScenes() {
+  if (!state.videoReference) {
+    els.videoSceneCount.textContent = "待生成";
+    els.videoSceneList.innerHTML = "";
+    renderVideoResultState();
+    updateVideoPlanButton();
+    return;
+  }
+  if (!state.videoScenes.length) {
+    els.videoSceneCount.textContent = "待生成";
+    els.videoSceneList.innerHTML = "";
+    renderVideoResultState();
+    updateVideoPlanButton();
+    return;
+  }
+  const scenes = state.videoScenes;
+  renderVideoResultState();
+  els.videoSceneCount.textContent = `${scenes.length} 个镜头`;
+  els.videoSceneList.innerHTML = scenes
+    .map(
+      (scene, index) => `
+        <article class="video-scene-card">
+          <span>${String(index + 1).padStart(2, "0")}</span>
+          <div>
+            <div class="video-scene-head">
+              <strong>${escapeHtml(scene.name.replace(/^\d+\s*/, ""))}</strong>
+              <small>${escapeHtml(scene.duration)}</small>
+            </div>
+            <textarea class="video-scene-prompt" data-scene-index="${index}" rows="6" aria-label="${escapeAttr(scene.name)} 场景提示词">${escapeHtml(scene.prompt)}</textarea>
+          </div>
+        </article>
+      `
+    )
+    .join("");
+  els.videoSceneList.querySelectorAll("[data-scene-index]").forEach((textarea) => {
+    textarea.addEventListener("input", () => {
+      const scene = state.videoScenes[Number(textarea.dataset.sceneIndex)];
+      if (scene) scene.prompt = textarea.value;
+    });
+  });
+  updateVideoPlanButton();
+}
+
+function renderVideoResultState() {
+  const hasPlan = Boolean(state.videoScenes.length);
+  const job = state.videoJob;
+  els.videoStoryboardDetails.hidden = !hasPlan;
+  els.videoResultPreview.classList.toggle("is-planned", hasPlan || Boolean(job));
+  if (job?.status === "processing" || job?.status === "queued") {
+    els.videoResultPreview.innerHTML = `
+      <div class="video-job-progress">
+        <strong>正在生成视频</strong>
+        <span>${escapeHtml(window.VideoMockService.videoJobSummary(job))}</span>
+        <div class="video-progress-track" aria-label="视频生成进度">
+          <span style="width: ${job.progress}%"></span>
+        </div>
+        <small>${job.progress}% · Mock provider</small>
+      </div>
+    `;
+    updateVideoPlanButton();
+    return;
+  }
+  if (job?.status === "completed") {
+    els.videoResultPreview.innerHTML = `
+      <div class="video-mock-player">
+        <div class="video-mock-frame">
+          <span>MOCK VIDEO</span>
+          <strong>${escapeHtml(job.title)}</strong>
+          <small>${escapeHtml(window.VideoMockService.videoJobSummary(job))}</small>
+        </div>
+        <div class="video-result-actions">
+          <button class="ghost-button mini-button" type="button" data-action="download-mock-video">下载 Mock 预览</button>
+          <button class="ghost-button mini-button" type="button" data-action="rerun-mock-video">重新生成</button>
+        </div>
+      </div>
+    `;
+    bindVideoResultActions();
+    updateVideoPlanButton();
+    return;
+  }
+  els.videoResultPreview.innerHTML = hasPlan
+    ? `
+      <div class="video-result-ready">
+        <strong>视频方案已生成</strong>
+        <span>确认后将用当前商品图和分镜生成成片。</span>
+      </div>
+    `
+    : `
+      <div class="empty-copy">
+        <strong>${state.videoReference ? "准备生成视频" : "生成后在这里预览视频"}</strong>
+        <span>${state.videoReference ? "点击左侧按钮后，会先生成可确认的视频方案。" : "右侧会显示成片预览、规格摘要和可编辑分镜。"}</span>
+      </div>
+    `;
+  updateVideoPlanButton();
+}
+
+function startMockVideoGeneration() {
+  const context = videoContext();
+  const preset = selectedVideoPreset();
+  resetVideoJob();
+  state.videoJob = window.VideoMockService.createMockVideoJob({
+    title: context.productName || state.videoReference?.name || "商品视频",
+    presetTitle: videoPresetShortTitle(preset),
+    aspectRatio: els.videoAspectInput.value,
+    durationSeconds: Number(els.videoDurationInput.value),
+    sceneCount: Number(els.videoSceneCountInput.value)
+  });
+  renderVideoResultState();
+  showToast("Mock 视频任务已创建");
+  const progressSteps = [18, 42, 68, 100];
+  let index = 0;
+  state.videoJobTimer = window.setInterval(() => {
+    if (!state.videoJob) return resetVideoJob();
+    state.videoJob = window.VideoMockService.advanceMockVideoJob(state.videoJob, progressSteps[index]);
+    renderVideoResultState();
+    index += 1;
+    if (index >= progressSteps.length) {
+      window.clearInterval(state.videoJobTimer);
+      state.videoJobTimer = null;
+      showToast("Mock 视频已生成");
+    }
+  }, 800);
+}
+
+function resetVideoJob() {
+  if (state.videoJobTimer) {
+    window.clearInterval(state.videoJobTimer);
+    state.videoJobTimer = null;
+  }
+  state.videoJob = null;
+}
+
+function bindVideoResultActions() {
+  els.videoResultPreview
+    .querySelector("[data-action='download-mock-video']")
+    ?.addEventListener("click", downloadMockVideoPreview);
+  els.videoResultPreview
+    .querySelector("[data-action='rerun-mock-video']")
+    ?.addEventListener("click", startMockVideoGeneration);
+}
+
+function downloadMockVideoPreview() {
+  if (!state.videoJob) return;
+  const html = `<!doctype html><meta charset="utf-8"><title>${escapeHtml(state.videoJob.title)}</title><style>body{font-family:system-ui,sans-serif;padding:32px;background:#f6fbff;color:#13233a}.card{max-width:720px;margin:auto;padding:24px;border:1px solid #cde3ee;border-radius:12px;background:white}</style><div class="card"><h1>${escapeHtml(state.videoJob.title)}</h1><p>${escapeHtml(window.VideoMockService.videoJobSummary(state.videoJob))}</p><p>这是本地 Mock 视频生成预览文件，用于验证下载链路。</p></div>`;
+  const url = URL.createObjectURL(new Blob([html], { type: "text/html;charset=utf-8" }));
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = state.videoJob.downloadName || "mock-video.html";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
+}
+
 function suiteContext() {
+  const config = currentPromptConfig();
+  const fallbacks = config.suite.contextFallbacks || {};
   const productName = els.suiteProductNameInput.value.trim() || state.suiteReference?.name || "";
   const category = els.suiteCategoryInput.value.trim();
   const sellingPoints = els.suiteSellingPointsInput.value.trim();
-  const styleText = els.suiteStyleInput.options[els.suiteStyleInput.selectedIndex]?.text || "高级简洁";
+  const styleText = selectedSuiteVisualStyle()?.label || fallbacks.styleText || "高级简洁";
   return {
     productName,
-    productLabel: productName || "商品基图中的产品",
-    category: category || "通用电商品类",
-    sellingPoints: sellingPoints || "根据商品外观推断核心材质、功能、使用场景和包装价值",
+    productLabel: productName || fallbacks.productLabel || "商品基图中的产品",
+    category: category || fallbacks.category || "通用电商品类",
+    sellingPoints: sellingPoints || fallbacks.sellingPoints || "根据商品外观推断核心材质、功能、使用场景和包装价值",
     styleText,
     referenceName: state.suiteReference?.name || ""
   };
 }
 
 function buildSuitePrompt(shot, preset, context) {
+  const compose = currentPromptConfig().suite.compose || {};
+  const values = {
+    productLabel: context.productLabel,
+    presetTitle: preset.title,
+    shotName: shot.name,
+    category: context.category,
+    sellingPoints: context.sellingPoints,
+    styleText: context.styleText,
+    referenceName: context.referenceName
+  };
   const referenceLine = state.suiteReference
-    ? `以已上传商品基图「${context.referenceName}」作为唯一商品外观参考，商品主体必须和原图 1:1 还原，不能改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。`
-    : "如果没有可见商品基图，则根据商品名称、品类和卖点生成可信的通用电商商品视觉。";
+    ? promptText(compose.referenceLine, values)
+    : compose.noReferenceLine;
   const aplusLine = preset.title.includes("A+")
-    ? "Amazon A+ Content 重点：增强图片、自定义文本位置、品牌故事、生活方式场景、热点细节、轮播、问答和可购买对比图；图片只负责可信视觉与排版安全区，真实文字与具体参数留给后期人工排版。"
+    ? compose.aplusLine
     : "";
 
   return [
-    `任务：为「${context.productLabel}」生成「${preset.title}」中的「${shot.name}」。`,
-    `品类：${context.category}`,
-    `核心卖点：${context.sellingPoints}`,
-    `视觉风格：${context.styleText}`,
+    promptText(compose.taskLine, values),
+    promptText(compose.categoryLine, values),
+    promptText(compose.sellingPointsLine, values),
+    promptText(compose.styleLine, values),
     aplusLine,
     referenceLine,
     shot.prompt,
-    "电商摄影质感，产品真实可信，构图清晰，背景和道具服务于商品表达。",
-    "不要添加虚构品牌 Logo、平台商标、未经验证的认证、夸张承诺、不可读乱码文字或误导性效果。"
+    compose.qualityLine,
+    compose.negativeLine
   ]
     .filter(Boolean)
     .join("\n");
@@ -1166,7 +2000,8 @@ function handleSaveSuite() {
 
 function renderTemplates() {
   const category = els.templateFilter.value || "all";
-  const allTemplates = [...userTemplates, ...templates];
+  const builtInTemplates = currentPromptConfig().single.templates || [];
+  const allTemplates = [...userTemplates, ...builtInTemplates];
   const visibleTemplates = category === "all" ? allTemplates : allTemplates.filter((item) => item.category === category);
   els.templateGrid.innerHTML = visibleTemplates
     .map(
@@ -1241,8 +2076,9 @@ function deleteUserTemplate(templateId) {
 }
 
 function renderQuickEdits() {
-  els.quickEditGrid.innerHTML = quickEdits
-    .map((text) => `<button class="quick-edit" type="button" data-edit="${escapeHtml(text)}">${escapeHtml(text)}</button>`)
+  const edits = currentPromptConfig().refinement.quickEdits || [];
+  els.quickEditGrid.innerHTML = edits
+    .map((edit) => `<button class="quick-edit" type="button" data-edit="${escapeHtml(edit.text)}">${escapeHtml(edit.text)}</button>`)
     .join("");
   els.quickEditGrid.querySelectorAll(".quick-edit").forEach((button) => {
     button.addEventListener("click", () => {
@@ -1370,16 +2206,13 @@ function closeSettingsModal() {
 async function handleTestReferenceSupport() {
   if (!(await ensureApiReady())) return;
 
-  const reference = firstAvailableReferenceImage() || {
-    name: "参考图探测",
-    size: "1x1",
-    url: "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-  };
+  const probeConfig = currentPromptConfig().referenceProbe || {};
+  const reference = firstAvailableReferenceImage() || probeConfig.fallbackReference;
   const references = normalizeReferenceImages([reference]);
   const usingFallbackReference = !firstAvailableReferenceImage();
   const probePrompt = withStrictProductReference(
     withReferenceContext(
-      "入参图片生效测试。请生成一张明亮科技感电商商品图，必须保持随请求提供的参考图商品主体一致，只允许改变背景、光线和构图，不添加文字。",
+      probeConfig.withReferencePrompt,
       references
     )
   );
@@ -1390,13 +2223,13 @@ async function handleTestReferenceSupport() {
     const referenceImages = await requestImages({
       prompt: probePrompt,
       count: 1,
-      size: "1024x1024",
+      size: probeConfig.size || "1024x1024",
       referenceImages: references
     });
     const controlImages = await requestImages({
-      prompt: withStrictProductReference("无入参图片对照测试。请生成一张明亮科技感电商商品图，不添加文字。"),
+      prompt: withStrictProductReference(probeConfig.controlPrompt),
       count: 1,
-      size: "1024x1024",
+      size: probeConfig.size || "1024x1024",
       referenceImages: []
     });
     renderReferenceProbeResult({
@@ -1496,7 +2329,7 @@ async function handleFiles(fileList) {
       width: dimensions[index]?.width || null,
       height: dimensions[index]?.height || null,
       size: normalizeImageSize(detectedSize) || detectedSize,
-      prompt: "本地上传商品参考图",
+      prompt: currentPromptConfig().reference.defaultAssetPromptLabels?.uploaded || "本地上传商品参考图",
       createdAt: new Date().toISOString(),
       source: "upload"
     };
@@ -1607,13 +2440,14 @@ async function handleRefine() {
   if (!(await ensureApiReady())) return;
 
   state.referenceFallbackNotice = "";
+  const compose = currentPromptConfig().refinement.compose || {};
   const composedPrompt = [
-    "基于当前界面显示的最新商品图继续生成一个微调版本，不回到最初原图。",
+    compose.prefix,
     imageReferenceText(state.selectedImage.url),
-    state.selectedImage.size ? `当前基图尺寸：${state.selectedImage.size}` : "",
-    state.selectedImage.prompt ? `上一版提示词：${state.selectedImage.prompt}` : "",
-    `本次修改要求：${editPrompt}`,
-    "商品主体必须和当前基图 1:1 还原，不得改变任何可见结构、比例、颜色、材质、文字、Logo、纹理、按钮、接口、配件或包装细节。适合电商商品图，不添加未经验证的功能、认证、品牌或夸张效果承诺。"
+    state.selectedImage.size ? promptText(compose.currentSizeLine, { size: state.selectedImage.size }) : "",
+    state.selectedImage.prompt ? promptText(compose.previousPromptLine, { prompt: state.selectedImage.prompt }) : "",
+    promptText(compose.editRequestLine, { prompt: editPrompt }),
+    compose.guardrailSuffix
   ]
     .filter(Boolean)
     .join("\n");
@@ -2062,11 +2896,12 @@ function canRetryReferencePayload(error) {
 }
 
 function normalizeReferenceImages(references) {
+  const defaultName = currentPromptConfig().reference.defaultName || "参考图";
   const seen = new Set();
   return (references || [])
     .filter((reference) => reference?.url)
     .map((reference) => ({
-      name: reference.name || "参考图",
+      name: reference.name || defaultName,
       size: reference.size || "",
       url: reference.url
     }))
@@ -2158,11 +2993,16 @@ function firstAvailableReferenceImage() {
 
 function withReferenceContext(prompt, references) {
   if (!references.length) return prompt;
+  const context = currentPromptConfig().reference.context || {};
   const primary = references[0];
+  const sizeText = primary.size ? promptText(context.sizeText, { size: primary.size }) : "";
   const lines = [
-    `参考图已随请求发送。首要参考图：「${primary.name || "参考图 1"}」${primary.size ? `，尺寸 ${primary.size}` : ""}。`,
-    references.length > 1 ? `其余 ${references.length - 1} 张参考图只用于补充角度、结构和材质细节，不得引入不同商品特征。` : "",
-    "生成时必须先识别参考图中的商品主体，再保持同一件商品的轮廓、比例、颜色、材质、Logo、文字、纹理、接口、配件和包装细节一致。"
+    promptText(context.primaryLine, {
+      name: primary.name || context.defaultName || "参考图 1",
+      sizeText
+    }),
+    references.length > 1 ? promptText(context.extraLine, { count: references.length - 1 }) : "",
+    context.consistencyLine
   ];
   return [...lines.filter(Boolean), prompt].join("\n");
 }
@@ -2180,7 +3020,7 @@ async function requestImagesExact(options) {
     const index = images.length + 1;
     const supplementalPrompt = [
       options.prompt,
-      `请生成第 ${index} 张变体，保持同一商品和同一设计方向，但构图、角度或背景细节与前面图片有区别。`
+      promptText(currentPromptConfig().single.supplementalVariantPrompt, { index })
     ].join("\n");
     const extraBatch = await requestImages({ ...options, prompt: supplementalPrompt, count: 1 });
     calls += 1;
@@ -2875,15 +3715,18 @@ function sanitizeFileName(value) {
 }
 
 function imageReferenceText(url) {
+  const textConfig = currentPromptConfig().refinement.imageReferenceText || {};
   if (!url) return "";
-  if (String(url).startsWith("data:")) return "当前基图：界面预览中的最新本地图片。";
-  return `当前基图图片地址：${url}`;
+  if (String(url).startsWith("data:")) return textConfig.local || "当前基图：界面预览中的最新本地图片。";
+  return promptText(textConfig.remote, { url });
 }
 
 function withStrictProductReference(prompt) {
   const text = String(prompt || "").trim();
-  if (text.includes("商品主体必须以用户上传的原图")) return text;
-  return [STRICT_PRODUCT_REFERENCE_RULE, text].filter(Boolean).join("\n\n");
+  const referenceConfig = currentPromptConfig().reference || {};
+  const needles = referenceConfig.strictRuleDedupeNeedles || [];
+  if (needles.some((needle) => needle && text.includes(needle))) return text;
+  return [referenceConfig.strictRule || STRICT_PRODUCT_REFERENCE_RULE, text].filter(Boolean).join("\n\n");
 }
 
 function escapeHtml(value) {
