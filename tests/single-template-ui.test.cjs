@@ -15,15 +15,20 @@ assert.ok(generateNav.includes("单图"));
 assert.ok(singleView.includes('class="view active"'));
 assert.ok(!html.includes('id="promptInput"'));
 assert.ok(!html.includes('id="saveTemplateBtn"'));
-assert.ok(!html.includes('value="custom"'));
-assert.ok(html.includes('<option value="aplus" selected>Amazon A+</option>'));
+assert.ok(html.includes('id="platformSelect"'));
+assert.ok(html.includes('id="categorySelect"'));
+assert.ok(html.includes('id="scenarioSelect"'));
+assert.ok(html.includes('id="templateSelectionHint"'));
+assert.ok(!html.includes('id="templateFilter"'));
+assert.ok(!html.includes('id="templateGrid"'));
 
-assert.ok(app.includes("selectedTemplateId"));
-assert.ok(app.includes('const DEFAULT_SINGLE_TEMPLATE_CATEGORY = "aplus";'));
-assert.ok(app.includes('const DEFAULT_SINGLE_TEMPLATE_ID = "aplus-brand-story";'));
+assert.ok(app.includes("selectedPlatformId"));
+assert.ok(app.includes("selectedCategoryId"));
+assert.ok(app.includes("selectedScenarioId"));
+assert.ok(app.includes("singleSelectionMemoryByLeaf"));
+assert.ok(app.includes("const SINGLE_SELECTION_MEMORY_KEY"));
 assert.ok(app.includes("requestBody.templateId = templateId"));
 assert.ok(app.includes("body: sanitizeRequestPayload(requestBody)"));
 assert.ok(!app.includes("PROMPT_CONFIG_DEFAULTS_URL"));
-assert.ok(!app.includes("平台合规白底主图，【产品名称/品类】"));
 
 console.log("single template UI tests passed");

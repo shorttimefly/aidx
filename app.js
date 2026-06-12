@@ -11,12 +11,17 @@ const STORES = {
 const DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/{model}:generateContent/";
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_FOLDER_NAME = "未分类素材";
-const DEFAULT_SINGLE_TEMPLATE_CATEGORY = "aplus";
-const DEFAULT_SINGLE_TEMPLATE_ID = "aplus-brand-story";
+const DEFAULT_SINGLE_TEMPLATE_CATEGORY = "3c-digital-accessories";
+const DEFAULT_SINGLE_TEMPLATE_ID = "amazon-aplus-3c-digital-accessories-brand-story";
 const AUTH_TOKEN_KEY = "imageStudio.authToken";
+const ADMIN_ENTRY_TOKEN_PARAM = "adminToken";
+const ADMIN_ROLE = "admin";
 const GENERATED_ASSET_IMPORT_KEY_PREFIX = "imageStudio.importedGeneratedAssetIds";
 const IMAGE_SIZE_MULTIPLE = 16;
 const REFERENCE_STRATEGY_KEY = "imageStudio.referenceStrategy";
+const SINGLE_SELECTION_MEMORY_KEY = "imageStudio.singleSelectionMemoryByLeaf";
+const SUITE_ENABLED_LABEL = "\u751f\u6210\u6574\u5957\u56fe\u7247";
+const SUITE_DISABLED_LABEL = "\u6682\u672a\u5f00\u653e";
 const SUITE_STYLE_DISPLAY_LABELS = {
   premium: "清爽质感",
   tech: "现代冷调",
@@ -39,6 +44,150 @@ function detectAppBasePath() {
 
 function appRoute(path) {
   return `${APP_BASE_PATH}${path}`;
+}
+
+const SINGLE_CATEGORY_LABELS = {
+  "3c-digital-accessories": "3C数码配件",
+  "home-kitchen": "家居厨房",
+  "beauty-personal-care": "美妆个护",
+  "health-home-care": "健康护理",
+  "tools-automotive": "汽摩工具",
+  "fashion-accessories": "服饰鞋包配饰",
+  "pet-supplies": "宠物用品",
+  "food-beverages": "食品饮品",
+  "party-decor": "节日礼品/派对装饰"
+};
+
+const SINGLE_PLATFORM_DEFS = [
+  {
+    id: "amazon-aplus",
+    label: "Amazon A+",
+    categories: ["3c-digital-accessories", "home-kitchen", "beauty-personal-care", "health-home-care", "tools-automotive"]
+  },
+  {
+    id: "tiktok-shop",
+    label: "TikTok Shop",
+    categories: ["beauty-personal-care", "fashion-accessories", "home-kitchen", "pet-supplies", "food-beverages"]
+  },
+  {
+    id: "shopify-dtc",
+    label: "Shopify / DTC 独立站",
+    categories: ["beauty-personal-care", "fashion-accessories", "home-kitchen", "health-home-care", "pet-supplies"]
+  },
+  {
+    id: "shopee-lazada",
+    label: "Shopee / Lazada",
+    categories: ["3c-digital-accessories", "home-kitchen", "beauty-personal-care", "fashion-accessories", "party-decor"]
+  },
+  {
+    id: "temu-aliexpress",
+    label: "Temu / AliExpress",
+    categories: ["3c-digital-accessories", "home-kitchen", "tools-automotive", "pet-supplies", "party-decor"]
+  },
+  {
+    id: "shein",
+    label: "SHEIN",
+    categories: ["fashion-accessories", "beauty-personal-care", "home-kitchen", "pet-supplies", "party-decor"]
+  }
+];
+
+const SINGLE_PLATFORM_SCENES = {
+  "amazon-aplus": [
+    { id: "brand-story", title: "品牌故事横幅" },
+    { id: "lifestyle-module", title: "场景模块" },
+    { id: "hotspot-detail", title: "热点细节" },
+    { id: "benefit-grid", title: "图文模块" }
+  ],
+  "tiktok-shop": [
+    { id: "strong-scene", title: "强场景" },
+    { id: "use-moment", title: "使用瞬间" },
+    { id: "trend-seeding", title: "种草感" },
+    { id: "quick-sell-point", title: "快节奏卖点" }
+  ],
+  "shopify-dtc": [
+    { id: "hero-visual", title: "首屏视觉" },
+    { id: "lifestyle-story", title: "生活方式" },
+    { id: "benefit-section", title: "卖点模块" },
+    { id: "conversion-module", title: "转化页素材" }
+  ],
+  "shopee-lazada": [
+    { id: "clear-selling-point", title: "清晰卖点" },
+    { id: "promo-visual", title: "促销感" },
+    { id: "mobile-spec", title: "移动端规格图" },
+    { id: "activity-blank", title: "活动留白图" }
+  ],
+  "temu-aliexpress": [
+    { id: "spec-density", title: "高信息密度" },
+    { id: "function-detail", title: "功能细节" },
+    { id: "bundle-price", title: "套装/价格感" },
+    { id: "quick-decision", title: "快速决策" }
+  ],
+  shein: [
+    { id: "trend-look", title: "潮流造型" },
+    { id: "value-look", title: "性价比表达" },
+    { id: "styling-scene", title: "调性场景" },
+    { id: "vibe-detail", title: "氛围细节" }
+  ]
+};
+
+function buildSingleTemplateCategoriesFromMatrix(matrix) {
+  const categories = [{ id: "all", label: "全部模板" }];
+  const seen = new Set();
+  (matrix.platforms || []).forEach((platform) => {
+    (platform.categories || []).forEach((category) => {
+      if (!category.id || seen.has(category.id)) return;
+      seen.add(category.id);
+      categories.push({ id: category.id, label: category.label || category.id });
+    });
+  });
+  return categories;
+}
+
+function buildSingleTemplatesFromMatrix(matrix) {
+  return (matrix.platforms || []).flatMap((platform) =>
+    (platform.categories || []).flatMap((category) =>
+      (category.scenarios || []).map((scenario) => ({
+        id: scenario.templateId,
+        templateId: scenario.templateId,
+        platform: platform.id,
+        category: category.id,
+        scenario: scenario.id,
+        title: scenario.title
+      }))
+    )
+  );
+}
+
+function buildDefaultSinglePromptConfig() {
+  const platforms = SINGLE_PLATFORM_DEFS.map((platform) => ({
+    id: platform.id,
+    label: platform.label,
+    categories: platform.categories.map((categoryId) => ({
+      id: categoryId,
+      label: SINGLE_CATEGORY_LABELS[categoryId] || categoryId,
+      scenarios: (SINGLE_PLATFORM_SCENES[platform.id] || []).map((scenario) => ({
+        id: scenario.id,
+        title: scenario.title,
+        templateId: `${platform.id}-${categoryId}-${scenario.id}`
+      }))
+    }))
+  }));
+  const defaults = {
+    platformId: platforms[0]?.id || "",
+    categoryId: platforms[0]?.categories?.[0]?.id || "",
+    scenarioId: platforms[0]?.categories?.[0]?.scenarios?.[0]?.id || ""
+  };
+  const matrix = { defaults, platforms };
+  const templatesFromMatrix = buildSingleTemplatesFromMatrix(matrix);
+  return {
+    defaults,
+    matrix,
+    defaultTemplateCategory: defaults.categoryId,
+    defaultTemplateId: templatesFromMatrix[0]?.id || DEFAULT_SINGLE_TEMPLATE_ID,
+    templateCategories: buildSingleTemplateCategoriesFromMatrix(matrix),
+    templates: templatesFromMatrix,
+    supplementalVariantPrompt: ""
+  };
 }
 
 const templates = [
@@ -284,8 +433,15 @@ const state = {
   userSelectedSingleSize: false,
   suiteShotSettings: {},
   lastRequestPayload: null,
-  promptConfig: legacyPromptConfig(),
+  promptConfig: buildRuntimePromptConfig(),
+  availableImageModels: [],
+  selectedImageModelId: "",
+  defaultImageModelId: "",
   selectedTemplateId: DEFAULT_SINGLE_TEMPLATE_ID,
+  selectedPlatformId: "",
+  selectedCategoryId: "",
+  selectedScenarioId: "",
+  singleSelectionMemoryByLeaf: {},
   videoReference: null,
   videoScenes: [],
   videoJob: null,
@@ -401,12 +557,19 @@ function legacyPromptConfig() {
   };
 }
 
+function buildRuntimePromptConfig() {
+  const config = legacyPromptConfig();
+  config.version = 2;
+  config.single = buildDefaultSinglePromptConfig();
+  return config;
+}
+
 async function loadPromptConfigDefaults() {
-  applyPromptConfig(legacyPromptConfig(), { rerender: false });
+  applyPromptConfig(buildRuntimePromptConfig(), { rerender: false });
 }
 
 function currentPromptConfig() {
-  return state.promptConfig || legacyPromptConfig();
+  return state.promptConfig || buildRuntimePromptConfig();
 }
 
 function applyPromptConfig(config, { rerender = true } = {}) {
@@ -415,7 +578,7 @@ function applyPromptConfig(config, { rerender = true } = {}) {
 }
 
 function normalizePromptConfig(config) {
-  return mergePromptConfig(legacyPromptConfig(), config || {});
+  return mergePromptConfig(buildRuntimePromptConfig(), config || {});
 }
 
 function mergePromptConfig(defaultValue, overrideValue) {
@@ -435,7 +598,9 @@ function mergePromptConfig(defaultValue, overrideValue) {
     return Object.fromEntries(
       Object.entries(defaultValue).map(([key, value]) => [
         key,
-        ["id", "category", "url"].includes(key) ? value : mergePromptConfig(value, source[key])
+        ["id", "category", "url", "templateId", "platform", "scenario"].includes(key)
+          ? value
+          : mergePromptConfig(value, source[key])
       ])
     );
   }
@@ -453,20 +618,124 @@ function renderPromptConfigDrivenUi() {
   renderSuitePlan();
 }
 
+function singleSelectionLeafKey(platformId, categoryId) {
+  return `${platformId || ""}::${categoryId || ""}`;
+}
+
+function loadSingleSelectionMemory() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(SINGLE_SELECTION_MEMORY_KEY) || "{}");
+    state.singleSelectionMemoryByLeaf = parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    state.singleSelectionMemoryByLeaf = {};
+  }
+}
+
+function persistSingleSelectionMemory() {
+  localStorage.setItem(SINGLE_SELECTION_MEMORY_KEY, JSON.stringify(state.singleSelectionMemoryByLeaf || {}));
+}
+
+function singleMatrix() {
+  return currentPromptConfig().single?.matrix || { defaults: {}, platforms: [] };
+}
+
+function singlePlatforms() {
+  return singleMatrix().platforms || [];
+}
+
+function selectedSinglePlatform() {
+  return singlePlatforms().find((platform) => platform.id === state.selectedPlatformId) || null;
+}
+
+function selectedSingleCategory() {
+  return (selectedSinglePlatform()?.categories || []).find((category) => category.id === state.selectedCategoryId) || null;
+}
+
+function selectedSingleScenario() {
+  return (selectedSingleCategory()?.scenarios || []).find((scenario) => scenario.id === state.selectedScenarioId) || null;
+}
+
+function singleTemplateById(templateId) {
+  return (currentPromptConfig().single?.templates || []).find((template) => template.id === templateId) || null;
+}
+
+function resolveSingleTemplateSelection({ preferRememberedScenario = true } = {}) {
+  const matrix = singleMatrix();
+  const defaults = matrix.defaults || {};
+  const platforms = matrix.platforms || [];
+  const platform =
+    platforms.find((item) => item.id === state.selectedPlatformId) ||
+    platforms.find((item) => item.id === defaults.platformId) ||
+    platforms[0] ||
+    null;
+  if (!platform) {
+    return { platform: null, category: null, scenario: null, template: null };
+  }
+
+  const categories = platform.categories || [];
+  const category =
+    categories.find((item) => item.id === state.selectedCategoryId) ||
+    categories.find((item) => item.id === defaults.categoryId) ||
+    categories[0] ||
+    null;
+  if (!category) {
+    return { platform, category: null, scenario: null, template: null };
+  }
+
+  const scenarios = category.scenarios || [];
+  const leafKey = singleSelectionLeafKey(platform.id, category.id);
+  const rememberedScenarioId =
+    preferRememberedScenario && state.singleSelectionMemoryByLeaf && typeof state.singleSelectionMemoryByLeaf[leafKey] === "string"
+      ? state.singleSelectionMemoryByLeaf[leafKey]
+      : "";
+  const fallbackScenarioId =
+    platform.id === defaults.platformId && category.id === defaults.categoryId ? defaults.scenarioId || "" : "";
+  const scenario =
+    scenarios.find((item) => item.id === state.selectedScenarioId) ||
+    scenarios.find((item) => item.id === rememberedScenarioId) ||
+    scenarios.find((item) => item.id === fallbackScenarioId) ||
+    scenarios[0] ||
+    null;
+  const template = scenario ? singleTemplateById(scenario.templateId) : null;
+  return { platform, category, scenario, template };
+}
+
+function syncSingleSelectionState(options = {}) {
+  const selection = resolveSingleTemplateSelection(options);
+  state.selectedPlatformId = selection.platform?.id || "";
+  state.selectedCategoryId = selection.category?.id || "";
+  state.selectedScenarioId = selection.scenario?.id || "";
+  state.selectedTemplateId = selection.template?.id || "";
+  return selection;
+}
+
+function rememberSingleScenarioSelection() {
+  if (!state.selectedPlatformId || !state.selectedCategoryId || !state.selectedScenarioId) return;
+  state.singleSelectionMemoryByLeaf[singleSelectionLeafKey(state.selectedPlatformId, state.selectedCategoryId)] =
+    state.selectedScenarioId;
+  persistSingleSelectionMemory();
+}
+
 function renderTemplateFilterOptions() {
-  if (!els.templateFilter) return;
-  const singleConfig = currentPromptConfig().single || {};
-  const defaultCategory = singleConfig.defaultTemplateCategory || DEFAULT_SINGLE_TEMPLATE_CATEGORY;
-  const selected = els.templateFilter.value || defaultCategory;
-  const categories = singleConfig.templateCategories || [];
-  els.templateFilter.innerHTML = categories
+  if (!els.platformSelect || !els.categorySelect || !els.scenarioSelect) return;
+  const selection = syncSingleSelectionState({ preferRememberedScenario: true });
+  const platforms = singlePlatforms();
+  els.platformSelect.innerHTML = platforms
+    .map((platform) => `<option value="${escapeAttr(platform.id)}">${escapeHtml(platform.label)}</option>`)
+    .join("");
+  if (selection.platform) els.platformSelect.value = selection.platform.id;
+
+  const categories = selection.platform?.categories || [];
+  els.categorySelect.innerHTML = categories
     .map((category) => `<option value="${escapeAttr(category.id)}">${escapeHtml(category.label)}</option>`)
     .join("");
-  els.templateFilter.value = categories.some((category) => category.id === selected)
-    ? selected
-    : categories.some((category) => category.id === defaultCategory)
-      ? defaultCategory
-      : "all";
+  if (selection.category) els.categorySelect.value = selection.category.id;
+
+  const scenarios = selection.category?.scenarios || [];
+  els.scenarioSelect.innerHTML = scenarios
+    .map((scenario) => `<option value="${escapeAttr(scenario.id)}">${escapeHtml(scenario.title)}</option>`)
+    .join("");
+  if (selection.scenario) els.scenarioSelect.value = selection.scenario.id;
 }
 
 function renderSuiteSelectOptions() {
@@ -509,6 +778,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadPromptConfigDefaults();
   loadSettings();
   loadAuthSession();
+  loadSingleSelectionMemory();
   loadUserTemplates();
   renderSuitePlan();
   renderSuiteReference();
@@ -531,10 +801,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 function cacheElements() {
   Object.assign(els, {
     navItems: document.querySelectorAll(".nav-item"),
+    suiteNavItem: document.querySelector("[data-view='suite']"),
     views: document.querySelectorAll(".view"),
+    suiteView: document.getElementById("view-suite"),
     accountTitle: document.getElementById("accountTitle"),
     accountNameText: document.getElementById("accountNameText"),
     accountKeyStatus: document.getElementById("accountKeyStatus"),
+    adminEntryBtn: document.getElementById("adminEntryBtn"),
     openAuthBtn: document.getElementById("openAuthBtn"),
     logoutBtn: document.getElementById("logoutBtn"),
     connectionState: document.getElementById("connectionState"),
@@ -586,8 +859,10 @@ function cacheElements() {
     dropzone: document.getElementById("dropzone"),
     uploadInput: document.getElementById("uploadInput"),
     uploadPreview: document.getElementById("uploadPreview"),
-    templateFilter: document.getElementById("templateFilter"),
-    templateGrid: document.getElementById("templateGrid"),
+    platformSelect: document.getElementById("platformSelect"),
+    categorySelect: document.getElementById("categorySelect"),
+    scenarioSelect: document.getElementById("scenarioSelect"),
+    templateSelectionHint: document.getElementById("templateSelectionHint"),
     countInput: document.getElementById("countInput"),
     sizeInput: document.getElementById("sizeInput"),
     apiKeyInput: document.getElementById("apiKeyInput"),
@@ -654,12 +929,28 @@ function bindEvents() {
     });
   });
 
-  els.templateFilter.addEventListener("change", () => {
-    state.selectedTemplateId = "";
+  els.platformSelect?.addEventListener("change", () => {
+    state.selectedPlatformId = els.platformSelect.value;
+    state.selectedCategoryId = "";
+    state.selectedScenarioId = "";
+    renderTemplateFilterOptions();
+    renderTemplates();
+  });
+  els.categorySelect?.addEventListener("change", () => {
+    state.selectedCategoryId = els.categorySelect.value;
+    state.selectedScenarioId = "";
+    renderTemplateFilterOptions();
+    renderTemplates();
+  });
+  els.scenarioSelect?.addEventListener("change", () => {
+    state.selectedScenarioId = els.scenarioSelect.value;
+    syncSingleSelectionState({ preferRememberedScenario: false });
+    rememberSingleScenarioSelection();
     renderTemplates();
   });
   els.connectionState.addEventListener("click", openSettingsModal);
   els.singleConnectionState.addEventListener("click", openSettingsModal);
+  els.adminEntryBtn.addEventListener("click", openAdminEntry);
   els.openAuthBtn.addEventListener("click", () => openAuthModal({ locked: false }));
   els.authSubmitBtn.addEventListener("click", handleAuth);
   els.authModeTabs.forEach((button) => {
@@ -704,6 +995,7 @@ function bindEvents() {
   els.videoUploadInput?.addEventListener("change", (event) => handleVideoFiles(event.target.files));
   els.generateVideoPlanBtn?.addEventListener("click", handleVideoPrimaryAction);
   els.saveApiBtn?.addEventListener("click", saveSettings);
+  els.modelInput?.addEventListener("change", handleImageModelChange);
   els.testReferenceBtn.addEventListener("click", handleTestReferenceSupport);
   els.toggleKeyBtn?.addEventListener("click", toggleApiKey);
   els.sizeInput.addEventListener("change", () => {
@@ -810,6 +1102,41 @@ function loadAuthSession() {
 
 function hasAuthSession() {
   return Boolean(state.auth.token && state.auth.user);
+}
+
+function isAdminUser(user = state.auth.user) {
+  return String(user?.role || "").toLowerCase() === ADMIN_ROLE;
+}
+
+function setButtonLabel(button, label) {
+  if (!button) return;
+  const svg = button.querySelector("svg")?.outerHTML || "";
+  button.innerHTML = `${svg}${escapeHtml(label)}`;
+}
+
+function applySuiteAccessState() {
+  const admin = isAdminUser();
+  els.suiteNavItem?.classList.toggle("disabled", !admin);
+  els.suiteNavItem?.toggleAttribute("disabled", !admin);
+  els.suiteNavItem?.setAttribute("aria-disabled", admin ? "false" : "true");
+  els.suiteView?.classList.toggle("suite-disabled-view", !admin);
+  els.suiteView?.setAttribute("aria-disabled", admin ? "false" : "true");
+  if (els.generateSuiteBtn?.getAttribute("aria-busy") !== "true") {
+    els.generateSuiteBtn.disabled = !admin;
+    setButtonLabel(els.generateSuiteBtn, admin ? SUITE_ENABLED_LABEL : SUITE_DISABLED_LABEL);
+  }
+  if (!admin && document.body.dataset.view === "suite") switchView("generate");
+}
+
+function openAdminEntry() {
+  if (!state.auth.token) {
+    showToast("请先登录账号", true);
+    openAuthModal({ locked: false });
+    return;
+  }
+  const target = new URL(appRoute("/admin.html"), window.location.origin);
+  target.hash = new URLSearchParams({ [ADMIN_ENTRY_TOKEN_PARAM]: state.auth.token }).toString();
+  window.open(target.toString(), "_blank", "noopener");
 }
 
 function collectUserSource() {
@@ -967,7 +1294,11 @@ function clearAuthSession() {
   state.auth.videoModelSettings = {
     model: ""
   };
+  state.availableImageModels = [];
+  state.selectedImageModelId = "";
+  state.defaultImageModelId = "";
   if (els.apiKeyInput) els.apiKeyInput.value = "";
+  renderImageModelSelect();
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
 
@@ -976,6 +1307,7 @@ function renderAuthState() {
   els.accountTitle.textContent = user ? "当前账号" : "未登录";
   els.accountNameText.textContent = user ? user.name || "已登录账号" : "注册后使用工具";
   renderAccountKeyStatus();
+  applySuiteAccessState();
   els.logoutBtn.style.display = user ? "inline-flex" : "none";
   els.openAuthBtn.textContent = user ? "切换账号" : "登录 / 注册";
 }
@@ -1050,14 +1382,77 @@ function closeAuthModal() {
   els.authModal.dataset.locked = "false";
 }
 
+function normalizeAvailableImageModels(models) {
+  return (Array.isArray(models) ? models : [])
+    .filter((model) => model && model.enabled !== false && (model.id || model.providerModelId) && model.modelName)
+    .map((model) => ({
+      ...model,
+      id: model.id || model.providerModelId
+    }));
+}
+
+function imageModelLabel(model) {
+  const provider = String(model?.providerName || "").trim();
+  const name = String(model?.modelName || DEFAULT_MODEL).trim();
+  return provider ? `${provider} / ${name}` : name;
+}
+
+function selectedImageModel() {
+  return state.availableImageModels.find((model) => model.id === state.selectedImageModelId) || null;
+}
+
+function selectedImageModelName() {
+  return selectedImageModel()?.modelName || state.auth.modelSettings.model || DEFAULT_MODEL;
+}
+
+function renderImageModelSelect() {
+  if (!els.modelInput) return;
+  if (!state.availableImageModels.length) {
+    els.modelInput.innerHTML = `<option value="">${escapeHtml(state.auth.modelSettings.model || DEFAULT_MODEL)}</option>`;
+    els.modelInput.value = "";
+    els.modelInput.disabled = true;
+    return;
+  }
+  els.modelInput.disabled = false;
+  els.modelInput.innerHTML = state.availableImageModels
+    .map((model) => {
+      const defaultText = model.id === state.defaultImageModelId ? " · 默认" : "";
+      return `<option value="${escapeAttr(model.id)}">${escapeHtml(imageModelLabel(model) + defaultText)}</option>`;
+    })
+    .join("");
+  els.modelInput.value = state.availableImageModels.some((model) => model.id === state.selectedImageModelId)
+    ? state.selectedImageModelId
+    : state.availableImageModels[0].id;
+}
+
+function handleImageModelChange() {
+  state.selectedImageModelId = els.modelInput.value;
+  const model = selectedImageModel();
+  if (model) {
+    state.auth.modelSettings.model = model.modelName;
+    state.auth.modelSettings.endpoint = model.baseUrl || state.auth.modelSettings.endpoint || DEFAULT_ENDPOINT;
+  }
+  renderAuthState();
+  updateConnectionState();
+}
+
 async function loadAccountSettings() {
   const payload = await apiFetch("/settings");
   const settings = payload.settings || {};
   state.auth.apiKeyConfigured = Boolean(settings.imageApiKeyConfigured ?? settings.apiKeyConfigured);
   state.auth.videoApiKeyConfigured = Boolean(settings.videoApiKeyConfigured);
+  state.availableImageModels = normalizeAvailableImageModels(settings.availableImageModels);
+  state.defaultImageModelId =
+    settings.defaultImageModelId ||
+    state.availableImageModels.find((model) => model.isDefault)?.id ||
+    "";
+  state.selectedImageModelId = state.availableImageModels.some((model) => model.id === state.defaultImageModelId)
+    ? state.defaultImageModelId
+    : state.availableImageModels[0]?.id || "";
+  const selectedModel = selectedImageModel();
   state.auth.modelSettings = {
-    endpoint: settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT,
-    model: settings.model || settings.defaultModel || DEFAULT_MODEL
+    endpoint: selectedModel?.baseUrl || settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT,
+    model: selectedModel?.modelName || settings.model || settings.defaultModel || DEFAULT_MODEL
   };
   state.auth.videoModelSettings = {
     model: settings.videoModel || ""
@@ -1065,7 +1460,7 @@ async function loadAccountSettings() {
   applyPromptConfig(settings.promptConfig || currentPromptConfig());
   els.apiKeyInput.value = settings.apiKeyMasked || (state.auth.apiKeyConfigured ? "已配置" : "未配置");
   if (els.endpointInput) els.endpointInput.value = state.auth.modelSettings.endpoint;
-  els.modelInput.value = state.auth.modelSettings.model;
+  renderImageModelSelect();
   const localSize = normalizeImageSize(localStorage.getItem("imageStudio.size"));
   const savedSize = localSize || normalizeImageSize(settings.size) || "1024x1024";
   applyDetectedSize(savedSize);
@@ -1963,7 +2358,7 @@ async function handleGenerateSuite() {
         suiteId,
         shotId: shot.id,
 	        shotName: shot.name,
-	        model: els.modelInput.value.trim() || DEFAULT_MODEL,
+	        model: selectedImageModelName(),
 	        size: requestedSize,
 	        request: images[0].request || state.lastRequestPayload,
 	        remoteAssetId: images[0].remoteAssetId || images[0].generatedAssetId || "",
@@ -2082,6 +2477,41 @@ function defaultSingleTemplate(allTemplates = currentPromptConfig().single.templ
   );
 }
 
+function renderTemplates() {
+  const selection = syncSingleSelectionState({ preferRememberedScenario: true });
+  if (!els.templateSelectionHint) return;
+  if (!selection.template || !selection.platform || !selection.category || !selection.scenario) {
+    els.templateSelectionHint.innerHTML = `<span>请选择平台、品类和场景</span>`;
+    return;
+  }
+  els.templateSelectionHint.innerHTML = `
+    <strong>${escapeHtml(selection.scenario.title || selection.template.title || "已选场景")}</strong>
+    <span>${escapeHtml(selection.platform.label)} / ${escapeHtml(selection.category.label)}</span>
+  `;
+}
+
+function selectedSingleTemplate() {
+  return resolveSingleTemplateSelection({ preferRememberedScenario: true }).template || defaultSingleTemplate();
+}
+
+function defaultSingleTemplate(allTemplates = currentPromptConfig().single.templates || []) {
+  const singleConfig = currentPromptConfig().single || {};
+  const defaults = singleConfig.matrix?.defaults || singleConfig.defaults || {};
+  return (
+    allTemplates.find((template) => template.id === singleConfig.defaultTemplateId) ||
+    allTemplates.find((template) => template.id === DEFAULT_SINGLE_TEMPLATE_ID) ||
+    allTemplates.find(
+      (template) =>
+        template.platform === defaults.platformId &&
+        template.category === defaults.categoryId &&
+        template.scenario === defaults.scenarioId
+    ) ||
+    allTemplates.find((template) => template.category === (singleConfig.defaultTemplateCategory || DEFAULT_SINGLE_TEMPLATE_CATEGORY)) ||
+    allTemplates[0] ||
+    null
+  );
+}
+
 function loadUserTemplates() {
   userTemplates = [];
 }
@@ -2113,7 +2543,8 @@ function loadSettings() {
   localStorage.removeItem("imageStudio.apiKey");
   els.apiKeyInput.value = "";
   if (els.endpointInput) els.endpointInput.value = DEFAULT_ENDPOINT;
-  els.modelInput.value = DEFAULT_MODEL;
+  state.auth.modelSettings.model = DEFAULT_MODEL;
+  renderImageModelSelect();
   const rawSavedSize = localStorage.getItem("imageStudio.size");
   const savedSize = normalizeImageSize(rawSavedSize) || "1024x1024";
   if (rawSavedSize !== savedSize) {
@@ -2430,7 +2861,7 @@ async function handleGenerate() {
       prompt: `模板：${template.title}`,
       createdAt: new Date().toISOString(),
 	      source: "generation",
-	      model: els.modelInput.value.trim() || DEFAULT_MODEL,
+	      model: selectedImageModelName(),
 	      size: els.sizeInput.value,
 	      request: image.request || state.lastRequestPayload,
 	      remoteAssetId: image.remoteAssetId || image.generatedAssetId || "",
@@ -2489,7 +2920,7 @@ async function handleRefine() {
       createdAt: new Date().toISOString(),
       source: "refinement",
       parentId: state.selectedImage.id,
-      model: els.modelInput.value.trim() || DEFAULT_MODEL,
+      model: selectedImageModelName(),
       size: els.sizeInput.value,
       request: images[0].request || state.lastRequestPayload,
       remoteAssetId: images[0].remoteAssetId || images[0].generatedAssetId || "",
@@ -2527,6 +2958,7 @@ async function requestImages({ prompt, templateId, variantIndex = 0, count, size
     size: requestSize,
     referenceImages: references
   };
+  if (state.selectedImageModelId) requestBody.imageModelId = state.selectedImageModelId;
   if (templateId) {
     requestBody.templateId = templateId;
     if (variantIndex) requestBody.variantIndex = variantIndex;
@@ -2686,7 +3118,7 @@ function estimateTokens(value) {
 }
 
 function extractModelFromBody(body) {
-  return body?.model || els.modelInput?.value || DEFAULT_MODEL;
+  return body?.model || selectedImageModelName();
 }
 
 function extractSizeFromBody(body) {
@@ -3772,4 +4204,89 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function renderTemplates() {
+  const selection = syncSingleSelectionState({ preferRememberedScenario: true });
+  if (!els.templateSelectionHint) return;
+  if (!selection.template || !selection.platform || !selection.category || !selection.scenario) {
+    els.templateSelectionHint.innerHTML = `<span>请选择平台、品类和场景</span>`;
+    return;
+  }
+  els.templateSelectionHint.innerHTML = `
+    <strong>${escapeHtml(selection.scenario.title || selection.template.title || "已选场景")}</strong>
+    <span>${escapeHtml(selection.platform.label)} / ${escapeHtml(selection.category.label)}</span>
+  `;
+}
+
+function selectedSingleTemplate() {
+  return resolveSingleTemplateSelection({ preferRememberedScenario: true }).template || defaultSingleTemplate();
+}
+
+function defaultSingleTemplate(allTemplates = currentPromptConfig().single.templates || []) {
+  const singleConfig = currentPromptConfig().single || {};
+  const defaults = singleConfig.matrix?.defaults || singleConfig.defaults || {};
+  return (
+    allTemplates.find((template) => template.id === singleConfig.defaultTemplateId) ||
+    allTemplates.find((template) => template.id === DEFAULT_SINGLE_TEMPLATE_ID) ||
+    allTemplates.find(
+      (template) =>
+        template.platform === defaults.platformId &&
+        template.category === defaults.categoryId &&
+        template.scenario === defaults.scenarioId
+    ) ||
+    allTemplates.find((template) => template.category === (singleConfig.defaultTemplateCategory || DEFAULT_SINGLE_TEMPLATE_CATEGORY)) ||
+    allTemplates[0] ||
+    null
+  );
+}
+
+async function handleGenerate() {
+  const selection = resolveSingleTemplateSelection({ preferRememberedScenario: true });
+  const template = selection.template;
+  if (!template || template.id !== state.selectedTemplateId) {
+    showToast("请先选择平台、品类和场景", true);
+    return;
+  }
+  if (!(await ensureApiReady())) return;
+  const verifiedSelection = resolveSingleTemplateSelection({ preferRememberedScenario: true });
+  if (!verifiedSelection.template || verifiedSelection.template.id !== template.id) {
+    showToast("请先完成三级筛选选择", true);
+    return;
+  }
+  const count = clamp(parseInt(els.countInput.value, 10) || 1, 1, 8);
+  els.countInput.value = String(count);
+
+  state.referenceFallbackNotice = "";
+  setBusy(true, els.generateBtn, "生成中");
+  renderLoadingGrid(els.resultGrid, count);
+  try {
+    const { images, calls } = await requestImagesExact({
+      templateId: template.id,
+      count,
+      size: els.sizeInput.value,
+      referenceImages: state.uploaded
+    });
+    state.generated = images.map((image, index) => ({
+      id: createId("gen"),
+      name: `${timestampName()}-${index + 1}`,
+      url: image.url,
+      prompt: `模板：${template.title}`,
+      createdAt: new Date().toISOString(),
+      source: "generation",
+      model: selectedImageModelName(),
+      size: els.sizeInput.value,
+      request: image.request || state.lastRequestPayload,
+      remoteAssetId: image.remoteAssetId || image.generatedAssetId || "",
+      generatedAssetId: image.generatedAssetId || image.remoteAssetId || ""
+    }));
+    renderResults();
+    showGenerationToast(`已生成 ${state.generated.length} 张图片，API 调用 ${calls} 次`);
+  } catch (error) {
+    els.resultGrid.className = "result-grid empty-state";
+    els.resultGrid.innerHTML = `<div class="empty-copy"><strong>生成失败</strong><span>${escapeHtml(error.message)}</span></div>`;
+    showToast(error.message, true);
+  } finally {
+    setBusy(false, els.generateBtn, "生成图片");
+  }
 }

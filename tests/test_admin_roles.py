@@ -13,7 +13,7 @@ import server
 
 class UsernameAuthSchemaTests(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp_dir.cleanup)
         self.original_storage_dir = server.STORAGE_DIR
         self.original_db_path = server.DB_PATH
@@ -222,7 +222,7 @@ class UsernameAuthSchemaTests(unittest.TestCase):
 
 class AdminRoleTests(unittest.TestCase):
     def setUp(self):
-        self.temp_dir = tempfile.TemporaryDirectory()
+        self.temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
         self.addCleanup(self.temp_dir.cleanup)
         self.original_storage_dir = server.STORAGE_DIR
         self.original_db_path = server.DB_PATH
@@ -250,6 +250,7 @@ class AdminRoleTests(unittest.TestCase):
     def stop_server(self):
         self.httpd.shutdown()
         self.httpd.server_close()
+        self.thread.join(timeout=5)
 
     def request(self, method, path, body=None, token=None):
         data = json.dumps(body).encode("utf-8") if body is not None else None
@@ -491,7 +492,7 @@ class AdminRoleTests(unittest.TestCase):
             status, payload = self.request(
                 "POST",
                 "/api/generate",
-                {"templateId": "main-white", "count": 1, "size": "1024x1024"},
+                {"templateId": "amazon-aplus-3c-digital-accessories-brand-story", "count": 1, "size": "1024x1024"},
                 token=user_payload["token"],
             )
 
@@ -712,6 +713,8 @@ class AdminRoleTests(unittest.TestCase):
         prompt_config = settings_payload["settings"]["promptConfig"]
         self.assertNotIn("custom", [item["id"] for item in prompt_config["single"]["templateCategories"]])
         self.assertNotIn("prompt", prompt_config["single"]["templates"][0])
+        self.assertIn("matrix", prompt_config["single"])
+        self.assertNotIn("prompt", prompt_config["single"]["matrix"]["platforms"][0]["categories"][0]["scenarios"][0])
         self.assertNotIn("prompt", prompt_config["suite"]["presets"][0]["shots"][0])
         self.assertNotIn("平台合规白底主图", json.dumps(prompt_config, ensure_ascii=False))
 

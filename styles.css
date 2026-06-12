@@ -336,6 +336,16 @@ svg {
   padding: 28px;
 }
 
+.workspace-global-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin: -4px 0 10px;
+}
+
+.admin-entry-button {
+  min-height: 36px;
+}
+
 .view {
   display: none;
 }
@@ -869,6 +879,28 @@ input[readonly] {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.template-tools select {
+  min-width: 150px;
+}
+
+.template-selection-hint {
+  display: grid;
+  gap: 4px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.96), rgba(246, 252, 255, 0.86));
+}
+
+.template-selection-hint strong {
+  font-size: 13px;
+}
+
+.template-selection-hint span {
+  color: var(--muted);
+  font-size: 12px;
 }
 
 .mini-button {
@@ -2303,6 +2335,20 @@ input[readonly] {
 
 .admin-login-panel {
   width: 100%;
+}
+
+.admin-access-denied {
+  display: grid;
+  min-height: calc(100vh - 64px);
+  place-items: center;
+  gap: 6px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.admin-access-denied strong {
+  color: var(--ink);
+  font-size: 22px;
 }
 
 .admin-login-grid {

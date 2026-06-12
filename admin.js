@@ -2,6 +2,7 @@
 
 const APP_BASE_PATH = detectAppBasePath();
 const ADMIN_TOKEN_KEY = "imageStudio.adminToken";
+const ADMIN_ENTRY_TOKEN_PARAM = "adminToken";
 const PROMPT_GROUPS = [
   { id: "single", label: "单图模板" },
   { id: "suite", label: "套图生成" },
@@ -49,6 +50,7 @@ function appRoute(path) {
 
 document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
+  adoptTransferredAdminToken();
   if (!state.token) {
     redirectToAdminLogin("required");
     return;
@@ -60,6 +62,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     await adminFetch("/me");
     await loadDashboard();
   } catch (error) {
+    if (error.accessDenied) {
+      renderAccessDenied();
+      return;
+    }
     if (state.token) showToast(error.message, true);
   }
   renderShell();
@@ -68,6 +74,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 function cacheElements() {
   Object.assign(els, {
     adminDashboard: document.getElementById("adminDashboard"),
+    adminAccessDenied: document.getElementById("adminAccessDenied"),
     adminLogoutBtn: document.getElementById("adminLogoutBtn"),
     adminNavItems: document.querySelectorAll(".admin-nav-item"),
     adminViews: document.querySelectorAll("[data-admin-view-panel]"),
@@ -150,9 +157,40 @@ function bindEvents() {
 }
 
 function renderShell() {
+  if (els.adminAccessDenied && !els.adminAccessDenied.hidden) return;
   els.adminDashboard.hidden = !state.token;
   els.adminLogoutBtn.style.display = state.token ? "inline-flex" : "none";
   switchAdminView(state.activeAdminView);
+}
+
+function adoptTransferredAdminToken() {
+  const hashParams = new URLSearchParams((window.location.hash || "").replace(/^#/, ""));
+  const searchParams = new URLSearchParams(window.location.search || "");
+  const transferredToken =
+    hashParams.get(ADMIN_ENTRY_TOKEN_PARAM) ||
+    searchParams.get(ADMIN_ENTRY_TOKEN_PARAM) ||
+    hashParams.get("token") ||
+    searchParams.get("token");
+  if (!transferredToken) return;
+
+  state.token = transferredToken;
+  localStorage.setItem(ADMIN_TOKEN_KEY, transferredToken);
+
+  const cleanUrl = new URL(window.location.href);
+  cleanUrl.searchParams.delete(ADMIN_ENTRY_TOKEN_PARAM);
+  cleanUrl.searchParams.delete("token");
+  cleanUrl.hash = "";
+  window.history.replaceState(null, "", cleanUrl.toString());
+}
+
+function renderAccessDenied() {
+  clearAdmin();
+  document.querySelector(".admin-header")?.setAttribute("hidden", "");
+  els.adminDashboard.hidden = true;
+  els.adminLogoutBtn.style.display = "none";
+  if (els.adminAccessDenied) {
+    els.adminAccessDenied.hidden = false;
+  }
 }
 
 function switchAdminView(viewName) {
@@ -184,6 +222,12 @@ async function adminFetch(path, options = {}) {
     payload = { error: text };
   }
   if (!response.ok) {
+    if (response.status === 403) {
+      const error = new Error("你不是管理员");
+      error.accessDenied = true;
+      clearAdmin();
+      throw error;
+    }
     if (response.status === 401 || response.status === 403) {
       const error = new Error("登录已过期，请重新登录");
       error.authFailure = true;
@@ -1340,4 +1384,64 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value).replaceAll("`", "&#096;");
+}
+
+function renderSinglePromptConfig(config) {
+  const platforms = config.single?.matrix?.platforms || [];
+  return [
+    promptSection(
+      "单图三级矩阵",
+      platforms
+        .map(
+          (platform, platformIndex) => `
+            <article class="admin-prompt-card">
+              <div class="admin-prompt-card-head">
+                <strong>${escapeHtml(platform.label)}</strong>
+                <span>${escapeHtml(platform.id)}</span>
+              </div>
+              ${(platform.categories || [])
+                .map(
+                  (category, categoryIndex) => `
+                    <div class="admin-prompt-subcard">
+                      <div class="admin-prompt-card-head">
+                        <strong>${escapeHtml(category.label)}</strong>
+                        <span>${escapeHtml(category.id)}</span>
+                      </div>
+                      ${(category.scenarios || [])
+                        .map(
+                          (scenario, scenarioIndex) => `
+                            <div class="admin-prompt-subcard">
+                              <div class="admin-prompt-card-head">
+                                <strong>${escapeHtml(scenario.title)}</strong>
+                                <span>${escapeHtml(scenario.id)} / ${escapeHtml(scenario.templateId)}</span>
+                              </div>
+                              ${promptField(
+                                `single.matrix.platforms.${platformIndex}.categories.${categoryIndex}.scenarios.${scenarioIndex}.title`,
+                                "场景标题",
+                                scenario.title,
+                                { type: "input" }
+                              )}
+                              ${promptField(
+                                `single.matrix.platforms.${platformIndex}.categories.${categoryIndex}.scenarios.${scenarioIndex}.prompt`,
+                                "场景提示词",
+                                scenario.prompt
+                              )}
+                            </div>
+                          `
+                        )
+                        .join("")}
+                    </div>
+                  `
+                )
+                .join("")}
+            </article>
+          `
+        )
+        .join("")
+    ),
+    promptSection(
+      "补图变体提示词",
+      promptField("single.supplementalVariantPrompt", "补图变体文案", config.single.supplementalVariantPrompt)
+    )
+  ].join("");
 }

@@ -73,6 +73,10 @@
       </aside>
 
       <main class="workspace">
+        <div class="workspace-global-actions">
+          <button class="ghost-button admin-entry-button" id="adminEntryBtn" type="button">管理员入口</button>
+        </div>
+
         <section id="view-suite" class="view suite-disabled-view" aria-labelledby="suiteTitle" aria-disabled="true">
           <div class="topbar hero-topbar">
             <div>
@@ -211,7 +215,7 @@
                 <div class="template-head">
                   <span>提示词模板</span>
                   <div class="template-tools">
-                    <select id="templateFilter" aria-label="筛选提示词模板">
+                    <select id="platformSelect" aria-label="选择平台">
                       <option value="all">全部模板</option>
                       <option value="main">主图</option>
                       <option value="scene">场景图</option>
@@ -220,9 +224,11 @@
                       <option value="aplus" selected>Amazon A+</option>
                       <option value="season">活动图</option>
                     </select>
+                    <select id="categorySelect" aria-label="选择品类"></select>
+                    <select id="scenarioSelect" aria-label="选择场景"></select>
                   </div>
                 </div>
-                <div id="templateGrid" class="template-grid"></div>
+                <div id="templateSelectionHint" class="template-selection-hint" aria-live="polite"></div>
               </div>
 
               <div class="settings-grid">
@@ -559,7 +565,9 @@
             <input id="endpointInput" type="hidden" value="https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/" />
             <label class="field">
               <span>模型</span>
-              <input id="modelInput" type="text" value="gemini-2.5-flash-image" readonly />
+              <select id="modelInput" aria-label="模型">
+                <option value="">gemini-2.5-flash-image</option>
+              </select>
             </label>
           </div>
           <div id="referenceProbePanel" class="reference-probe-panel" aria-live="polite"></div>

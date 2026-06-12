@@ -67,6 +67,233 @@ LOCKED_PROMPT_CONFIG_KEYS = {"id", "url"}
 USER_ROLE = "user"
 ADMIN_ROLE = "admin"
 VALID_USER_ROLES = {USER_ROLE, ADMIN_ROLE}
+LEGACY_SINGLE_SCENE_MAP = {
+    "aplus-brand-story": ("amazon-aplus", "brand-story"),
+    "aplus-lifestyle": ("amazon-aplus", "lifestyle-module"),
+    "aplus-hotspot-detail": ("amazon-aplus", "hotspot-detail"),
+    "aplus-benefit-grid": ("amazon-aplus", "benefit-grid"),
+    "content-banner": ("shopify-dtc", "hero-visual"),
+    "content-comparison": ("shopify-dtc", "conversion-module"),
+    "scene-use": ("tiktok-shop", "use-moment"),
+    "scene-home": ("shopify-dtc", "lifestyle-story"),
+    "info-feature": ("shopee-lazada", "clear-selling-point"),
+    "info-size": ("temu-aliexpress", "spec-density"),
+    "season-promo": ("shopee-lazada", "promo-visual"),
+    "season-gift": ("shein", "value-look"),
+}
+SINGLE_CATEGORY_LABELS = {
+    "3c-digital-accessories": "3C数码配件",
+    "home-kitchen": "家居厨房",
+    "beauty-personal-care": "美妆个护",
+    "health-home-care": "健康护理",
+    "tools-automotive": "汽摩工具",
+    "fashion-accessories": "服饰鞋包配饰",
+    "pet-supplies": "宠物用品",
+    "food-beverages": "食品饮品",
+    "party-decor": "节日礼品/派对装饰",
+}
+SINGLE_PLATFORM_DEFS = [
+    {
+        "id": "amazon-aplus",
+        "label": "Amazon A+",
+        "categories": [
+            "3c-digital-accessories",
+            "home-kitchen",
+            "beauty-personal-care",
+            "health-home-care",
+            "tools-automotive",
+        ],
+    },
+    {
+        "id": "tiktok-shop",
+        "label": "TikTok Shop",
+        "categories": [
+            "beauty-personal-care",
+            "fashion-accessories",
+            "home-kitchen",
+            "pet-supplies",
+            "food-beverages",
+        ],
+    },
+    {
+        "id": "shopify-dtc",
+        "label": "Shopify / DTC 独立站",
+        "categories": [
+            "beauty-personal-care",
+            "fashion-accessories",
+            "home-kitchen",
+            "health-home-care",
+            "pet-supplies",
+        ],
+    },
+    {
+        "id": "shopee-lazada",
+        "label": "Shopee / Lazada",
+        "categories": [
+            "3c-digital-accessories",
+            "home-kitchen",
+            "beauty-personal-care",
+            "fashion-accessories",
+            "party-decor",
+        ],
+    },
+    {
+        "id": "temu-aliexpress",
+        "label": "Temu / AliExpress",
+        "categories": [
+            "3c-digital-accessories",
+            "home-kitchen",
+            "tools-automotive",
+            "pet-supplies",
+            "party-decor",
+        ],
+    },
+    {
+        "id": "shein",
+        "label": "SHEIN",
+        "categories": [
+            "fashion-accessories",
+            "beauty-personal-care",
+            "home-kitchen",
+            "pet-supplies",
+            "party-decor",
+        ],
+    },
+]
+SINGLE_PLATFORM_SCENES = {
+    "amazon-aplus": [
+        {
+            "id": "brand-story",
+            "title": "品牌故事横幅",
+            "prompt": "生成 Amazon A+ 品牌故事横幅：以当前参考商品为视觉主角，围绕{category}的真实使用价值、品牌气质与购买场景构图，保留清晰标题与品牌文案安全区，画面可信、克制、适合后期排版，不生成平台标识、认证、排名或夸张承诺。",
+        },
+        {
+            "id": "lifestyle-module",
+            "title": "场景模块",
+            "prompt": "生成 Amazon A+ 场景模块图：围绕{category}商品构建真实生活方式场景，强调用户使用瞬间和场景价值，商品细节清晰可辨，环境服务于商品表达，预留短文案安全区，不生成虚假前后对比或不可验证效果。",
+        },
+        {
+            "id": "hotspot-detail",
+            "title": "热点细节",
+            "prompt": "生成 Amazon A+ 热点细节图：近景展示{category}商品的关键结构、材质、纹理、接口或配件细节，周围保留热点标注安全区，背景干净，细节真实，不添加未经验证的参数、认证或图标。",
+        },
+        {
+            "id": "benefit-grid",
+            "title": "图文模块",
+            "prompt": "生成 Amazon A+ 图文模块图：为{category}商品构建三栏或四栏的模块化视觉，每个区域对应卖点、材质、功能或适用场景，版式清楚、留白稳定，适合后期叠加文案，不生成真实可读文字。",
+        },
+    ],
+    "tiktok-shop": [
+        {
+            "id": "strong-scene",
+            "title": "强场景",
+            "prompt": "生成 TikTok Shop 强场景主视觉：围绕{category}商品构建抓眼的真实场景，强调第一眼停留和情绪代入，商品保持清晰可信，画面有短视频封面感，但不夸大效果、不生成平台 UI。",
+        },
+        {
+            "id": "use-moment",
+            "title": "使用瞬间",
+            "prompt": "生成 TikTok Shop 使用瞬间图：捕捉{category}商品被自然使用的关键瞬间，动作明确、商品靠近视觉中心、细节清楚，强调真实使用价值和即时感受，适合短视频或商品卡封面延展。",
+        },
+        {
+            "id": "trend-seeding",
+            "title": "种草感",
+            "prompt": "生成 TikTok Shop 种草感素材：为{category}商品构建有潮流感、分享感和讨论度的视觉氛围，商品仍然真实可信，画面要有社媒传播感和购买冲动，但避免虚假功效和违规承诺。",
+        },
+        {
+            "id": "quick-sell-point",
+            "title": "快节奏卖点",
+            "prompt": "生成 TikTok Shop 快节奏卖点图：围绕{category}商品突出一到两个最能打动用户的核心卖点，构图简洁直接，适合移动端快速浏览和转化，不生成真实文字，保留信息叠加空间。",
+        },
+    ],
+    "shopify-dtc": [
+        {
+            "id": "hero-visual",
+            "title": "首屏视觉",
+            "prompt": "生成 Shopify / DTC 独立站首屏视觉：以{category}商品为主角，构建品牌感强、排版空间稳定的横版主视觉，适合承接标题、价值主张和按钮区域，画面高级克制、不过度营销。",
+        },
+        {
+            "id": "lifestyle-story",
+            "title": "生活方式",
+            "prompt": "生成 Shopify / DTC 生活方式场景图：通过真实环境和自然人物关系表达{category}商品的使用语境、品牌态度和日常价值，商品保持清晰真实，画面适合详情页连续叙事。",
+        },
+        {
+            "id": "benefit-section",
+            "title": "卖点模块",
+            "prompt": "生成 Shopify / DTC 卖点模块图：围绕{category}商品构建适合网站转化页的分区式视觉，突出材质、功能、体验或成分优势，保留模块化留白，不生成真实可读文字。",
+        },
+        {
+            "id": "conversion-module",
+            "title": "转化页素材",
+            "prompt": "生成 Shopify / DTC 转化页素材：围绕{category}商品构建可信的购买理由场景，可用于对比、信任、FAQ 或组合销售模块，信息结构清楚，画面服务于转化，不生成夸张效果承诺。",
+        },
+    ],
+    "shopee-lazada": [
+        {
+            "id": "clear-selling-point",
+            "title": "清晰卖点",
+            "prompt": "生成 Shopee / Lazada 清晰卖点图：围绕{category}商品突出核心功能、材质或使用价值，画面信息清晰、移动端易扫读，保留价格和短文案排版空间，不生成真实可读文字。",
+        },
+        {
+            "id": "promo-visual",
+            "title": "促销感",
+            "prompt": "生成 Shopee / Lazada 促销主视觉：让{category}商品保持清晰居中，背景有活动氛围但不过度装饰，预留价格、优惠与活动信息区域，适配大促、秒杀与站内推荐位。",
+        },
+        {
+            "id": "mobile-spec",
+            "title": "移动端规格图",
+            "prompt": "生成 Shopee / Lazada 移动端规格图：以{category}商品为中心，版式紧凑清楚，适合尺寸、规格、套装或包装信息叠加，保证小屏浏览时也能快速理解商品差异点。",
+        },
+        {
+            "id": "activity-blank",
+            "title": "活动留白图",
+            "prompt": "生成 Shopee / Lazada 活动留白图：为{category}商品构建简洁醒目的视觉底图，商品主体清晰，保留较大留白区域承接活动标题、价格或利益点，适合高频促销运营。",
+        },
+    ],
+    "temu-aliexpress": [
+        {
+            "id": "spec-density",
+            "title": "高信息密度",
+            "prompt": "生成 Temu / AliExpress 高信息密度商品图：围绕{category}商品展示规格、尺寸、套装或结构重点，版式清楚、信息承载力强，适合后期叠加多项说明，但不生成真实可读文字。",
+        },
+        {
+            "id": "function-detail",
+            "title": "功能细节",
+            "prompt": "生成 Temu / AliExpress 功能细节图：用近景或拆解式视角展示{category}商品的关键结构、功能部位、材质或安装点，商品要真实可信，适合快速决策型电商浏览。",
+        },
+        {
+            "id": "bundle-price",
+            "title": "套装/价格感",
+            "prompt": "生成 Temu / AliExpress 套装与价格感视觉：为{category}商品构建适合表达组合装、规格差异和高性价比感受的商品图，画面直给、清楚，保留利益点信息区，不出现具体价格数字。",
+        },
+        {
+            "id": "quick-decision",
+            "title": "快速决策",
+            "prompt": "生成 Temu / AliExpress 快速决策图：围绕{category}商品突出一眼能理解的购买理由、适用场景和差异点，适合移动端高速浏览，构图直接，不加入无法验证的认证或承诺。",
+        },
+    ],
+    "shein": [
+        {
+            "id": "trend-look",
+            "title": "潮流造型",
+            "prompt": "生成 SHEIN 潮流造型图：围绕{category}商品构建年轻、时尚、有搭配感的视觉，突出当下流行气质和可复制穿搭/使用氛围，商品细节真实，画面适合社媒和站内种草。",
+        },
+        {
+            "id": "value-look",
+            "title": "性价比表达",
+            "prompt": "生成 SHEIN 性价比表达图：围绕{category}商品展现高完成度、易入手、好搭配或好使用的视觉印象，画面有吸引力但不过度昂贵化，适合年轻消费决策场景。",
+        },
+        {
+            "id": "styling-scene",
+            "title": "调性场景",
+            "prompt": "生成 SHEIN 调性场景图：为{category}商品构建有风格、有生活方式感的使用或搭配环境，强调氛围、层次和调性统一，商品仍需清晰可信，适合品牌化陈列。",
+        },
+        {
+            "id": "vibe-detail",
+            "title": "氛围细节",
+            "prompt": "生成 SHEIN 氛围细节图：近景展示{category}商品的面料、纹理、配色、装饰或局部亮点，画面精致、适合年轻时尚审美，避免过度修饰和虚假材质表现。",
+        },
+    ],
+}
 
 
 def now_iso() -> str:
@@ -383,7 +610,7 @@ def seed_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
     )
 
 
-def default_prompt_config() -> dict:
+def bundled_prompt_config() -> dict:
     try:
         return json.loads(PROMPT_CONFIG_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -423,6 +650,191 @@ def default_prompt_config() -> dict:
         }
 
 
+def build_single_template_categories(single_matrix: dict) -> list[dict]:
+    categories = [{"id": "all", "label": "全部模板"}]
+    seen: set[str] = set()
+    for platform in single_matrix.get("platforms", []):
+        for category in platform.get("categories", []):
+            category_id = str(category.get("id") or "").strip()
+            if not category_id or category_id in seen:
+                continue
+            seen.add(category_id)
+            categories.append(
+                {"id": category_id, "label": trim_text(str(category.get("label") or ""), 120) or category_id}
+            )
+    return categories
+
+
+def legacy_single_template_defaults() -> list[dict]:
+    config = bundled_prompt_config()
+    templates = config.get("single", {}).get("templates", [])
+    return copy.deepcopy(templates) if isinstance(templates, list) else []
+
+
+def build_single_templates_from_matrix(single_matrix: dict, legacy_templates: list[dict] | None = None) -> list[dict]:
+    templates = []
+    for platform in single_matrix.get("platforms", []):
+        platform_id = str(platform.get("id") or "").strip()
+        for category in platform.get("categories", []):
+            category_id = str(category.get("id") or "").strip()
+            category_label = trim_text(str(category.get("label") or ""), 120) or category_id
+            for scenario in category.get("scenarios", []):
+                template_id = trim_text(str(scenario.get("templateId") or ""), 160)
+                if not template_id:
+                    continue
+                templates.append(
+                    {
+                        "id": template_id,
+                        "category": category_id,
+                        "platform": platform_id,
+                        "scenario": str(scenario.get("id") or "").strip(),
+                        "title": trim_text(str(scenario.get("title") or ""), 200) or template_id,
+                        "prompt": trim_text(str(scenario.get("prompt") or ""), PROMPT_TEXT_LIMIT),
+                        "categoryLabel": category_label,
+                    }
+                )
+    if isinstance(legacy_templates, list):
+        for template in legacy_templates:
+            if not isinstance(template, dict):
+                continue
+            template_id = trim_text(str(template.get("id") or ""), 160)
+            if not template_id or any(item["id"] == template_id for item in templates):
+                continue
+            templates.append(
+                {
+                    "id": template_id,
+                    "category": trim_text(str(template.get("category") or ""), 120),
+                    "platform": "",
+                    "scenario": "",
+                    "title": trim_text(str(template.get("title") or ""), 200) or template_id,
+                    "prompt": trim_text(str(template.get("prompt") or ""), PROMPT_TEXT_LIMIT),
+                    "categoryLabel": "",
+                }
+            )
+    return templates
+
+
+def build_default_single_prompt_config() -> dict:
+    platforms = []
+    for platform in SINGLE_PLATFORM_DEFS:
+        categories = []
+        for category_id in platform["categories"]:
+            category_label = SINGLE_CATEGORY_LABELS[category_id]
+            scenarios = []
+            for scene in SINGLE_PLATFORM_SCENES[platform["id"]]:
+                template_id = f"{platform['id']}-{category_id}-{scene['id']}"
+                scenarios.append(
+                    {
+                        "id": scene["id"],
+                        "title": scene["title"],
+                        "prompt": prompt_text(scene["prompt"], {"category": category_label}),
+                        "templateId": template_id,
+                    }
+                )
+            categories.append({"id": category_id, "label": category_label, "scenarios": scenarios})
+        platforms.append({"id": platform["id"], "label": platform["label"], "categories": categories})
+
+    defaults = {"platformId": platforms[0]["id"], "categoryId": platforms[0]["categories"][0]["id"], "scenarioId": platforms[0]["categories"][0]["scenarios"][0]["id"]}
+    matrix = {"defaults": defaults, "platforms": platforms}
+    templates = build_single_templates_from_matrix(matrix, legacy_single_template_defaults())
+    return {
+        "defaults": defaults,
+        "matrix": matrix,
+        "templateCategories": build_single_template_categories(matrix),
+        "templates": templates,
+        "defaultTemplateCategory": defaults["categoryId"],
+        "defaultTemplateId": templates[0]["id"] if templates else "",
+        "supplementalVariantPrompt": "",
+    }
+
+
+def apply_legacy_single_template_overrides(single_matrix: dict, legacy_templates: list[dict]) -> None:
+    if not isinstance(legacy_templates, list):
+        return
+    overrides = {
+        trim_text(str(template.get("id") or ""), 160): template
+        for template in legacy_templates
+        if isinstance(template, dict) and template.get("id")
+    }
+    for legacy_id, (platform_id, scenario_id) in LEGACY_SINGLE_SCENE_MAP.items():
+        override = overrides.get(legacy_id)
+        if not isinstance(override, dict):
+            continue
+        title = trim_text(str(override.get("title") or ""), 200)
+        prompt_value = trim_text(str(override.get("prompt") or ""), PROMPT_TEXT_LIMIT)
+        for platform in single_matrix.get("platforms", []):
+            if str(platform.get("id") or "") != platform_id:
+                continue
+            for category in platform.get("categories", []):
+                for scenario in category.get("scenarios", []):
+                    if str(scenario.get("id") or "") != scenario_id:
+                        continue
+                    if title:
+                        scenario["title"] = title
+                    if prompt_value:
+                        scenario["prompt"] = prompt_value
+
+
+def normalize_single_defaults(single_config: dict) -> dict:
+    matrix = single_config.get("matrix", {})
+    platforms = matrix.get("platforms", [])
+    first_platform = platforms[0] if platforms else {}
+    first_category = (first_platform.get("categories") or [{}])[0]
+    first_scenario = (first_category.get("scenarios") or [{}])[0]
+    defaults = single_config.get("defaults", {}) if isinstance(single_config.get("defaults"), dict) else {}
+    platform_id = trim_text(str(defaults.get("platformId") or ""), 120)
+    platform = next((item for item in platforms if str(item.get("id") or "") == platform_id), None) or first_platform
+    categories = platform.get("categories", []) if isinstance(platform, dict) else []
+    category_id = trim_text(str(defaults.get("categoryId") or ""), 120)
+    category = next((item for item in categories if str(item.get("id") or "") == category_id), None) or (categories[0] if categories else first_category)
+    scenarios = category.get("scenarios", []) if isinstance(category, dict) else []
+    scenario_id = trim_text(str(defaults.get("scenarioId") or ""), 120)
+    scenario = next((item for item in scenarios if str(item.get("id") or "") == scenario_id), None) or (scenarios[0] if scenarios else first_scenario)
+    return {
+        "platformId": trim_text(str(platform.get("id") or ""), 120),
+        "categoryId": trim_text(str(category.get("id") or ""), 120),
+        "scenarioId": trim_text(str(scenario.get("id") or ""), 120),
+    }
+
+
+def default_prompt_config() -> dict:
+    config = bundled_prompt_config()
+    config["version"] = max(2, int(config.get("version") or 0))
+    config["single"] = build_default_single_prompt_config()
+    return config
+
+
+def normalize_single_prompt_config(source_single, default_single: dict) -> dict:
+    single = merge_prompt_config(copy.deepcopy(default_single), source_single if isinstance(source_single, dict) else {})
+    if isinstance(source_single, dict) and not isinstance(source_single.get("matrix"), dict):
+        apply_legacy_single_template_overrides(single.get("matrix", {}), source_single.get("templates", []))
+    defaults = normalize_single_defaults(single)
+    single["defaults"] = defaults
+    single["matrix"]["defaults"] = defaults
+    legacy_templates = None
+    if isinstance(source_single, dict) and isinstance(source_single.get("templates"), list):
+        legacy_ids = {item.get("id") for item in legacy_single_template_defaults() if isinstance(item, dict)}
+        legacy_templates = [item for item in source_single.get("templates", []) if isinstance(item, dict) and item.get("id") in legacy_ids]
+    single["templates"] = build_single_templates_from_matrix(
+        single.get("matrix", {}),
+        legacy_templates if legacy_templates is not None else legacy_single_template_defaults(),
+    )
+    single["templateCategories"] = build_single_template_categories(single.get("matrix", {}))
+    default_template = next(
+        (
+            template
+            for template in single["templates"]
+            if template.get("platform") == defaults["platformId"]
+            and template.get("category") == defaults["categoryId"]
+            and template.get("scenario") == defaults["scenarioId"]
+        ),
+        single["templates"][0] if single["templates"] else {"id": "", "category": defaults["categoryId"]},
+    )
+    single["defaultTemplateId"] = default_template.get("id", "")
+    single["defaultTemplateCategory"] = default_template.get("category", defaults["categoryId"])
+    return single
+
+
 def normalize_prompt_config(value) -> dict:
     if isinstance(value, str):
         try:
@@ -431,7 +843,10 @@ def normalize_prompt_config(value) -> dict:
             value = {}
     if not isinstance(value, dict):
         value = {}
-    config = merge_prompt_config(default_prompt_config(), value)
+    defaults = default_prompt_config()
+    config = merge_prompt_config(defaults, value)
+    config["version"] = max(2, int(config.get("version") or 0))
+    config["single"] = normalize_single_prompt_config(value.get("single"), defaults["single"])
     validate_prompt_config_sizes(config)
     return config
 
@@ -455,7 +870,7 @@ def merge_prompt_config(default, override):
         source = override if isinstance(override, dict) else {}
         merged = {}
         for key, default_value in default.items():
-            if key in LOCKED_PROMPT_CONFIG_KEYS or (key == "category" and "id" in default):
+            if key in LOCKED_PROMPT_CONFIG_KEYS or key == "templateId" or (key == "category" and "id" in default):
                 merged[key] = default_value
             else:
                 merged[key] = merge_prompt_config(default_value, source.get(key))
@@ -697,6 +1112,46 @@ def authorized_video_model_options(conn: sqlite3.Connection, user_id: str) -> li
     return authorized_model_options(conn, user_id, MODEL_KIND_VIDEO)
 
 
+def configured_model_options(conn: sqlite3.Connection, model_kind: str = MODEL_KIND_IMAGE) -> list[dict]:
+    kind = normalize_model_kind(model_kind)
+    rows = conn.execute(
+        """
+        SELECT
+          model_providers.id AS provider_id,
+          model_providers.name AS provider_name,
+          model_providers.provider_type,
+          model_providers.base_url,
+          model_providers.api_key,
+          provider_models.id AS provider_model_id,
+          provider_models.model_name,
+          provider_models.model_kind,
+          provider_models.priority
+        FROM provider_models
+        JOIN model_providers ON model_providers.id = provider_models.provider_id
+        WHERE provider_models.enabled=1
+          AND provider_models.model_kind=?
+          AND model_providers.enabled=1
+          AND TRIM(model_providers.api_key)<>''
+        ORDER BY provider_models.priority ASC, model_providers.name ASC, provider_models.model_name ASC
+        """,
+        (kind,),
+    ).fetchall()
+    return [
+        {
+            "providerId": row["provider_id"],
+            "providerName": row["provider_name"],
+            "providerType": normalize_provider_type(row["provider_type"]),
+            "baseUrl": row["base_url"],
+            "apiKey": row["api_key"],
+            "providerModelId": row["provider_model_id"],
+            "modelName": row["model_name"],
+            "modelKind": normalize_model_kind(row["model_kind"]),
+            "priority": int(row["priority"] or 100),
+        }
+        for row in rows
+    ]
+
+
 def provider_model_option(conn: sqlite3.Connection, provider_model_id: str, model_kind: str = "") -> dict | None:
     model_id = str(provider_model_id or "").strip()
     if not model_id:
@@ -914,6 +1369,10 @@ def client_prompt_config(config: dict) -> dict:
     safe_config.get("single", {}).pop("supplementalVariantPrompt", None)
     for template in safe_config.get("single", {}).get("templates", []):
         template.pop("prompt", None)
+    for platform in safe_config.get("single", {}).get("matrix", {}).get("platforms", []):
+        for category in platform.get("categories", []):
+            for scenario in category.get("scenarios", []):
+                scenario.pop("prompt", None)
     for preset in safe_config.get("suite", {}).get("presets", []):
         for shot in preset.get("shots", []):
             shot.pop("prompt", None)
@@ -1282,7 +1741,8 @@ class Handler(SimpleHTTPRequestHandler):
         except sqlite3.IntegrityError:
             raise AppError(HTTPStatus.CONFLICT, "邮箱已注册" if selected_auth_type == "email" else "用户名已注册")
         token = self.create_session(user_id, "user")
-        user = connect().execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+        with connect() as conn:
+            user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         self.json_response({"token": token, "user": row_user(user)})
 
     def handle_login(self) -> None:
@@ -1298,7 +1758,8 @@ class Handler(SimpleHTTPRequestHandler):
                 raise AppError(HTTPStatus.FORBIDDEN, "账号已被禁用")
             conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
         token = self.create_session(user["id"], "user")
-        user = connect().execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+        with connect() as conn:
+            user = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
         self.json_response({"token": token, "user": row_user(user)})
 
     def handle_logout(self) -> None:
@@ -1320,14 +1781,19 @@ class Handler(SimpleHTTPRequestHandler):
             prompt_config = prompt_config_settings(conn)
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
             assigned_image_models = user_allowed_image_models(conn, user["id"])
-            image_options = authorized_image_model_options(conn, user["id"]) if assigned_image_models else []
-            selected_image_option = (
-                image_options[0]
-                if image_options
-                else None
-                if assigned_image_models
-                else provider_model_option(conn, model_config.get("defaultImageModelId"), MODEL_KIND_IMAGE)
-            )
+            default_image_model_id = model_config.get("defaultImageModelId") or ""
+            if assigned_image_models:
+                image_options = authorized_image_model_options(conn, user["id"])
+                selected_image_option = next(
+                    (option for option in image_options if option["providerModelId"] == default_image_model_id),
+                    image_options[0] if image_options else None,
+                )
+            else:
+                image_options = configured_model_options(conn, MODEL_KIND_IMAGE)
+                selected_image_option = next(
+                    (option for option in image_options if option["providerModelId"] == default_image_model_id),
+                    image_options[0] if image_options else None,
+                )
             assigned_video_models = user_allowed_video_models(conn, user["id"])
             video_options = authorized_video_model_options(conn, user["id"]) if assigned_video_models else []
             selected_video_option = (
@@ -1337,8 +1803,18 @@ class Handler(SimpleHTTPRequestHandler):
                 if assigned_video_models
                 else provider_model_option(conn, model_config.get("defaultVideoModelId"), MODEL_KIND_VIDEO)
             )
-            available_image_models = assigned_image_models or (
-                [public_provider_model_option(selected_image_option)] if selected_image_option else []
+            available_image_models = (
+                assigned_image_models
+                if assigned_image_models
+                else [
+                    public_provider_model_option(
+                        {
+                            **option,
+                            "isDefault": option["providerModelId"] == default_image_model_id,
+                        }
+                    )
+                    for option in image_options
+                ]
             )
             available_video_models = assigned_video_models or (
                 [public_provider_model_option(selected_video_option)] if selected_video_option else []
@@ -1416,27 +1892,39 @@ class Handler(SimpleHTTPRequestHandler):
             model_config = model_config_settings(conn)
             prompt_config = prompt_config_settings(conn)
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
-            assigned_models = user_allowed_image_models(conn, user["id"])
-            authorized_models = authorized_image_model_options(conn, user["id"]) if assigned_models else []
-            default_model_option = provider_model_option(conn, model_config.get("defaultImageModelId"), MODEL_KIND_IMAGE)
+            assigned_image_models = user_allowed_image_models(conn, user["id"])
+            authorized_models = authorized_image_model_options(conn, user["id"])
+            configured_models = (
+                authorized_models
+                if assigned_image_models
+                else configured_model_options(conn, MODEL_KIND_IMAGE)
+            )
+            default_image_model_id = model_config.get("defaultImageModelId") or ""
+            default_model_option = next(
+                (option for option in configured_models if option["providerModelId"] == default_image_model_id),
+                configured_models[0] if configured_models else None,
+            )
             selected_requested_option = None
             if requested_image_model_id:
-                if assigned_models:
-                    allowed_ids = {model["id"] for model in assigned_models if model.get("enabled")}
-                    if requested_image_model_id not in allowed_ids:
-                        raise AppError(HTTPStatus.FORBIDDEN, "无权使用该图片模型")
-                elif requested_image_model_id != (model_config.get("defaultImageModelId") or ""):
-                    raise AppError(HTTPStatus.FORBIDDEN, "无权使用该图片模型")
-                selected_requested_option = provider_model_option(conn, requested_image_model_id, MODEL_KIND_IMAGE)
+                selected_requested_option = next(
+                    (option for option in authorized_models if option["providerModelId"] == requested_image_model_id),
+                    None,
+                )
                 if not selected_requested_option:
-                    raise AppError(HTTPStatus.FORBIDDEN, "图片模型不可用")
+                    raise AppError(HTTPStatus.FORBIDDEN, "无权使用该图片模型")
+        if assigned_image_models and not configured_models:
+            raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置可用图片模型")
         prompt, prompt_source = resolve_generation_prompt(body, prompt_config, references)
         if requested_image_model_id:
             provider_models_to_try = [selected_requested_option] if selected_requested_option else []
         else:
-            provider_models_to_try = authorized_models if assigned_models else ([default_model_option] if default_model_option else [])
+            provider_models_to_try = (
+                [default_model_option, *[option for option in configured_models if option is not default_model_option]]
+                if default_model_option
+                else configured_models
+            )
         provider_models_to_try = [option for option in provider_models_to_try if option]
-        if assigned_models or provider_models_to_try:
+        if provider_models_to_try:
             if not provider_models_to_try:
                 raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置可用图片模型")
             last_error = None
@@ -2951,8 +3439,12 @@ def sanitize_payload(value):
         return [sanitize_payload(item) for item in value]
     if isinstance(value, dict):
         return {key: sanitize_payload(entry) for key, entry in value.items()}
-    if not isinstance(value, str):
+    if value is None or isinstance(value, (bool, int, float)):
         return value
+    if isinstance(value, (bytes, bytearray)):
+        return f"[binary payload: {len(value)} bytes]"
+    if not isinstance(value, str):
+        return str(value)
     if value.startswith("data:image/"):
         prefix, _, data = value.partition(",")
         return f"{prefix},[base64 图片数据已截断，长度 {len(data)}]"
