@@ -983,18 +983,20 @@ function renderAuthState() {
 function renderAccountKeyStatus() {
   if (!els.accountKeyStatus) return;
   const loggedIn = Boolean(state.auth.user);
-  const imageReady = loggedIn && Boolean(state.auth.apiKeyConfigured);
-  const videoReady = loggedIn && Boolean(state.auth.videoApiKeyConfigured);
+  const imageModelName = accountModelName(state.auth.modelSettings.model);
+  const videoModelName = accountModelName(state.auth.videoModelSettings.model);
+  const imageReady = loggedIn && Boolean(state.auth.apiKeyConfigured) && Boolean(imageModelName);
+  const videoReady = loggedIn && Boolean(state.auth.videoApiKeyConfigured) && Boolean(videoModelName);
   const statusItems = [
     {
       label: "图片 Key",
       ready: imageReady,
-      text: accountConfiguredText(loggedIn, imageReady, state.auth.modelSettings.model)
+      text: accountConfiguredText(loggedIn, state.auth.apiKeyConfigured, imageModelName)
     },
     {
       label: "视频 Key",
       ready: videoReady,
-      text: accountConfiguredText(loggedIn, videoReady, state.auth.videoModelSettings.model)
+      text: accountConfiguredText(loggedIn, state.auth.videoApiKeyConfigured, videoModelName)
     }
   ];
   els.accountKeyStatus.innerHTML = statusItems
@@ -1005,10 +1007,14 @@ function renderAccountKeyStatus() {
     .join("");
 }
 
-function accountConfiguredText(loggedIn, ready, modelName = "") {
+function accountModelName(modelName = "") {
+  return String(modelName || "").trim();
+}
+
+function accountConfiguredText(loggedIn, keyConfigured, modelName = "") {
   if (!loggedIn) return "登录后查看";
-  if (!ready) return "未配置";
-  return String(modelName || "").trim() || "已配置";
+  if (!keyConfigured) return "未配置";
+  return accountModelName(modelName) || "未配置";
 }
 
 function updateAuthTypeUi() {
