@@ -187,7 +187,7 @@ class UsernameAuthSchemaTests(unittest.TestCase):
         )
         self.assertGreaterEqual(
             model_columns,
-            {"id", "provider_id", "model_name", "priority", "enabled", "created_at", "updated_at"},
+            {"id", "provider_id", "model_name", "model_kind", "priority", "enabled", "created_at", "updated_at"},
         )
         self.assertGreaterEqual(access_columns, {"user_id", "provider_model_id", "enabled", "created_at"})
 
@@ -300,8 +300,9 @@ class AdminRoleTests(unittest.TestCase):
                         "apiKey": "musk-secret-key",
                         "enabled": True,
                         "models": [
-                            {"modelName": "musk-first", "priority": 5, "enabled": True},
-                            {"modelName": "musk-disabled", "priority": 50, "enabled": False},
+                            {"modelName": "musk-first", "modelKind": "image", "priority": 5, "enabled": True},
+                            {"modelName": "musk-disabled", "modelKind": "image", "priority": 50, "enabled": False},
+                            {"modelName": "musk-video", "modelKind": "video", "priority": 60, "enabled": True},
                         ],
                     },
                     {
@@ -311,7 +312,7 @@ class AdminRoleTests(unittest.TestCase):
                         "apiKey": "openai-secret-key",
                         "enabled": True,
                         "models": [
-                            {"modelName": "stable-success", "priority": 10, "enabled": True},
+                            {"modelName": "stable-success", "modelKind": "image", "priority": 10, "enabled": True},
                         ],
                     },
                 ],
@@ -456,8 +457,11 @@ class AdminRoleTests(unittest.TestCase):
         self.assertNotIn("musk-secret-key", json.dumps(providers, ensure_ascii=False))
         self.assertNotIn("apiKey", providers[0])
         self.assertEqual(providers[0]["models"][0]["modelName"], "musk-first")
+        self.assertEqual(providers[0]["models"][0]["modelKind"], "image")
         self.assertEqual(providers[0]["models"][0]["priority"], 5)
         self.assertFalse(providers[0]["models"][1]["enabled"])
+        self.assertEqual(providers[0]["models"][2]["modelName"], "musk-video")
+        self.assertEqual(providers[0]["models"][2]["modelKind"], "video")
 
     def test_admin_can_set_default_provider_model_for_c端_generation(self):
         user_payload = self.register_user()
@@ -499,6 +503,44 @@ class AdminRoleTests(unittest.TestCase):
         self.assertEqual(payload["model"], "stable-success")
         self.assertEqual(payload["provider"]["modelId"], default_model_id)
 
+    def test_admin_defaults_are_separated_by_model_kind(self):
+        admin_token = self.builtin_admin_token()
+        providers = self.save_model_providers(admin_token)
+        image_model_id = providers[1]["models"][0]["id"]
+        video_model_id = providers[0]["models"][2]["id"]
+
+        status, _ = self.request(
+            "PUT",
+            "/api/admin/model-config",
+            {
+                "defaultImageModelId": video_model_id,
+                "defaultVideoModelId": video_model_id,
+                "modelProviders": providers,
+            },
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+        status, config_payload = self.request("GET", "/api/admin/model-config", token=admin_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(config_payload["modelConfig"]["defaultImageModelId"], "")
+        self.assertEqual(config_payload["modelConfig"]["defaultVideoModelId"], video_model_id)
+
+        status, _ = self.request(
+            "PUT",
+            "/api/admin/model-config",
+            {
+                "defaultImageModelId": image_model_id,
+                "defaultVideoModelId": image_model_id,
+                "modelProviders": providers,
+            },
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+        status, config_payload = self.request("GET", "/api/admin/model-config", token=admin_token)
+        self.assertEqual(status, 200)
+        self.assertEqual(config_payload["modelConfig"]["defaultImageModelId"], image_model_id)
+        self.assertEqual(config_payload["modelConfig"]["defaultVideoModelId"], "")
+
     def test_admin_can_assign_provider_models_to_user_without_changing_legacy_key(self):
         user_payload = self.register_user()
         admin_token = self.builtin_admin_token()
@@ -539,6 +581,79 @@ class AdminRoleTests(unittest.TestCase):
         self.assertEqual(listed_user["imageModel"], "legacy-image-model")
         self.assertNotIn("legacy-secret-key", json.dumps(listed_user, ensure_ascii=False))
         self.assertNotIn("musk-secret-key", json.dumps(listed_user, ensure_ascii=False))
+
+    def test_admin_can_assign_video_models_without_replacing_image_models(self):
+        user_payload = self.register_user()
+        admin_token = self.builtin_admin_token()
+        user_id = user_payload["user"]["id"]
+        providers = self.save_model_providers(admin_token)
+        image_model_id = providers[0]["models"][0]["id"]
+        video_model_id = providers[0]["models"][2]["id"]
+
+        status, _ = self.request(
+            "PATCH",
+            f"/api/admin/users/{user_id}",
+            {"allowedImageModelIds": [image_model_id]},
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+        status, _ = self.request(
+            "PATCH",
+            f"/api/admin/users/{user_id}",
+            {"allowedVideoModelIds": [video_model_id]},
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+
+        status, users_payload = self.request("GET", "/api/admin/users", token=admin_token)
+        self.assertEqual(status, 200)
+        listed_user = next(user for user in users_payload["users"] if user["id"] == user_id)
+        self.assertEqual([model["id"] for model in listed_user["allowedImageModels"]], [image_model_id])
+        self.assertEqual([model["id"] for model in listed_user["allowedVideoModels"]], [video_model_id])
+        self.assertEqual(listed_user["allowedVideoModels"][0]["modelKind"], "video")
+
+    def test_settings_do_not_report_default_ready_when_assigned_models_are_unusable(self):
+        user_payload = self.register_user()
+        admin_token = self.builtin_admin_token()
+        user_id = user_payload["user"]["id"]
+        providers = self.save_model_providers(admin_token)
+        default_image_id = providers[1]["models"][0]["id"]
+        disabled_image_id = providers[0]["models"][1]["id"]
+        status, _ = self.request(
+            "PUT",
+            "/api/admin/model-config",
+            {
+                "defaultImageModelId": default_image_id,
+                "modelProviders": providers,
+            },
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+        status, _ = self.request(
+            "PATCH",
+            f"/api/admin/users/{user_id}",
+            {"allowedImageModelIds": [disabled_image_id]},
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+
+        status, settings_payload = self.request("GET", "/api/settings", token=user_payload["token"])
+        self.assertEqual(status, 200)
+        settings = settings_payload["settings"]
+        self.assertFalse(settings["imageApiKeyConfigured"])
+        self.assertFalse(settings["apiKeyConfigured"])
+        self.assertEqual([model["id"] for model in settings["availableImageModels"]], [disabled_image_id])
+
+        with mock.patch("server.call_upstream_model") as call_model:
+            status, error = self.request(
+                "POST",
+                "/api/generate",
+                {"templateId": "main-white", "count": 1, "size": "1024x1024"},
+                token=user_payload["token"],
+            )
+        self.assertEqual(status, 403)
+        self.assertIn("可用图片模型", error["error"])
+        call_model.assert_not_called()
 
     def test_admin_can_configure_image_and_video_keys(self):
         user_payload = self.register_user()
@@ -746,6 +861,75 @@ class AdminRoleTests(unittest.TestCase):
             [("musk-first", "failed"), ("stable-success", "completed")],
         )
 
+    def test_generate_uses_explicit_authorized_image_model_for_single_image(self):
+        user_payload = self.register_user()
+        admin_token = self.builtin_admin_token()
+        user_id = user_payload["user"]["id"]
+        providers = self.save_model_providers(admin_token)
+        first_image_id = providers[0]["models"][0]["id"]
+        selected_image_id = providers[1]["models"][0]["id"]
+        status, _ = self.request(
+            "PATCH",
+            f"/api/admin/users/{user_id}",
+            {"allowedImageModelIds": [first_image_id, selected_image_id]},
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+
+        upstream_payload = {"data": [{"b64_json": "aW1hZ2U="}]}
+        with mock.patch("server.call_upstream_model", return_value=upstream_payload) as call_model:
+            status, payload = self.request(
+                "POST",
+                "/api/generate",
+                {
+                    "templateId": "main-white",
+                    "count": 1,
+                    "size": "1024x1024",
+                    "imageModelId": selected_image_id,
+                },
+                token=user_payload["token"],
+            )
+
+        self.assertEqual(status, 200)
+        self.assertEqual(call_model.call_count, 1)
+        endpoint, api_key, request_body = call_model.call_args.args
+        self.assertEqual(endpoint, "https://compatible.example.com/v1/images/generations")
+        self.assertEqual(api_key, "openai-secret-key")
+        self.assertEqual(request_body["model"], "stable-success")
+        self.assertEqual(request_body["n"], 1)
+        self.assertEqual(payload["model"], "stable-success")
+        self.assertEqual(payload["provider"]["modelId"], selected_image_id)
+        self.assertEqual(payload["images"][0]["url"], "data:image/png;base64,aW1hZ2U=")
+
+    def test_generate_rejects_video_or_unauthorized_explicit_model_id(self):
+        user_payload = self.register_user()
+        admin_token = self.builtin_admin_token()
+        providers = self.save_model_providers(admin_token)
+        video_model_id = providers[0]["models"][2]["id"]
+        image_model_id = providers[1]["models"][0]["id"]
+
+        with mock.patch("server.call_upstream_model") as call_model:
+            status, error = self.request(
+                "POST",
+                "/api/generate",
+                {"templateId": "main-white", "count": 1, "imageModelId": video_model_id},
+                token=user_payload["token"],
+            )
+        self.assertEqual(status, 403)
+        self.assertIn("无权使用该图片模型", error["error"])
+        call_model.assert_not_called()
+
+        with mock.patch("server.call_upstream_model") as call_model:
+            status, error = self.request(
+                "POST",
+                "/api/generate",
+                {"templateId": "main-white", "count": 1, "imageModelId": image_model_id},
+                token=user_payload["token"],
+            )
+        self.assertEqual(status, 403)
+        self.assertIn("无权使用该图片模型", error["error"])
+        call_model.assert_not_called()
+
     def test_muskapis_provider_uses_openai_image_payload_and_bearer_auth(self):
         provider = {
             "providerType": "muskapis_image",
@@ -760,7 +944,7 @@ class AdminRoleTests(unittest.TestCase):
             model="musk-image",
             endpoint=endpoint,
             provider_type="muskapis_image",
-            references=[{"url": "data:image/png;base64,cmVm"}],
+            references=[],
         )
         images = server.extract_image_results_from_payload(
             {"data": [{"b64_json": "aW1hZ2U="}, {"url": "https://cdn.example.com/out.png"}]}
@@ -783,6 +967,128 @@ class AdminRoleTests(unittest.TestCase):
             [image["url"] for image in images],
             ["data:image/png;base64,aW1hZ2U=", "https://cdn.example.com/out.png"],
         )
+
+    def test_muskapis_provider_uses_edit_payload_when_references_are_present(self):
+        provider = {
+            "providerType": "muskapis_image",
+            "baseUrl": "https://api.muskapis.com/v1",
+        }
+        references = [{"url": "data:image/png;base64,cmVm"}]
+
+        endpoint = server.resolve_provider_image_endpoint(provider, "musk-image", references=references)
+        body, strategy = server.build_provider_image_request_body(
+            prompt="make a product photo",
+            count=1,
+            size="1024x1024",
+            model="musk-image",
+            endpoint=endpoint,
+            provider_type="muskapis_image",
+            references=references,
+        )
+
+        self.assertEqual(endpoint, "https://api.muskapis.com/v1/images/edits")
+        self.assertEqual(strategy, "OpenAI image edit b64_json")
+        self.assertEqual(body["image"], "data:image/png;base64,cmVm")
+        self.assertNotIn("reference_images", body)
+
+    def test_call_upstream_model_sends_openai_image_edits_as_multipart(self):
+        captured = {}
+
+        class FakeResponse:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, traceback):
+                return False
+
+            def read(self):
+                return json.dumps({"data": [{"b64_json": "aW1hZ2U="}]}).encode("utf-8")
+
+        def fake_urlopen(request, timeout):
+            captured["request"] = request
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        with mock.patch("shutil.which", return_value=None):
+            with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+                payload = server.call_upstream_model(
+                    "https://api.muskapis.com/v1/images/edits",
+                    "musk-token",
+                    {
+                        "model": "musk-image",
+                        "prompt": "make a product photo",
+                        "n": 1,
+                        "size": "1024x1024",
+                        "response_format": "b64_json",
+                        "image": "data:image/png;base64,cmVm",
+                    },
+                )
+
+        request = captured["request"]
+        self.assertEqual(payload["data"][0]["b64_json"], "aW1hZ2U=")
+        self.assertIn("multipart/form-data; boundary=", request.headers["Content-type"])
+        self.assertEqual(request.headers["Authorization"], "Bearer musk-token")
+        request_body = request.data.decode("latin1")
+        self.assertIn('name="model"', request_body)
+        self.assertIn('name="image"; filename="reference.png"', request_body)
+        self.assertIn("Content-Type: image/png", request_body)
+
+    def test_call_upstream_model_prefers_curl_for_openai_image_edits(self):
+        captured = {}
+
+        def fake_run(args, input, stdout, stderr, timeout, check):
+            captured["args"] = args
+            captured["config"] = input.decode("utf-8")
+            return mock.Mock(
+                returncode=0,
+                stdout=b'{"data":[{"b64_json":"aW1hZ2U="}]}\n__AIDX_HTTP_STATUS__:200',
+                stderr=b"",
+            )
+
+        with mock.patch("shutil.which", return_value="/usr/bin/curl"):
+            with mock.patch("subprocess.run", side_effect=fake_run):
+                payload = server.call_upstream_model(
+                    "https://api.muskapis.com/v1/images/edits",
+                    "musk-token",
+                    {
+                        "model": "musk-image",
+                        "prompt": "make a product photo",
+                        "n": 1,
+                        "size": "1024x1024",
+                        "response_format": "b64_json",
+                        "image": "data:image/png;base64,cmVm",
+                    },
+                )
+
+        self.assertEqual(payload["data"][0]["b64_json"], "aW1hZ2U=")
+        self.assertEqual(captured["args"], ["curl", "--config", "-"])
+        self.assertIn('header = "Authorization: Bearer musk-token"', captured["config"])
+        self.assertIn('form-string = "model=musk-image"', captured["config"])
+        self.assertIn('form = "image=@', captured["config"])
+        self.assertIn(";type=image/png;filename=reference.png", captured["config"])
+
+    def test_call_upstream_model_wraps_curl_timeout_for_openai_image_edits(self):
+        with mock.patch("shutil.which", return_value="/usr/bin/curl"):
+            with mock.patch(
+                "subprocess.run",
+                side_effect=server.subprocess.TimeoutExpired("curl", server.UPSTREAM_TIMEOUT_SECONDS),
+            ):
+                with self.assertRaises(server.UpstreamError) as caught:
+                    server.call_upstream_model(
+                        "https://api.muskapis.com/v1/images/edits",
+                        "musk-token",
+                        {
+                            "model": "musk-image",
+                            "prompt": "make a product photo",
+                            "n": 1,
+                            "size": "1024x1024",
+                            "response_format": "b64_json",
+                            "image": "data:image/png;base64,cmVm",
+                        },
+                    )
+
+        self.assertEqual(caught.exception.status, 504)
+        self.assertIn("超时", caught.exception.message)
 
     def test_generate_retries_transient_upstream_image_upload_disconnect_once(self):
         user_payload = self.register_user()

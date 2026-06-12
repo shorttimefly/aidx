@@ -1,5 +1,6 @@
 "use strict";
 
+const APP_BASE_PATH = detectAppBasePath();
 const ADMIN_TOKEN_KEY = "imageStudio.adminToken";
 
 const state = {
@@ -7,6 +8,16 @@ const state = {
 };
 
 const els = {};
+
+function detectAppBasePath() {
+  const marker = "/aidx-runtime";
+  const pathname = window.location.pathname || "";
+  return pathname === marker || pathname.startsWith(`${marker}/`) ? marker : "";
+}
+
+function appRoute(path) {
+  return `${APP_BASE_PATH}${path}`;
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
@@ -78,7 +89,7 @@ async function handleAdminLogin() {
 
 async function adminFetch(path, options = {}) {
   const { skipAuth, headers, ...fetchOptions } = options;
-  const response = await fetch(`/api/admin${path}`, {
+  const response = await fetch(appRoute(`/api/admin${path}`), {
     ...fetchOptions,
     headers: {
       "Content-Type": "application/json",

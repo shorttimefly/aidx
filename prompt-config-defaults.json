@@ -1,6 +1,8 @@
 {
   "version": 1,
   "single": {
+    "defaultTemplateCategory": "aplus",
+    "defaultTemplateId": "aplus-brand-story",
     "templateCategories": [
       { "id": "all", "label": "全部模板" },
       { "id": "custom", "label": "我的模板" },

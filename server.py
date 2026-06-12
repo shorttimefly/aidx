@@ -6,6 +6,7 @@ from __future__ import annotations
 from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import base64
+import binascii
 import copy
 import errno
 import hashlib
@@ -51,11 +52,15 @@ DEFAULT_PROVIDER_BASE_URLS = {
     PROVIDER_TYPE_MUSKAPIS_IMAGE: "https://api.muskapis.com/v1",
     PROVIDER_TYPE_OPENAI_IMAGE: "https://api.openai.com/v1",
 }
+MODEL_KIND_IMAGE = "image"
+MODEL_KIND_VIDEO = "video"
+VALID_MODEL_KINDS = {MODEL_KIND_IMAGE, MODEL_KIND_VIDEO}
 UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "120"))
 UPSTREAM_MAX_ATTEMPTS = max(1, int(os.environ.get("UPSTREAM_MAX_ATTEMPTS", "2")))
 UPSTREAM_RETRY_DELAY_SECONDS = max(0.0, float(os.environ.get("UPSTREAM_RETRY_DELAY_SECONDS", "1")))
 PROMPT_CONFIG_KEY = "prompt_config_json"
 DEFAULT_IMAGE_MODEL_KEY = "default_image_model_id"
+DEFAULT_VIDEO_MODEL_KEY = "default_video_model_id"
 PROMPT_CONFIG_PATH = ROOT / "prompt-config-defaults.json"
 PROMPT_TEXT_LIMIT = 20_000
 LOCKED_PROMPT_CONFIG_KEYS = {"id", "url"}
@@ -266,6 +271,7 @@ def init_db() -> None:
               id TEXT PRIMARY KEY,
               provider_id TEXT NOT NULL REFERENCES model_providers(id) ON DELETE CASCADE,
               model_name TEXT NOT NULL,
+              model_kind TEXT NOT NULL DEFAULT 'image',
               priority INTEGER NOT NULL DEFAULT 100,
               enabled INTEGER NOT NULL DEFAULT 1,
               created_at TEXT NOT NULL,
@@ -360,6 +366,7 @@ def init_db() -> None:
         ensure_column(conn, "user_settings", "video_model", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "user_settings", "video_endpoint_primary", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "user_settings", "video_endpoint_secondary", "TEXT NOT NULL DEFAULT ''")
+        ensure_column(conn, "provider_models", "model_kind", "TEXT NOT NULL DEFAULT 'image'")
         migrate_default_endpoint(conn)
         ensure_sessions_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, role)")
@@ -492,10 +499,23 @@ def app_settings(conn: sqlite3.Connection) -> dict:
 
 def model_config_settings(conn: sqlite3.Connection) -> dict:
     config = app_settings(conn)
-    row = conn.execute("SELECT value FROM app_settings WHERE key=?", (DEFAULT_IMAGE_MODEL_KEY,)).fetchone()
-    config["defaultImageModelId"] = row["value"] if row else ""
+    image_row = conn.execute("SELECT value FROM app_settings WHERE key=?", (DEFAULT_IMAGE_MODEL_KEY,)).fetchone()
+    video_row = conn.execute("SELECT value FROM app_settings WHERE key=?", (DEFAULT_VIDEO_MODEL_KEY,)).fetchone()
+    config["defaultImageModelId"] = image_row["value"] if image_row else ""
+    config["defaultVideoModelId"] = video_row["value"] if video_row else ""
     config["modelProviders"] = model_providers_config(conn)
     return config
+
+
+def normalize_model_kind(value) -> str:
+    kind = str(value or "").strip().lower()
+    if kind in VALID_MODEL_KINDS:
+        return kind
+    if kind in {"img", "picture", "photo"}:
+        return MODEL_KIND_IMAGE
+    if kind in {"vid", "movie"}:
+        return MODEL_KIND_VIDEO
+    return MODEL_KIND_IMAGE
 
 
 def normalize_provider_type(value) -> str:
@@ -540,6 +560,7 @@ def row_provider_model(row: sqlite3.Row) -> dict:
         "id": row["id"],
         "providerId": row["provider_id"],
         "modelName": row["model_name"],
+        "modelKind": normalize_model_kind(row_value(row, "model_kind", MODEL_KIND_IMAGE)),
         "priority": int(row["priority"] or 100),
         "enabled": bool(row["enabled"]),
         "createdAt": row["created_at"],
@@ -574,7 +595,8 @@ def model_providers_config(conn: sqlite3.Connection) -> list[dict]:
     return [row_model_provider(provider, models_by_provider.get(provider["id"], [])) for provider in providers]
 
 
-def user_allowed_image_models(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+def user_allowed_models(conn: sqlite3.Connection, user_id: str, model_kind: str = MODEL_KIND_IMAGE) -> list[dict]:
+    kind = normalize_model_kind(model_kind)
     rows = conn.execute(
         """
         SELECT
@@ -582,6 +604,7 @@ def user_allowed_image_models(conn: sqlite3.Connection, user_id: str) -> list[di
           provider_models.id AS model_id,
           provider_models.provider_id,
           provider_models.model_name,
+          provider_models.model_kind,
           provider_models.priority,
           provider_models.enabled AS model_enabled,
           model_providers.name AS provider_name,
@@ -592,9 +615,10 @@ def user_allowed_image_models(conn: sqlite3.Connection, user_id: str) -> list[di
         JOIN provider_models ON provider_models.id = user_model_access.provider_model_id
         JOIN model_providers ON model_providers.id = provider_models.provider_id
         WHERE user_model_access.user_id=? AND user_model_access.enabled=1
+          AND provider_models.model_kind=?
         ORDER BY provider_models.priority ASC, model_providers.name ASC, provider_models.model_name ASC
         """,
-        (user_id,),
+        (user_id, kind),
     ).fetchall()
     return [
         {
@@ -604,6 +628,7 @@ def user_allowed_image_models(conn: sqlite3.Connection, user_id: str) -> list[di
             "providerType": normalize_provider_type(row["provider_type"]),
             "baseUrl": row["base_url"],
             "modelName": row["model_name"],
+            "modelKind": normalize_model_kind(row["model_kind"]),
             "priority": int(row["priority"] or 100),
             "enabled": bool(row["access_enabled"]) and bool(row["model_enabled"]) and bool(row["provider_enabled"]),
             "modelEnabled": bool(row["model_enabled"]),
@@ -613,7 +638,16 @@ def user_allowed_image_models(conn: sqlite3.Connection, user_id: str) -> list[di
     ]
 
 
-def authorized_image_model_options(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+def user_allowed_image_models(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    return user_allowed_models(conn, user_id, MODEL_KIND_IMAGE)
+
+
+def user_allowed_video_models(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    return user_allowed_models(conn, user_id, MODEL_KIND_VIDEO)
+
+
+def authorized_model_options(conn: sqlite3.Connection, user_id: str, model_kind: str = MODEL_KIND_IMAGE) -> list[dict]:
+    kind = normalize_model_kind(model_kind)
     rows = conn.execute(
         """
         SELECT
@@ -624,6 +658,7 @@ def authorized_image_model_options(conn: sqlite3.Connection, user_id: str) -> li
           model_providers.api_key,
           provider_models.id AS provider_model_id,
           provider_models.model_name,
+          provider_models.model_kind,
           provider_models.priority
         FROM user_model_access
         JOIN provider_models ON provider_models.id = user_model_access.provider_model_id
@@ -631,11 +666,12 @@ def authorized_image_model_options(conn: sqlite3.Connection, user_id: str) -> li
         WHERE user_model_access.user_id=?
           AND user_model_access.enabled=1
           AND provider_models.enabled=1
+          AND provider_models.model_kind=?
           AND model_providers.enabled=1
           AND TRIM(model_providers.api_key)<>''
         ORDER BY provider_models.priority ASC, model_providers.name ASC, provider_models.model_name ASC
         """,
-        (user_id,),
+        (user_id, kind),
     ).fetchall()
     return [
         {
@@ -646,16 +682,26 @@ def authorized_image_model_options(conn: sqlite3.Connection, user_id: str) -> li
             "apiKey": row["api_key"],
             "providerModelId": row["provider_model_id"],
             "modelName": row["model_name"],
+            "modelKind": normalize_model_kind(row["model_kind"]),
             "priority": int(row["priority"] or 100),
         }
         for row in rows
     ]
 
 
-def provider_model_option(conn: sqlite3.Connection, provider_model_id: str) -> dict | None:
+def authorized_image_model_options(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    return authorized_model_options(conn, user_id, MODEL_KIND_IMAGE)
+
+
+def authorized_video_model_options(conn: sqlite3.Connection, user_id: str) -> list[dict]:
+    return authorized_model_options(conn, user_id, MODEL_KIND_VIDEO)
+
+
+def provider_model_option(conn: sqlite3.Connection, provider_model_id: str, model_kind: str = "") -> dict | None:
     model_id = str(provider_model_id or "").strip()
     if not model_id:
         return None
+    kind = normalize_model_kind(model_kind) if model_kind else ""
     row = conn.execute(
         """
         SELECT
@@ -667,6 +713,7 @@ def provider_model_option(conn: sqlite3.Connection, provider_model_id: str) -> d
           model_providers.enabled AS provider_enabled,
           provider_models.id AS provider_model_id,
           provider_models.model_name,
+          provider_models.model_kind,
           provider_models.priority,
           provider_models.enabled AS model_enabled
         FROM provider_models
@@ -678,6 +725,9 @@ def provider_model_option(conn: sqlite3.Connection, provider_model_id: str) -> d
     ).fetchone()
     if not row or not row["provider_enabled"] or not row["model_enabled"]:
         return None
+    row_kind = normalize_model_kind(row["model_kind"])
+    if kind and row_kind != kind:
+        return None
     return {
         "providerId": row["provider_id"],
         "providerName": row["provider_name"],
@@ -686,14 +736,33 @@ def provider_model_option(conn: sqlite3.Connection, provider_model_id: str) -> d
         "apiKey": row["api_key"],
         "providerModelId": row["provider_model_id"],
         "modelName": row["model_name"],
+        "modelKind": row_kind,
         "priority": int(row["priority"] or 100),
         "isDefault": True,
     }
 
 
-def set_user_model_access(conn: sqlite3.Connection, user_id: str, model_ids) -> None:
+def public_provider_model_option(option: dict | None) -> dict:
+    if not option:
+        return {}
+    return {
+        "id": option.get("providerModelId") or option.get("id") or "",
+        "providerId": option.get("providerId") or "",
+        "providerName": option.get("providerName") or "",
+        "providerType": option.get("providerType") or "",
+        "baseUrl": option.get("baseUrl") or "",
+        "modelName": option.get("modelName") or "",
+        "modelKind": normalize_model_kind(option.get("modelKind")),
+        "priority": int(option.get("priority") or 100),
+        "enabled": True,
+        "isDefault": bool(option.get("isDefault")),
+    }
+
+
+def set_user_model_access(conn: sqlite3.Connection, user_id: str, model_ids, model_kind: str = MODEL_KIND_IMAGE) -> None:
+    kind = normalize_model_kind(model_kind)
     if not isinstance(model_ids, list):
-        raise AppError(HTTPStatus.BAD_REQUEST, "可用图片模型格式错误")
+        raise AppError(HTTPStatus.BAD_REQUEST, "可用模型格式错误")
     unique_ids = []
     seen = set()
     for value in model_ids:
@@ -706,15 +775,22 @@ def set_user_model_access(conn: sqlite3.Connection, user_id: str, model_ids) -> 
         existing = {
             row["id"]
             for row in conn.execute(
-                f"SELECT id FROM provider_models WHERE id IN ({placeholders})",
-                unique_ids,
+                f"SELECT id FROM provider_models WHERE id IN ({placeholders}) AND model_kind=?",
+                [*unique_ids, kind],
             ).fetchall()
         }
         missing = [model_id for model_id in unique_ids if model_id not in existing]
         if missing:
-            raise AppError(HTTPStatus.BAD_REQUEST, "可用图片模型不存在")
+            raise AppError(HTTPStatus.BAD_REQUEST, "可用模型不存在")
     timestamp = now_iso()
-    conn.execute("DELETE FROM user_model_access WHERE user_id=?", (user_id,))
+    conn.execute(
+        """
+        DELETE FROM user_model_access
+        WHERE user_id=?
+          AND provider_model_id IN (SELECT id FROM provider_models WHERE model_kind=?)
+        """,
+        (user_id, kind),
+    )
     conn.executemany(
         """
         INSERT INTO user_model_access (user_id, provider_model_id, enabled, created_at)
@@ -791,6 +867,7 @@ def save_model_providers(conn: sqlite3.Connection, providers) -> None:
                 model_item.get("modelName") or model_item.get("model_name"),
                 provider_type,
             )
+            model_kind = normalize_model_kind(model_item.get("modelKind") or model_item.get("model_kind"))
             priority = clamp_int(model_item.get("priority"), 1, 1_000_000)
             if priority == 1 and model_item.get("priority") in (None, ""):
                 priority = index * 100 + model_index
@@ -799,16 +876,17 @@ def save_model_providers(conn: sqlite3.Connection, providers) -> None:
             conn.execute(
                 """
                 INSERT INTO provider_models
-                  (id, provider_id, model_name, priority, enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                  (id, provider_id, model_name, model_kind, priority, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   provider_id=excluded.provider_id,
                   model_name=excluded.model_name,
+                  model_kind=excluded.model_kind,
                   priority=excluded.priority,
                   enabled=excluded.enabled,
                   updated_at=excluded.updated_at
                 """,
-                (model_id, provider_id, model_name, priority, model_enabled, model_created_at, timestamp),
+                (model_id, provider_id, model_name, model_kind, priority, model_enabled, model_created_at, timestamp),
             )
             keep_model_ids.append(model_id)
     if keep_model_ids:
@@ -865,6 +943,7 @@ def row_user(
     video_endpoint_primary: str = "",
     video_endpoint_secondary: str = "",
     allowed_image_models: list[dict] | None = None,
+    allowed_video_models: list[dict] | None = None,
 ) -> dict:
     source = row_value(row, "source", "direct") or "direct"
     return {
@@ -895,6 +974,7 @@ def row_user(
         "videoEndpointPrimary": video_endpoint_primary,
         "videoEndpointSecondary": video_endpoint_secondary,
         "allowedImageModels": allowed_image_models or [],
+        "allowedVideoModels": allowed_video_models or [],
         "usage": usage
         or {
             "calls": 0,
@@ -1236,31 +1316,66 @@ class Handler(SimpleHTTPRequestHandler):
         user = self.require_user()
         with connect() as conn:
             settings = app_settings(conn)
+            model_config = model_config_settings(conn)
             prompt_config = prompt_config_settings(conn)
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
+            assigned_image_models = user_allowed_image_models(conn, user["id"])
+            image_options = authorized_image_model_options(conn, user["id"]) if assigned_image_models else []
+            selected_image_option = (
+                image_options[0]
+                if image_options
+                else None
+                if assigned_image_models
+                else provider_model_option(conn, model_config.get("defaultImageModelId"), MODEL_KIND_IMAGE)
+            )
+            assigned_video_models = user_allowed_video_models(conn, user["id"])
+            video_options = authorized_video_model_options(conn, user["id"]) if assigned_video_models else []
+            selected_video_option = (
+                video_options[0]
+                if video_options
+                else None
+                if assigned_video_models
+                else provider_model_option(conn, model_config.get("defaultVideoModelId"), MODEL_KIND_VIDEO)
+            )
+            available_image_models = assigned_image_models or (
+                [public_provider_model_option(selected_image_option)] if selected_image_option else []
+            )
+            available_video_models = assigned_video_models or (
+                [public_provider_model_option(selected_video_option)] if selected_video_option else []
+            )
         api_key = row["api_key"] if row else ""
-        endpoint = row_value(row, "endpoint", "") or settings["defaultEndpoint"]
-        model = row_value(row, "model", "") or settings["defaultModel"]
+        provider_image_ready = bool(selected_image_option and str(selected_image_option.get("apiKey") or "").strip())
+        endpoint = (
+            resolve_provider_image_endpoint(selected_image_option, selected_image_option["modelName"])
+            if selected_image_option
+            else row_value(row, "endpoint", "") or settings["defaultEndpoint"]
+        )
+        model = selected_image_option["modelName"] if selected_image_option else row_value(row, "model", "") or settings["defaultModel"]
         video_api_key = row_value(row, "video_api_key", "")
-        video_model = row_value(row, "video_model", "")
-        video_endpoint_primary = row_value(row, "video_endpoint_primary", "")
+        provider_video_ready = bool(selected_video_option and str(selected_video_option.get("apiKey") or "").strip())
+        video_model = selected_video_option["modelName"] if selected_video_option else row_value(row, "video_model", "")
+        video_endpoint_primary = selected_video_option["baseUrl"] if selected_video_option else row_value(row, "video_endpoint_primary", "")
         video_endpoint_secondary = row_value(row, "video_endpoint_secondary", "")
         self.json_response(
             {
                 "settings": {
-                    "apiKeyConfigured": bool(api_key),
-                    "apiKeyMasked": mask_api_key(api_key),
-                    "imageApiKeyConfigured": bool(api_key),
-                    "imageApiKeyMasked": mask_api_key(api_key),
+                    "apiKeyConfigured": bool(api_key) or provider_image_ready,
+                    "apiKeyMasked": mask_api_key(api_key) if api_key else ("供应商模型" if provider_image_ready else ""),
+                    "imageApiKeyConfigured": bool(api_key) or provider_image_ready,
+                    "imageApiKeyMasked": mask_api_key(api_key) if api_key else ("供应商模型" if provider_image_ready else ""),
                     "imageEndpoint": endpoint,
                     "imageModel": model,
                     "endpoint": endpoint,
                     "model": model,
-                    "videoApiKeyConfigured": bool(video_api_key),
-                    "videoApiKeyMasked": mask_api_key(video_api_key),
+                    "videoApiKeyConfigured": bool(video_api_key) or provider_video_ready,
+                    "videoApiKeyMasked": mask_api_key(video_api_key) if video_api_key else ("供应商模型" if provider_video_ready else ""),
                     "videoModel": video_model,
                     "videoEndpointPrimary": video_endpoint_primary,
                     "videoEndpointSecondary": video_endpoint_secondary,
+                    "availableImageModels": available_image_models,
+                    "availableVideoModels": available_video_models,
+                    "defaultImageModelId": model_config.get("defaultImageModelId") or "",
+                    "defaultVideoModelId": model_config.get("defaultVideoModelId") or "",
                     "size": row["size"] if row else "1024x1024",
                     "defaultEndpoint": settings["defaultEndpoint"],
                     "defaultModel": settings["defaultModel"],
@@ -1292,6 +1407,10 @@ class Handler(SimpleHTTPRequestHandler):
         count = clamp_int(body.get("count") or body.get("n") or 1, 1, 8)
         size = normalize_image_size(str(body.get("size") or "1024x1024").strip()) or "1024x1024"
         references = normalize_reference_images(body.get("referenceImages"))
+        requested_image_model_id = trim_text(
+            str(body.get("imageModelId") or body.get("providerModelId") or body.get("modelId") or "").strip(),
+            120,
+        )
         with connect() as conn:
             settings = app_settings(conn)
             model_config = model_config_settings(conn)
@@ -1299,9 +1418,23 @@ class Handler(SimpleHTTPRequestHandler):
             row = conn.execute("SELECT * FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
             assigned_models = user_allowed_image_models(conn, user["id"])
             authorized_models = authorized_image_model_options(conn, user["id"]) if assigned_models else []
-            default_model_option = provider_model_option(conn, model_config.get("defaultImageModelId"))
+            default_model_option = provider_model_option(conn, model_config.get("defaultImageModelId"), MODEL_KIND_IMAGE)
+            selected_requested_option = None
+            if requested_image_model_id:
+                if assigned_models:
+                    allowed_ids = {model["id"] for model in assigned_models if model.get("enabled")}
+                    if requested_image_model_id not in allowed_ids:
+                        raise AppError(HTTPStatus.FORBIDDEN, "无权使用该图片模型")
+                elif requested_image_model_id != (model_config.get("defaultImageModelId") or ""):
+                    raise AppError(HTTPStatus.FORBIDDEN, "无权使用该图片模型")
+                selected_requested_option = provider_model_option(conn, requested_image_model_id, MODEL_KIND_IMAGE)
+                if not selected_requested_option:
+                    raise AppError(HTTPStatus.FORBIDDEN, "图片模型不可用")
         prompt, prompt_source = resolve_generation_prompt(body, prompt_config, references)
-        provider_models_to_try = authorized_models if assigned_models else ([default_model_option] if default_model_option else [])
+        if requested_image_model_id:
+            provider_models_to_try = [selected_requested_option] if selected_requested_option else []
+        else:
+            provider_models_to_try = authorized_models if assigned_models else ([default_model_option] if default_model_option else [])
         provider_models_to_try = [option for option in provider_models_to_try if option]
         if assigned_models or provider_models_to_try:
             if not provider_models_to_try:
@@ -1312,7 +1445,7 @@ class Handler(SimpleHTTPRequestHandler):
                     raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置默认模型 Token")
                 model = option["modelName"]
                 provider_type = option["providerType"]
-                resolved_endpoint = resolve_provider_image_endpoint(option, model)
+                resolved_endpoint = resolve_provider_image_endpoint(option, model, references=references)
                 request_body, strategy = build_provider_image_request_body(
                     prompt=prompt,
                     count=count,
@@ -1668,6 +1801,7 @@ class Handler(SimpleHTTPRequestHandler):
                   provider_models.id AS model_id,
                   provider_models.provider_id,
                   provider_models.model_name,
+                  provider_models.model_kind,
                   provider_models.priority,
                   provider_models.enabled AS model_enabled,
                   model_providers.name AS provider_name,
@@ -1692,22 +1826,27 @@ class Handler(SimpleHTTPRequestHandler):
             for row in usage_rows
         }
         settings_by_user = {row["user_id"]: row for row in settings_rows}
-        access_by_user: dict[str, list[dict]] = {}
+        access_by_user: dict[str, dict[str, list[dict]]] = {}
         for row in access_rows:
-            access_by_user.setdefault(row["user_id"], []).append(
-                {
-                    "id": row["model_id"],
-                    "providerId": row["provider_id"],
-                    "providerName": row["provider_name"],
-                    "providerType": normalize_provider_type(row["provider_type"]),
-                    "baseUrl": row["base_url"],
-                    "modelName": row["model_name"],
-                    "priority": int(row["priority"] or 100),
-                    "enabled": bool(row["access_enabled"]) and bool(row["model_enabled"]) and bool(row["provider_enabled"]),
-                    "modelEnabled": bool(row["model_enabled"]),
-                    "providerEnabled": bool(row["provider_enabled"]),
-                }
-            )
+            model_kind = normalize_model_kind(row["model_kind"])
+            access_by_user.setdefault(
+                row["user_id"],
+                {MODEL_KIND_IMAGE: [], MODEL_KIND_VIDEO: []},
+            )[model_kind].append(
+                    {
+                        "id": row["model_id"],
+                        "providerId": row["provider_id"],
+                        "providerName": row["provider_name"],
+                        "providerType": normalize_provider_type(row["provider_type"]),
+                        "baseUrl": row["base_url"],
+                        "modelName": row["model_name"],
+                        "modelKind": model_kind,
+                        "priority": int(row["priority"] or 100),
+                        "enabled": bool(row["access_enabled"]) and bool(row["model_enabled"]) and bool(row["provider_enabled"]),
+                        "modelEnabled": bool(row["model_enabled"]),
+                        "providerEnabled": bool(row["provider_enabled"]),
+                    }
+                )
         self.json_response(
             {
                 "users": [
@@ -1723,7 +1862,8 @@ class Handler(SimpleHTTPRequestHandler):
                         row_value(settings_by_user.get(row["id"]), "video_model", ""),
                         row_value(settings_by_user.get(row["id"]), "video_endpoint_primary", ""),
                         row_value(settings_by_user.get(row["id"]), "video_endpoint_secondary", ""),
-                        access_by_user.get(row["id"], []),
+                        access_by_user.get(row["id"], {}).get(MODEL_KIND_IMAGE, []),
+                        access_by_user.get(row["id"], {}).get(MODEL_KIND_VIDEO, []),
                     )
                     for row in rows
                 ]
@@ -1798,7 +1938,9 @@ class Handler(SimpleHTTPRequestHandler):
                     endpoint_secondary=body.get("videoEndpointSecondary"),
                 )
             if "allowedImageModelIds" in body:
-                set_user_model_access(conn, user_id, body.get("allowedImageModelIds"))
+                set_user_model_access(conn, user_id, body.get("allowedImageModelIds"), MODEL_KIND_IMAGE)
+            if "allowedVideoModelIds" in body:
+                set_user_model_access(conn, user_id, body.get("allowedVideoModelIds"), MODEL_KIND_VIDEO)
         self.json_response({"ok": True})
 
     def upsert_user_image_config(
@@ -2025,6 +2167,7 @@ class Handler(SimpleHTTPRequestHandler):
         model = str(body.get("defaultModel") or DEFAULT_MODEL).strip() or DEFAULT_MODEL
         note = str(body.get("usageNote") or "").strip()
         default_image_model_id = trim_text(str(body.get("defaultImageModelId") or "").strip(), 120)
+        default_video_model_id = trim_text(str(body.get("defaultVideoModelId") or "").strip(), 120)
         with connect() as conn:
             for key, value in {
                 "default_endpoint": endpoint,
@@ -2041,18 +2184,29 @@ class Handler(SimpleHTTPRequestHandler):
             save_model_providers(conn, body.get("modelProviders"))
             if default_image_model_id:
                 exists = conn.execute(
-                    "SELECT id FROM provider_models WHERE id=? LIMIT 1",
-                    (default_image_model_id,),
+                    "SELECT id FROM provider_models WHERE id=? AND model_kind=? LIMIT 1",
+                    (default_image_model_id, MODEL_KIND_IMAGE),
                 ).fetchone()
                 if not exists:
                     default_image_model_id = ""
-            conn.execute(
-                """
-                INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
-                """,
-                (DEFAULT_IMAGE_MODEL_KEY, default_image_model_id, now_iso()),
-            )
+            if default_video_model_id:
+                exists = conn.execute(
+                    "SELECT id FROM provider_models WHERE id=? AND model_kind=? LIMIT 1",
+                    (default_video_model_id, MODEL_KIND_VIDEO),
+                ).fetchone()
+                if not exists:
+                    default_video_model_id = ""
+            for key, value in {
+                DEFAULT_IMAGE_MODEL_KEY: default_image_model_id,
+                DEFAULT_VIDEO_MODEL_KEY: default_video_model_id,
+            }.items():
+                conn.execute(
+                    """
+                    INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+                    """,
+                    (key, value, now_iso()),
+                )
         self.json_response({"ok": True})
 
     def handle_admin_prompt_config(self) -> None:
@@ -2175,15 +2329,22 @@ def provider_value(provider: dict | sqlite3.Row, camel_key: str, snake_key: str 
     return ""
 
 
-def resolve_provider_image_endpoint(provider: dict | sqlite3.Row, model: str) -> str:
+def resolve_provider_image_endpoint(provider: dict | sqlite3.Row, model: str, references: list[dict] | None = None) -> str:
     provider_type = normalize_provider_type(provider_value(provider, "providerType", "provider_type"))
     base_url = normalize_provider_base_url(provider_value(provider, "baseUrl", "base_url"), provider_type)
     if provider_type == PROVIDER_TYPE_AOKAPI_GEMINI:
         return resolve_image_endpoint(base_url, model)
-    value = base_url.rstrip("/")
-    if value.lower().endswith("/images/generations"):
-        return value
-    return f"{value}/images/generations"
+    path = "images/edits" if references else "images/generations"
+    return resolve_openai_image_endpoint(base_url, path)
+
+
+def resolve_openai_image_endpoint(base_url: str, path: str) -> str:
+    value = str(base_url or "").rstrip("/")
+    lower = value.lower()
+    for suffix in ("/images/generations", "/images/edits"):
+        if lower.endswith(suffix):
+            return f"{value[:-len(suffix)]}/{path}"
+    return f"{value}/{path}"
 
 
 def build_provider_image_request_body(
@@ -2205,6 +2366,18 @@ def build_provider_image_request_body(
             model=model,
             endpoint=endpoint,
             references=references,
+        )
+    if references:
+        return (
+            {
+                "model": model,
+                "prompt": prompt,
+                "n": count,
+                "size": size,
+                "response_format": "b64_json",
+                "image": references[0]["url"],
+            },
+            "OpenAI image edit b64_json",
         )
     return (
         {
@@ -2375,6 +2548,8 @@ def nearest_gemini_aspect_ratio(width: int, height: int) -> str:
 
 
 def call_upstream_model(endpoint: str, api_key: str, body: dict):
+    if is_openai_image_edit_request(endpoint, body):
+        return call_upstream_model_multipart(endpoint, api_key, body)
     if should_use_curl_transport(endpoint):
         try:
             return call_upstream_model_curl(endpoint, api_key, body)
@@ -2411,6 +2586,180 @@ def call_upstream_model(endpoint: str, api_key: str, body: dict):
         raise UpstreamError(504, "请求远端模型超时", {"error": "timeout"})
     except Exception as error:
         raise UpstreamError(502, str(error), {"error": str(error)})
+
+
+def is_openai_image_edit_request(endpoint: str, body: dict) -> bool:
+    return str(endpoint or "").rstrip("/").lower().endswith("/images/edits") and bool((body or {}).get("image"))
+
+
+def call_upstream_model_multipart(endpoint: str, api_key: str, body: dict):
+    if shutil.which("curl"):
+        try:
+            return call_upstream_model_multipart_curl(endpoint, api_key, body)
+        except FileNotFoundError:
+            pass
+        except subprocess.TimeoutExpired:
+            raise UpstreamError(504, "请求远端模型超时", {"error": "curl timeout"})
+        except UpstreamError:
+            raise
+        except Exception as error:
+            raise UpstreamError(502, str(error), {"error": str(error)})
+    return call_upstream_model_multipart_urllib(endpoint, api_key, body)
+
+
+def call_upstream_model_multipart_urllib(endpoint: str, api_key: str, body: dict):
+    data, content_type = encode_openai_image_edit_multipart(body)
+    request = urllib.request.Request(
+        endpoint,
+        data=data,
+        headers={
+            "Content-Type": content_type,
+            "Authorization": authorization_header_value(api_key, endpoint),
+            "Connection": "close",
+            "User-Agent": "image-editor-tool/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT_SECONDS) as response:
+            text = response.read().decode("utf-8", errors="replace")
+            return parse_upstream_payload(text)
+    except urllib.error.HTTPError as error:
+        text = error.read().decode("utf-8", errors="replace")
+        payload = parse_upstream_payload(text)
+        raise UpstreamError(error.code, upstream_error_message(payload, error.reason), payload)
+    except urllib.error.URLError as error:
+        raise UpstreamError(502, str(error.reason), {"error": str(error.reason)})
+    except (TimeoutError, socket.timeout):
+        raise UpstreamError(504, "请求远端模型超时", {"error": "timeout"})
+    except UpstreamError:
+        raise
+    except Exception as error:
+        raise UpstreamError(502, str(error), {"error": str(error)})
+
+
+def call_upstream_model_multipart_curl(endpoint: str, api_key: str, body: dict):
+    marker = "\n__AIDX_HTTP_STATUS__:"
+    temp_paths: list[str] = []
+    try:
+        config_lines = [
+            "silent",
+            "show-error",
+            f"max-time = {curl_config_quote(str(UPSTREAM_TIMEOUT_SECONDS))}",
+            'request = "POST"',
+            f"url = {curl_config_quote(endpoint)}",
+            f"header = {curl_config_quote('Authorization: ' + authorization_header_value(api_key, endpoint))}",
+        ]
+        for key, value in body.items():
+            if key == "image" or value is None:
+                continue
+            config_lines.append(f"form-string = {curl_config_quote(f'{key}={value}')}")
+        image_values = body.get("image")
+        if not isinstance(image_values, list):
+            image_values = [image_values]
+        for index, image_value in enumerate(image_values):
+            image_file = image_data_url_file(image_value, index)
+            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{image_file['extension']}") as image_temp:
+                image_temp.write(image_file["data"])
+                temp_paths.append(image_temp.name)
+            form_value = (
+                f"image=@{temp_paths[-1]};"
+                f"type={image_file['mimeType']};"
+                f"filename={image_file['filename']}"
+            )
+            config_lines.append(f"form = {curl_config_quote(form_value)}")
+        config_lines.append(f"write-out = {curl_config_quote(marker + '%{http_code}')}")
+        completed = subprocess.run(
+            ["curl", "--config", "-"],
+            input="\n".join(config_lines).encode("utf-8"),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=UPSTREAM_TIMEOUT_SECONDS + 10,
+            check=False,
+        )
+    finally:
+        for temp_path in temp_paths:
+            try:
+                os.unlink(temp_path)
+            except FileNotFoundError:
+                pass
+    stdout = completed.stdout.decode("utf-8", errors="replace")
+    stderr = completed.stderr.decode("utf-8", errors="replace").strip()
+    if completed.returncode != 0:
+        raise UpstreamError(502, stderr or stdout or f"curl exited with {completed.returncode}", {"error": stderr or stdout})
+    body_text, _, status_text = stdout.rpartition(marker)
+    try:
+        status = int(status_text.strip() or "0")
+    except ValueError:
+        raise UpstreamError(502, stdout or "curl response missing HTTP status", {"error": stdout})
+    payload = parse_upstream_payload(body_text)
+    if status < 200 or status >= 300:
+        raise UpstreamError(status or 502, upstream_error_message(payload, f"HTTP {status}"), payload)
+    return payload
+
+
+def encode_openai_image_edit_multipart(body: dict) -> tuple[bytes, str]:
+    boundary = f"----ImageStudio{secrets.token_urlsafe(12)}"
+    chunks: list[bytes] = []
+    image_values = body.get("image")
+    if not isinstance(image_values, list):
+        image_values = [image_values]
+    for key, value in body.items():
+        if key == "image" or value is None:
+            continue
+        chunks.extend(multipart_field(boundary, key, str(value)))
+    for index, image_value in enumerate(image_values):
+        chunks.extend(multipart_image_field(boundary, image_value, index))
+    chunks.append(f"--{boundary}--\r\n".encode("utf-8"))
+    return b"".join(chunks), f"multipart/form-data; boundary={boundary}"
+
+
+def multipart_field(boundary: str, name: str, value: str) -> list[bytes]:
+    return [
+        f"--{boundary}\r\n".encode("utf-8"),
+        f'Content-Disposition: form-data; name="{name}"\r\n\r\n'.encode("utf-8"),
+        value.encode("utf-8"),
+        b"\r\n",
+    ]
+
+
+def multipart_image_field(boundary: str, image_value, index: int) -> list[bytes]:
+    image_file = image_data_url_file(image_value, index)
+    return [
+        f"--{boundary}\r\n".encode("utf-8"),
+        f'Content-Disposition: form-data; name="image"; filename="{image_file["filename"]}"\r\n'.encode("utf-8"),
+        f"Content-Type: {image_file['mimeType']}\r\n\r\n".encode("utf-8"),
+        image_file["data"],
+        b"\r\n",
+    ]
+
+
+def image_data_url_file(image_value, index: int) -> dict:
+    inline_data = reference_to_inline_data({"url": image_value})
+    if not inline_data:
+        raise UpstreamError(400, "参考图必须是 data:image 格式", {"error": "invalid image reference"})
+    mime_type = inline_data.get("mimeType") or "image/png"
+    try:
+        image_bytes = base64.b64decode(inline_data.get("data") or "", validate=True)
+    except (ValueError, binascii.Error):
+        raise UpstreamError(400, "参考图 base64 无效", {"error": "invalid image base64"})
+    extension = image_extension_from_mime_type(mime_type)
+    return {
+        "data": image_bytes,
+        "mimeType": mime_type,
+        "extension": extension,
+        "filename": f"reference{index + 1 if index else ''}.{extension}",
+    }
+
+
+def image_extension_from_mime_type(mime_type: str) -> str:
+    normalized = str(mime_type or "").split(";", 1)[0].lower()
+    return {
+        "image/jpeg": "jpg",
+        "image/jpg": "jpg",
+        "image/png": "png",
+        "image/webp": "webp",
+    }.get(normalized, "png")
 
 
 def call_upstream_model_with_retry(endpoint: str, api_key: str, body: dict):

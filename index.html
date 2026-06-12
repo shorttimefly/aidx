@@ -17,13 +17,13 @@
           </div>
         </div>
         <nav class="main-nav" aria-label="主导航">
-          <button class="nav-item active" type="button" data-view="suite">
+          <button class="nav-item disabled" type="button" data-view="suite" disabled aria-disabled="true">
             <span class="icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z" /><path d="M18 15v4" /><path d="M16 17h4" /></svg>
             </span>
             <span>套图</span>
           </button>
-          <button class="nav-item" type="button" data-view="generate">
+          <button class="nav-item active" type="button" data-view="generate">
             <span class="icon" aria-hidden="true">
               <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
             </span>
@@ -73,7 +73,7 @@
       </aside>
 
       <main class="workspace">
-        <section id="view-suite" class="view active" aria-labelledby="suiteTitle">
+        <section id="view-suite" class="view suite-disabled-view" aria-labelledby="suiteTitle" aria-disabled="true">
           <div class="topbar hero-topbar">
             <div>
               <p class="eyebrow">AI COMMERCE KIT</p>
@@ -157,9 +157,9 @@
                 <span>生成后保存到素材库</span>
               </label>
 
-              <button class="generate-button suite-generate-button" id="generateSuiteBtn" type="button">
+              <button class="generate-button suite-generate-button" id="generateSuiteBtn" type="button" disabled>
                 <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8z" /></svg>
-                生成整套图片
+                暂未开放
               </button>
             </section>
 
@@ -179,7 +179,7 @@
           </div>
         </section>
 
-        <section id="view-generate" class="view" aria-labelledby="generateTitle">
+        <section id="view-generate" class="view active" aria-labelledby="generateTitle">
           <div class="topbar">
             <div>
               <p class="eyebrow">SINGLE IMAGE</p>
@@ -207,24 +207,17 @@
               </div>
               <div id="uploadPreview" class="upload-preview" aria-live="polite"></div>
 
-              <label class="field">
-                <span>提示词</span>
-                <textarea id="promptInput" rows="8" placeholder="描述要生成或编辑的商品、品类、场景、构图、背景、卖点和尺寸用途..."></textarea>
-              </label>
-
               <div class="template-block">
                 <div class="template-head">
                   <span>提示词模板</span>
                   <div class="template-tools">
-                    <button class="ghost-button mini-button" id="saveTemplateBtn" type="button">保存当前</button>
                     <select id="templateFilter" aria-label="筛选提示词模板">
                       <option value="all">全部模板</option>
-                      <option value="custom">我的模板</option>
                       <option value="main">主图</option>
                       <option value="scene">场景图</option>
                       <option value="infographic">信息图</option>
                       <option value="content">内容图</option>
-                      <option value="aplus">Amazon A+</option>
+                      <option value="aplus" selected>Amazon A+</option>
                       <option value="season">活动图</option>
                     </select>
                   </div>
