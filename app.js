@@ -299,6 +299,9 @@ const state = {
     modelSettings: {
       endpoint: DEFAULT_ENDPOINT,
       model: DEFAULT_MODEL
+    },
+    videoModelSettings: {
+      model: ""
     }
   }
 };
@@ -961,6 +964,9 @@ function clearAuthSession() {
     endpoint: DEFAULT_ENDPOINT,
     model: DEFAULT_MODEL
   };
+  state.auth.videoModelSettings = {
+    model: ""
+  };
   if (els.apiKeyInput) els.apiKeyInput.value = "";
   localStorage.removeItem(AUTH_TOKEN_KEY);
 }
@@ -980,15 +986,29 @@ function renderAccountKeyStatus() {
   const imageReady = loggedIn && Boolean(state.auth.apiKeyConfigured);
   const videoReady = loggedIn && Boolean(state.auth.videoApiKeyConfigured);
   const statusItems = [
-    { label: "图片 Key", ready: imageReady, text: loggedIn ? (imageReady ? "已配置" : "未配置") : "登录后查看" },
-    { label: "视频 Key", ready: videoReady, text: loggedIn ? (videoReady ? "已配置" : "未配置") : "登录后查看" }
+    {
+      label: "图片 Key",
+      ready: imageReady,
+      text: accountConfiguredText(loggedIn, imageReady, state.auth.modelSettings.model)
+    },
+    {
+      label: "视频 Key",
+      ready: videoReady,
+      text: accountConfiguredText(loggedIn, videoReady, state.auth.videoModelSettings.model)
+    }
   ];
   els.accountKeyStatus.innerHTML = statusItems
     .map((item) => {
       const statusClass = !loggedIn ? "neutral" : item.ready ? "ready" : "missing";
-      return `<span class="${statusClass}"><b>${escapeHtml(item.label)}</b><em>${escapeHtml(item.text)}</em></span>`;
+      return `<span class="${statusClass}" title="${escapeAttr(item.text)}"><b>${escapeHtml(item.label)}</b><em>${escapeHtml(item.text)}</em></span>`;
     })
     .join("");
+}
+
+function accountConfiguredText(loggedIn, ready, modelName = "") {
+  if (!loggedIn) return "登录后查看";
+  if (!ready) return "未配置";
+  return String(modelName || "").trim() || "已配置";
 }
 
 function updateAuthTypeUi() {
@@ -1032,6 +1052,9 @@ async function loadAccountSettings() {
   state.auth.modelSettings = {
     endpoint: settings.endpoint || settings.defaultEndpoint || DEFAULT_ENDPOINT,
     model: settings.model || settings.defaultModel || DEFAULT_MODEL
+  };
+  state.auth.videoModelSettings = {
+    model: settings.videoModel || ""
   };
   applyPromptConfig(settings.promptConfig || currentPromptConfig());
   els.apiKeyInput.value = settings.apiKeyMasked || (state.auth.apiKeyConfigured ? "已配置" : "未配置");
@@ -2467,8 +2490,6 @@ async function handleRefine() {
       generatedAssetId: images[0].generatedAssetId || images[0].remoteAssetId || ""
     };
     renderEditResults([refined]);
-    state.selectedImage = refined;
-    renderEditSelection();
     if (els.autoSaveToggle.checked) {
       const saved = await saveAssetWithFolder(refined, {
         name: refined.name,
@@ -2479,9 +2500,9 @@ async function handleRefine() {
       await refreshLibrary();
       setDefaultAutoSaveName();
       els.autoSaveNewFolderInput.value = "";
-      showGenerationToast("微调版本已保存，并设为下一轮基图");
+      showGenerationToast("微调版本已保存");
     } else {
-      showGenerationToast("微调版本已生成，并设为下一轮基图");
+      showGenerationToast("微调版本已生成");
     }
   } catch (error) {
     els.editResultGrid.className = "result-grid compact empty-state";
