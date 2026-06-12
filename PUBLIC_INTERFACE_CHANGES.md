@@ -2,18 +2,22 @@
 
 ## 2026-06-11 - Admin model provider routing
 
-B端 now has a parallel image model provider catalog. It does not replace the legacy per-user `user_settings.api_key/endpoint/model` image configuration; legacy generation remains the fallback when a user has no new provider-model authorization.
+B端 now has a parallel image/video model provider catalog. It does not replace the legacy per-user `user_settings.api_key/endpoint/model` image configuration; legacy generation remains the fallback when a user has no new provider-model authorization or default provider model.
 
 ### B端 HTTP API
 
-- `GET /api/admin/model-config` now returns `modelConfig.modelProviders[]` and `defaultImageModelId` in addition to `defaultEndpoint`, `defaultModel`, and `usageNote`.
-- `PUT /api/admin/model-config` now accepts `modelProviders[]` and `defaultImageModelId`. Each provider owns `name`, `providerType`, `baseUrl`, `apiKey`, `enabled`, and nested `models[]` with `modelName`, `priority`, and `enabled`.
+- `GET /api/admin/model-config` now returns `modelConfig.modelProviders[]`, `defaultImageModelId`, and `defaultVideoModelId` in addition to `defaultEndpoint`, `defaultModel`, and `usageNote`.
+- `PUT /api/admin/model-config` now accepts `modelProviders[]`, `defaultImageModelId`, and `defaultVideoModelId`. Each provider owns `name`, `providerType`, `baseUrl`, `apiKey`, `enabled`, and nested `models[]` with `modelName`, `modelKind: "image" | "video"`, `priority`, and `enabled`.
 - Provider tokens are write-only. GET responses return `apiKeyConfigured` and `apiKeyMasked`, never plaintext `apiKey`.
-- `GET /api/admin/users` now returns `allowedImageModels[]` for each user.
-- `PATCH /api/admin/users/:id` now accepts `allowedImageModelIds[]` and updates only the new authorization table. Existing image/video Key fields keep their current behavior.
+- `GET /api/admin/users` now returns `allowedImageModels[]` and `allowedVideoModels[]` for each user.
+- `PATCH /api/admin/users/:id` now accepts `allowedImageModelIds[]` and `allowedVideoModelIds[]`; each field updates only that model kind in the new authorization table. Existing legacy image/video Key fields keep their current API behavior for compatibility, but the B端 user UI no longer exposes them.
 
 ### C端 HTTP API
 
+- `GET /api/settings` now returns token-free `availableImageModels[]`, `availableVideoModels[]`, `defaultImageModelId`, and `defaultVideoModelId`.
+- If a user has explicit image/video model assignments but none of those assignments are currently usable, `GET /api/settings` does not report the global default provider model as ready for that kind.
+- `POST /api/generate` accepts an optional `imageModelId`/`providerModelId`/`modelId`. When present, the id must resolve to an authorized image model for the user, or to the global default image model when the user has no explicit image assignments.
+- Explicit image model selections never fall back to the legacy per-user Key path. Video model ids, disabled/deleted models, or unauthorized model ids are rejected.
 - `POST /api/generate` first checks the current user's enabled provider-model authorizations. When present, the backend calls those models by ascending `priority` and returns the first successful image response.
 - Upstream 429/5xx/network/timeout/no-image failures can fail over to the next authorized model. Login, disabled-account, missing-template, missing-prompt, missing-available-model, and similar business errors do not fail over.
 - Users with no new provider-model authorization use `defaultImageModelId` when it points to an enabled provider model. If no default provider model is configured, they continue to use the legacy per-user image Key/address/model flow unchanged.
@@ -28,6 +32,7 @@ B端 now has a parallel image model provider catalog. It does not replace the le
 ### Storage Contract
 
 - SQLite now includes `model_providers`, `provider_models`, and `user_model_access`.
+- `provider_models.model_kind` stores whether a configured model is for image or video selection.
 - `user_settings.api_key`, `user_settings.endpoint`, and `user_settings.model` remain the legacy image configuration and are not removed or repurposed.
 
 ## 2026-06-11 - Recoverable generated assets for C端 library

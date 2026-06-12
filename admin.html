@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>B端管理台 - AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260611-provider-list-v2" />
+    <link rel="stylesheet" href="./styles.css?v=20260611-provider-kind-v3" />
   </head>
   <body class="admin-body">
     <main class="admin-shell">
@@ -103,8 +103,8 @@
                       <th>来源</th>
                       <th>状态</th>
                       <th>角色</th>
-                      <th>图片 Key</th>
-                      <th>视频 Key</th>
+                      <th>图片模型</th>
+                      <th>视频模型</th>
                       <th>调用</th>
                       <th>图片</th>
                       <th>Token</th>
@@ -198,6 +198,15 @@
               <input id="providerModelNameInput" type="text" autocomplete="off" placeholder="gpt-image-2" />
             </label>
             <label class="field">
+              <span>模型类型</span>
+              <select id="providerModelKindInput">
+                <option value="image">图片模型</option>
+                <option value="video">视频模型</option>
+              </select>
+            </label>
+          </div>
+          <div class="provider-modal-grid">
+            <label class="field">
               <span>优先级</span>
               <input id="providerModelPriorityInput" type="number" min="1" step="1" value="100" />
             </label>
@@ -219,7 +228,7 @@
         <div class="modal-header">
           <div>
             <p class="eyebrow">USER MODEL CONFIG</p>
-            <h3 id="adminKeyModalTitle">配置用户模型 Key</h3>
+            <h3 id="adminKeyModalTitle">配置用户模型</h3>
           </div>
           <button class="icon-button" type="button" id="closeAdminKeyModalBtn" aria-label="关闭" title="关闭">
             <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
@@ -228,48 +237,30 @@
         <div class="modal-body">
           <div class="auth-note">
             <strong id="adminKeyUserText">选择用户后配置</strong>
-            <span id="adminKeyHelpText">保存后 C 端只会看到脱敏状态，生成请求由后端使用该配置调用模型。</span>
+            <span id="adminKeyHelpText">保存后 C 端按这里选择的模型执行；未选择时使用模型配置里的默认模型。</span>
           </div>
-          <label class="field">
-            <span id="adminKeyInputLabel">新的 Key</span>
-            <input id="adminApiKeyInput" type="password" autocomplete="off" placeholder="粘贴新的 API Key" />
-          </label>
-          <label class="field" id="adminImageEndpointField">
-            <span>图片 Base URL / 地址</span>
-            <input id="adminImageEndpointInput" type="text" autocomplete="off" placeholder="https://aokapi.com/v1beta/models/{model}:generateContent/" />
-          </label>
-          <label class="field" id="adminImageModelField">
-            <span>图片模型</span>
-            <input id="adminImageModelInput" type="text" autocomplete="off" placeholder="gemini-2.5-flash-image" />
-          </label>
           <section class="admin-allowed-model-section" id="adminAllowedImageModelSection">
             <div class="field">
-              <span>可用图片模型</span>
+              <span>选择图片模型</span>
               <div class="admin-allowed-model-list" id="adminAllowedImageModelList"></div>
             </div>
           </section>
-          <label class="field" id="adminVideoModelField">
-            <span>视频模型</span>
-            <input id="adminVideoModelInput" type="text" autocomplete="off" placeholder="例如：veo-3-fast" />
-          </label>
-          <label class="field" id="adminVideoEndpointPrimaryField">
-            <span>视频地址 1</span>
-            <input id="adminVideoEndpointPrimaryInput" type="url" autocomplete="off" placeholder="视频接口地址 1" />
-          </label>
-          <label class="field" id="adminVideoEndpointSecondaryField">
-            <span>视频地址 2</span>
-            <input id="adminVideoEndpointSecondaryInput" type="url" autocomplete="off" placeholder="视频接口地址 2" />
-          </label>
+          <section class="admin-allowed-model-section" id="adminAllowedVideoModelSection">
+            <div class="field">
+              <span>选择视频模型</span>
+              <div class="admin-allowed-model-list" id="adminAllowedVideoModelList"></div>
+            </div>
+          </section>
         </div>
         <div class="modal-actions">
-          <button class="ghost-button danger" type="button" id="clearUserKeyBtn">清空 Key</button>
+          <button class="ghost-button" type="button" id="clearUserKeyBtn">恢复默认模型</button>
           <button class="ghost-button" type="button" id="cancelUserKeyBtn">取消</button>
-          <button class="primary-button" type="button" id="saveUserKeyBtn">保存配置</button>
+          <button class="primary-button" type="button" id="saveUserKeyBtn">保存模型</button>
         </div>
       </div>
     </div>
 
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./admin.js?v=20260611-provider-list-v2" defer></script>
+    <script src="./admin.js?v=20260611-provider-kind-v3" defer></script>
   </body>
 </html>

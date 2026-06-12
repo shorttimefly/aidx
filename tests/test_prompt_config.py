@@ -19,6 +19,8 @@ class PromptConfigTests(unittest.TestCase):
             config = server.prompt_config_settings(conn)
 
         self.assertEqual(config["version"], 1)
+        self.assertEqual(config["single"]["defaultTemplateCategory"], "aplus")
+        self.assertEqual(config["single"]["defaultTemplateId"], "aplus-brand-story")
         self.assertEqual(config["single"]["templates"][0]["id"], "main-white")
         self.assertEqual(config["suite"]["presets"][0]["id"], "amazon-aplus")
         self.assertEqual(config["suite"]["visualStyles"][0]["label"], "高级简洁")

@@ -1,5 +1,6 @@
 "use strict";
 
+const APP_BASE_PATH = detectAppBasePath();
 const DB_NAME = "pulse-ox-image-studio";
 const DB_VERSION = 1;
 const STORES = {
@@ -10,11 +11,12 @@ const STORES = {
 const DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/{model}:generateContent/";
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_FOLDER_NAME = "未分类素材";
-const USER_TEMPLATES_KEY = "imageStudio.userTemplates";
+const DEFAULT_SINGLE_TEMPLATE_CATEGORY = "aplus";
+const DEFAULT_SINGLE_TEMPLATE_ID = "aplus-brand-story";
 const AUTH_TOKEN_KEY = "imageStudio.authToken";
+const GENERATED_ASSET_IMPORT_KEY_PREFIX = "imageStudio.importedGeneratedAssetIds";
 const IMAGE_SIZE_MULTIPLE = 16;
 const REFERENCE_STRATEGY_KEY = "imageStudio.referenceStrategy";
-const PROMPT_CONFIG_DEFAULTS_URL = "./prompt-config-defaults.json?v=20260610-prompt-display-label";
 const SUITE_STYLE_DISPLAY_LABELS = {
   premium: "清爽质感",
   tech: "现代冷调",
@@ -29,126 +31,34 @@ const STRICT_PRODUCT_REFERENCE_RULE = [
   "即使需要改变角度、场景、光线、背景或构图，也必须像同一件真实商品从新角度拍摄；看不清或无法确认的细节必须按参考图延续，不允许自行添加、删除、简化、美化或重新设计商品。"
 ].join("\n");
 
+function detectAppBasePath() {
+  const marker = "/aidx-runtime";
+  const pathname = window.location.pathname || "";
+  return pathname === marker || pathname.startsWith(`${marker}/`) ? marker : "";
+}
+
+function appRoute(path) {
+  return `${APP_BASE_PATH}${path}`;
+}
+
 const templates = [
-  {
-    id: "main-white",
-    category: "main",
-    title: "白底主图",
-    prompt:
-      "平台合规白底主图，【产品名称/品类】居中展示，产品边缘清晰，纯白背景，真实电商摄影质感，无文字、无图标、无多余道具，准确呈现产品外观、材质、颜色和比例。"
-  },
-  {
-    id: "main-angle",
-    category: "main",
-    title: "多角度套图",
-    prompt:
-      "【产品名称/品类】多角度展示，包含正面、侧面、背面和关键细节特写，干净浅灰背景，真实产品摄影，突出材质、结构、工艺和核心卖点，无品牌侵权元素。"
-  },
-  {
-    id: "scene-home",
-    category: "scene",
-    title: "居家生活场景",
-    prompt:
-      "为【产品名称/品类】生成居家生活方式图，产品处于真实使用场景中，画面温暖可信，产品清晰可见，自然光，背景整洁，人物和道具只用于说明使用方式，不夸大产品效果。"
-  },
-  {
-    id: "scene-use",
-    category: "scene",
-    title: "使用场景",
-    prompt:
-      "【产品名称/品类】真实使用场景，用户正在自然地使用产品，产品靠近视觉中心且细节可辨，背景符合目标人群和使用环境，真实摄影风格，强调便利性、质感和场景价值。"
-  },
-  {
-    id: "info-feature",
-    category: "infographic",
-    title: "卖点信息图",
-    prompt:
-      "电商副图信息图构图，【产品名称/品类】位于画面中心，周围预留清晰标注区域，展示 3-5 个核心卖点、材质细节、使用方式或配件，干净浅色背景，少文字或无文字。"
-  },
-  {
-    id: "info-size",
-    category: "infographic",
-    title: "尺寸与包装",
-    prompt:
-      "【产品名称/品类】尺寸与包装说明图，产品、包装盒、配件和说明物整齐排列，电商平铺摄影，背景干净，预留尺寸、规格、材质和包装清单标注空间，真实材质。"
-  },
-  {
-    id: "content-banner",
-    category: "content",
-    title: "内容横幅",
-    prompt:
-      "电商详情页内容横幅，【产品名称/品类】置于符合品牌调性的场景中，横向构图，一侧留标题和卖点文案空间，真实摄影，高级克制，突出产品定位和使用氛围。"
-  },
-  {
-    id: "content-comparison",
-    category: "content",
-    title: "对比模块",
-    prompt:
-      "电商详情页对比模块视觉，【产品名称/品类】与简洁功能图块并列，突出规格差异、材质优势、使用体验和适用场景，版式清晰，留出后期排版空间，不添加未经验证的认证或夸张承诺。"
-  },
-  {
-    id: "aplus-brand-story",
-    category: "aplus",
-    title: "A+ 品牌故事横幅",
-    prompt:
-      "Amazon A+ Content 品牌故事横幅，为【产品名称/品类】生成横版增强图片：产品与品牌使用场景融合，画面一侧保留自定义标题和品牌故事文案安全区，真实商业摄影，高级可信，不生成真实可读文字，不出现 Amazon 标志、排名、认证、折扣或绝对化承诺。"
-  },
-  {
-    id: "aplus-lifestyle",
-    category: "aplus",
-    title: "A+ 生活方式模块",
-    prompt:
-      "Amazon A+ 生活方式模块视觉，【产品名称/品类】在目标用户真实使用场景中清晰可见，强调场景价值和情绪代入，产品外观准确，背景整洁，适合后期叠加短文案；不夸大效果，不生成平台标识和虚构认证。"
-  },
-  {
-    id: "aplus-benefit-grid",
-    category: "aplus",
-    title: "A+ 三栏卖点图",
-    prompt:
-      "Amazon A+ 图文模块，为【产品名称/品类】生成三栏或四栏核心卖点视觉：每个区域对应一个功能、材质、使用场景或配件价值，布局清晰，留出自定义文本位置，少文字或无文字，适合后期排版。"
-  },
-  {
-    id: "aplus-hotspot-detail",
-    category: "aplus",
-    title: "A+ 热点细节图",
-    prompt:
-      "Amazon A+ 热点/细节模块视觉，【产品名称/品类】以近景特写展示关键结构、材质、接口、纹理或配件，周围保留 3-5 个热点标注安全区，产品真实清晰，不添加未经验证的技术指标或认证章。"
-  },
-  {
-    id: "aplus-comparison-chart",
-    category: "aplus",
-    title: "A+ 对比图模块",
-    prompt:
-      "Amazon A+ 可购买对比图模块背景，为【产品名称/品类】生成清晰的产品对比视觉：适合展示同系列规格、颜色、套装或适用场景差异，预留表格和文字区域，不写具体竞品名，不生成虚假排名、最佳、第一等绝对化表达。"
-  },
-  {
-    id: "aplus-carousel-series",
-    category: "aplus",
-    title: "A+ 轮播组图",
-    prompt:
-      "Amazon A+ 图片轮播模块中的单张视觉，【产品名称/品类】保持统一品牌风格，画面聚焦一个清晰主题：场景、细节、使用步骤或购买理由之一；构图模块化，留白稳定，适合与其他轮播图组成一致套系。"
-  },
-  {
-    id: "aplus-qa-trust",
-    category: "aplus",
-    title: "A+ 问答信任图",
-    prompt:
-      "Amazon A+ 问答/信任模块视觉，为【产品名称/品类】生成使用、清洁、安装、维护或包装说明场景，画面清楚可信，留出 Q&A 或说明文案区域；不出现保修承诺、官方认证、医学/安全功效等未经确认信息。"
-  },
-  {
-    id: "season-gift",
-    category: "season",
-    title: "礼品季",
-    prompt:
-      "节日礼品季电商场景，【产品名称/品类】作为礼物放在简洁礼盒或节日道具旁，暖色室内光，真实摄影，画面温和有质感，保留产品主体清晰度，避免过度装饰。"
-  },
-  {
-    id: "season-promo",
-    category: "season",
-    title: "促销活动图",
-    prompt:
-      "电商促销活动副图背景，【产品名称/品类】清晰居中，视觉风格干净醒目，右侧或下方预留价格、优惠和活动信息排版区，无具体折扣文字，无平台商标，适合后期添加促销信息。"
-  }
+  { id: "main-white", category: "main", title: "白底主图" },
+  { id: "main-angle", category: "main", title: "多角度套图" },
+  { id: "scene-home", category: "scene", title: "居家生活场景" },
+  { id: "scene-use", category: "scene", title: "使用场景" },
+  { id: "info-feature", category: "infographic", title: "卖点信息图" },
+  { id: "info-size", category: "infographic", title: "尺寸与包装" },
+  { id: "content-banner", category: "content", title: "内容横幅" },
+  { id: "content-comparison", category: "content", title: "对比模块" },
+  { id: "aplus-brand-story", category: "aplus", title: "A+ 品牌故事横幅" },
+  { id: "aplus-lifestyle", category: "aplus", title: "A+ 生活方式模块" },
+  { id: "aplus-benefit-grid", category: "aplus", title: "A+ 三栏卖点图" },
+  { id: "aplus-hotspot-detail", category: "aplus", title: "A+ 热点细节图" },
+  { id: "aplus-comparison-chart", category: "aplus", title: "A+ 对比图模块" },
+  { id: "aplus-carousel-series", category: "aplus", title: "A+ 轮播组图" },
+  { id: "aplus-qa-trust", category: "aplus", title: "A+ 问答信任图" },
+  { id: "season-gift", category: "season", title: "礼品季" },
+  { id: "season-promo", category: "season", title: "促销活动图" }
 ];
 
 let userTemplates = [];
@@ -371,9 +281,11 @@ const state = {
   pendingSave: null,
   busy: false,
   referenceFallbackNotice: "",
+  userSelectedSingleSize: false,
   suiteShotSettings: {},
   lastRequestPayload: null,
   promptConfig: legacyPromptConfig(),
+  selectedTemplateId: DEFAULT_SINGLE_TEMPLATE_ID,
   videoReference: null,
   videoScenes: [],
   videoJob: null,
@@ -397,9 +309,10 @@ function legacyPromptConfig() {
   return {
     version: 1,
     single: {
+      defaultTemplateCategory: DEFAULT_SINGLE_TEMPLATE_CATEGORY,
+      defaultTemplateId: DEFAULT_SINGLE_TEMPLATE_ID,
       templateCategories: [
         { id: "all", label: "全部模板" },
-        { id: "custom", label: "我的模板" },
         { id: "main", label: "主图" },
         { id: "scene", label: "场景图" },
         { id: "infographic", label: "信息图" },
@@ -408,8 +321,7 @@ function legacyPromptConfig() {
         { id: "season", label: "活动图" }
       ],
       templates,
-      supplementalVariantPrompt:
-        "请生成第 {index} 张变体，保持同一商品和同一设计方向，但构图、角度或背景细节与前面图片有区别。"
+      supplementalVariantPrompt: ""
     },
     refinement: {
       quickEdits: quickEdits.map((text, index) => ({ id: `quick-${index + 1}`, text })),
@@ -487,15 +399,6 @@ function legacyPromptConfig() {
 }
 
 async function loadPromptConfigDefaults() {
-  try {
-    const response = await fetch(PROMPT_CONFIG_DEFAULTS_URL);
-    if (response.ok) {
-      applyPromptConfig(await response.json(), { rerender: false });
-      return;
-    }
-  } catch {
-    // The in-file legacy defaults keep the app usable when the static JSON cannot be loaded.
-  }
   applyPromptConfig(legacyPromptConfig(), { rerender: false });
 }
 
@@ -549,12 +452,18 @@ function renderPromptConfigDrivenUi() {
 
 function renderTemplateFilterOptions() {
   if (!els.templateFilter) return;
-  const selected = els.templateFilter.value || "all";
-  const categories = currentPromptConfig().single.templateCategories || [];
+  const singleConfig = currentPromptConfig().single || {};
+  const defaultCategory = singleConfig.defaultTemplateCategory || DEFAULT_SINGLE_TEMPLATE_CATEGORY;
+  const selected = els.templateFilter.value || defaultCategory;
+  const categories = singleConfig.templateCategories || [];
   els.templateFilter.innerHTML = categories
     .map((category) => `<option value="${escapeAttr(category.id)}">${escapeHtml(category.label)}</option>`)
     .join("");
-  els.templateFilter.value = categories.some((category) => category.id === selected) ? selected : "all";
+  els.templateFilter.value = categories.some((category) => category.id === selected)
+    ? selected
+    : categories.some((category) => category.id === defaultCategory)
+      ? defaultCategory
+      : "all";
 }
 
 function renderSuiteSelectOptions() {
@@ -591,7 +500,7 @@ function selectedSuiteVisualStyle() {
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
-  document.body.dataset.view = "suite";
+  document.body.dataset.view = "generate";
   cacheElements();
   bindEvents();
   await loadPromptConfigDefaults();
@@ -674,8 +583,6 @@ function cacheElements() {
     dropzone: document.getElementById("dropzone"),
     uploadInput: document.getElementById("uploadInput"),
     uploadPreview: document.getElementById("uploadPreview"),
-    promptInput: document.getElementById("promptInput"),
-    saveTemplateBtn: document.getElementById("saveTemplateBtn"),
     templateFilter: document.getElementById("templateFilter"),
     templateGrid: document.getElementById("templateGrid"),
     countInput: document.getElementById("countInput"),
@@ -738,11 +645,16 @@ function cacheElements() {
 
 function bindEvents() {
   els.navItems.forEach((button) => {
-    button.addEventListener("click", () => switchView(button.dataset.view));
+    button.addEventListener("click", () => {
+      if (button.disabled || button.getAttribute("aria-disabled") === "true") return;
+      switchView(button.dataset.view);
+    });
   });
 
-  els.templateFilter.addEventListener("change", renderTemplates);
-  els.saveTemplateBtn.addEventListener("click", saveCurrentPromptTemplate);
+  els.templateFilter.addEventListener("change", () => {
+    state.selectedTemplateId = "";
+    renderTemplates();
+  });
   els.connectionState.addEventListener("click", openSettingsModal);
   els.singleConnectionState.addEventListener("click", openSettingsModal);
   els.openAuthBtn.addEventListener("click", () => openAuthModal({ locked: false }));
@@ -791,7 +703,10 @@ function bindEvents() {
   els.saveApiBtn?.addEventListener("click", saveSettings);
   els.testReferenceBtn.addEventListener("click", handleTestReferenceSupport);
   els.toggleKeyBtn?.addEventListener("click", toggleApiKey);
-  els.sizeInput.addEventListener("change", () => localStorage.setItem("imageStudio.size", els.sizeInput.value));
+  els.sizeInput.addEventListener("change", () => {
+    state.userSelectedSingleSize = true;
+    localStorage.setItem("imageStudio.size", els.sizeInput.value);
+  });
   els.suiteSizeInput.addEventListener("change", handleSuiteSizeChange);
   els.clearFormBtn.addEventListener("click", clearGenerationForm);
   els.generateBtn.addEventListener("click", handleGenerate);
@@ -874,6 +789,8 @@ function bindEvents() {
 }
 
 function switchView(viewName) {
+  const targetButton = Array.from(els.navItems).find((button) => button.dataset.view === viewName);
+  if (targetButton?.disabled || targetButton?.getAttribute("aria-disabled") === "true") return;
   document.body.dataset.view = viewName;
   els.navItems.forEach((button) => {
     const isActive = button.dataset.view === viewName;
@@ -925,6 +842,7 @@ async function bootstrapAuth() {
     const payload = await apiFetch("/me");
     state.auth.user = payload.user;
     await loadAccountSettings();
+    await syncRecoverableGeneratedAssets();
     closeAuthModal();
   } catch (error) {
     clearAuthSession();
@@ -936,7 +854,7 @@ async function bootstrapAuth() {
 }
 
 async function apiFetch(path, options = {}) {
-  const response = await fetch(`/api${path}`, {
+  const response = await fetch(appRoute(`/api${path}`), {
     ...options,
     headers: {
       "Content-Type": "application/json",
@@ -1004,7 +922,14 @@ async function handleAuth() {
     closeAuthModal();
     renderAuthState();
     updateConnectionState();
-    showToast(mode === "register" ? "账号已创建" : "已登录");
+    const recoveredCount = await syncRecoverableGeneratedAssets({ announce: false });
+    showToast(
+      recoveredCount
+        ? `${mode === "register" ? "账号已创建" : "已登录"}，已同步 ${recoveredCount} 张生成图到素材区`
+        : mode === "register"
+          ? "账号已创建"
+          : "已登录"
+    );
   } catch (error) {
     showToast(error.message, true);
   } finally {
@@ -1118,6 +1043,87 @@ async function loadAccountSettings() {
   els.sizeInput.value = savedSize;
   renderAuthState();
   updateConnectionState();
+}
+
+async function syncRecoverableGeneratedAssets({ announce = true } = {}) {
+  if (!state.auth.token || !state.auth.user || !state.db) return 0;
+  try {
+    const payload = await apiFetch("/generated-assets?limit=50");
+    const remoteAssets = Array.isArray(payload.assets) ? payload.assets : [];
+    if (!remoteAssets.length) return 0;
+    if (!state.folders.length) {
+      await ensureDefaultFolder();
+      await refreshLibrary();
+    }
+    const importedIds = loadImportedGeneratedAssetIds();
+    const existingRemoteIds = new Set(state.assets.map((asset) => asset.remoteAssetId).filter(Boolean));
+    let importedCount = 0;
+    for (const remoteAsset of remoteAssets.slice().reverse()) {
+      const remoteId = String(remoteAsset.id || "").trim();
+      const url = String(remoteAsset.url || "").trim();
+      if (!remoteId || !url) continue;
+      if (existingRemoteIds.has(remoteId)) {
+        importedIds.add(remoteId);
+        continue;
+      }
+      if (importedIds.has(remoteId)) continue;
+      const item = libraryItemFromGeneratedAsset(remoteAsset);
+      await saveAssetWithFolder(item, {
+        name: item.name,
+        folderId: state.folders[0]?.id,
+        newFolderName: ""
+      });
+      importedIds.add(remoteId);
+      existingRemoteIds.add(remoteId);
+      importedCount += 1;
+    }
+    saveImportedGeneratedAssetIds(importedIds);
+    if (importedCount) {
+      await refreshLibrary();
+      if (announce) showToast(`已同步 ${importedCount} 张生成图到素材区`);
+    }
+    return importedCount;
+  } catch (error) {
+    if (error.message !== "接口不存在") {
+      console.warn("Failed to sync generated assets", error);
+    }
+    return 0;
+  }
+}
+
+function libraryItemFromGeneratedAsset(asset) {
+  const createdAt = asset.createdAt || new Date().toISOString();
+  return {
+    id: createId("asset"),
+    name: asset.name || timestampName(),
+    url: asset.url,
+    prompt: asset.prompt || "",
+    createdAt,
+    source: "remote-generation",
+    remoteAssetId: asset.id,
+    logId: asset.logId || "",
+    model: asset.model || state.auth.modelSettings.model || DEFAULT_MODEL,
+    size: asset.size || "",
+    request: asset.request || null
+  };
+}
+
+function generatedAssetImportKey() {
+  return `${GENERATED_ASSET_IMPORT_KEY_PREFIX}:${state.auth.user?.id || "anonymous"}`;
+}
+
+function loadImportedGeneratedAssetIds() {
+  try {
+    const value = JSON.parse(localStorage.getItem(generatedAssetImportKey()) || "[]");
+    return new Set(Array.isArray(value) ? value.filter(Boolean).map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveImportedGeneratedAssetIds(ids) {
+  const values = Array.from(ids).slice(-300);
+  localStorage.setItem(generatedAssetImportKey(), JSON.stringify(values));
 }
 
 async function verifySessionActive() {
@@ -1927,11 +1933,13 @@ async function handleGenerateSuite() {
         source: "suite",
         suiteId,
         shotId: shot.id,
-        shotName: shot.name,
-        model: els.modelInput.value.trim() || DEFAULT_MODEL,
-        size: requestedSize,
-        request: images[0].request || state.lastRequestPayload
-      };
+	        shotName: shot.name,
+	        model: els.modelInput.value.trim() || DEFAULT_MODEL,
+	        size: requestedSize,
+	        request: images[0].request || state.lastRequestPayload,
+	        remoteAssetId: images[0].remoteAssetId || images[0].generatedAssetId || "",
+	        generatedAssetId: images[0].generatedAssetId || images[0].remoteAssetId || ""
+	      };
       generated.push(item);
       state.suiteGenerated = generated;
       state.generated = generated;
@@ -2000,16 +2008,14 @@ function handleSaveSuite() {
 
 function renderTemplates() {
   const category = els.templateFilter.value || "all";
-  const builtInTemplates = currentPromptConfig().single.templates || [];
-  const allTemplates = [...userTemplates, ...builtInTemplates];
+  const allTemplates = currentPromptConfig().single.templates || [];
   const visibleTemplates = category === "all" ? allTemplates : allTemplates.filter((item) => item.category === category);
+  ensureSelectedTemplate(visibleTemplates.length ? visibleTemplates : allTemplates);
   els.templateGrid.innerHTML = visibleTemplates
     .map(
       (template) => `
-        <button class="template-card" type="button" data-template-id="${escapeHtml(template.id)}">
-          ${template.custom ? `<span class="template-delete" data-delete-template="${escapeHtml(template.id)}" title="删除模板">×</span>` : ""}
+        <button class="template-card ${state.selectedTemplateId === template.id ? "active" : ""}" type="button" data-template-id="${escapeHtml(template.id)}">
           <strong>${escapeHtml(template.title)}</strong>
-          <span>${escapeHtml(template.prompt)}</span>
         </button>
       `
     )
@@ -2018,61 +2024,45 @@ function renderTemplates() {
     button.addEventListener("click", () => {
       const template = allTemplates.find((item) => item.id === button.dataset.templateId);
       if (!template) return;
-      els.promptInput.value = template.prompt;
+      state.selectedTemplateId = template.id;
+      renderTemplates();
       showToast(`已套用：${template.title}`);
     });
   });
-  els.templateGrid.querySelectorAll("[data-delete-template]").forEach((button) => {
-    button.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      deleteUserTemplate(button.dataset.deleteTemplate);
-    });
-  });
+}
+
+function ensureSelectedTemplate(allTemplates = currentPromptConfig().single.templates || []) {
+  if (allTemplates.some((template) => template.id === state.selectedTemplateId)) return;
+  state.selectedTemplateId = defaultSingleTemplate(allTemplates)?.id || "";
+}
+
+function selectedSingleTemplate() {
+  const templates = currentPromptConfig().single.templates || [];
+  return templates.find((template) => template.id === state.selectedTemplateId) || defaultSingleTemplate(templates);
+}
+
+function defaultSingleTemplate(allTemplates = currentPromptConfig().single.templates || []) {
+  const singleConfig = currentPromptConfig().single || {};
+  const defaultCategory = singleConfig.defaultTemplateCategory || DEFAULT_SINGLE_TEMPLATE_CATEGORY;
+  return (
+    allTemplates.find((template) => template.id === singleConfig.defaultTemplateId) ||
+    allTemplates.find((template) => template.id === DEFAULT_SINGLE_TEMPLATE_ID) ||
+    allTemplates.find((template) => template.category === defaultCategory) ||
+    allTemplates[0] ||
+    null
+  );
 }
 
 function loadUserTemplates() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(USER_TEMPLATES_KEY) || "[]");
-    userTemplates = Array.isArray(saved)
-      ? saved.filter((item) => item?.id && item?.prompt).map((item) => ({ ...item, category: "custom", custom: true }))
-      : [];
-  } catch {
-    userTemplates = [];
-  }
-}
-
-function persistUserTemplates() {
-  localStorage.setItem(USER_TEMPLATES_KEY, JSON.stringify(userTemplates));
+  userTemplates = [];
 }
 
 function saveCurrentPromptTemplate() {
-  const promptText = els.promptInput.value.trim();
-  if (!promptText) {
-    showToast("请先输入提示词", true);
-    return;
-  }
-  const title = window.prompt("模板名称", `我的模板 ${userTemplates.length + 1}`);
-  if (!title || !title.trim()) return;
-  userTemplates.unshift({
-    id: createId("tpl"),
-    category: "custom",
-    custom: true,
-    title: title.trim(),
-    prompt: promptText,
-    createdAt: new Date().toISOString()
-  });
-  persistUserTemplates();
-  els.templateFilter.value = "custom";
-  renderTemplates();
-  showToast("提示词模板已保存");
+  showToast("模板由后台统一配置", true);
 }
 
 function deleteUserTemplate(templateId) {
-  userTemplates = userTemplates.filter((item) => item.id !== templateId);
-  persistUserTemplates();
-  renderTemplates();
-  showToast("模板已删除");
+  void templateId;
 }
 
 function renderQuickEdits() {
@@ -2307,7 +2297,6 @@ function renderReferenceProbeError(message) {
 }
 
 function clearGenerationForm() {
-  els.promptInput.value = "";
   state.uploaded = [];
   els.uploadInput.value = "";
   renderUploadPreview();
@@ -2386,9 +2375,9 @@ function removeUploadedImage(id) {
 }
 
 async function handleGenerate() {
-  const prompt = els.promptInput.value.trim();
-  if (!prompt) {
-    showToast("请先输入提示词", true);
+  const template = selectedSingleTemplate();
+  if (!template) {
+    showToast("请先选择模板", true);
     return;
   }
   if (!(await ensureApiReady())) return;
@@ -2400,7 +2389,7 @@ async function handleGenerate() {
   renderLoadingGrid(els.resultGrid, count);
   try {
     const { images, calls } = await requestImagesExact({
-      prompt,
+      templateId: template.id,
       count,
       size: els.sizeInput.value,
       referenceImages: state.uploaded
@@ -2409,13 +2398,15 @@ async function handleGenerate() {
       id: createId("gen"),
       name: `${timestampName()}-${index + 1}`,
       url: image.url,
-      prompt,
+      prompt: `模板：${template.title}`,
       createdAt: new Date().toISOString(),
-      source: "generation",
-      model: els.modelInput.value.trim() || DEFAULT_MODEL,
-      size: els.sizeInput.value,
-      request: image.request || state.lastRequestPayload
-    }));
+	      source: "generation",
+	      model: els.modelInput.value.trim() || DEFAULT_MODEL,
+	      size: els.sizeInput.value,
+	      request: image.request || state.lastRequestPayload,
+	      remoteAssetId: image.remoteAssetId || image.generatedAssetId || "",
+	      generatedAssetId: image.generatedAssetId || image.remoteAssetId || ""
+	    }));
     renderResults();
     showGenerationToast(`已生成 ${state.generated.length} 张图片，API 调用 ${calls} 次`);
   } catch (error) {
@@ -2471,7 +2462,9 @@ async function handleRefine() {
       parentId: state.selectedImage.id,
       model: els.modelInput.value.trim() || DEFAULT_MODEL,
       size: els.sizeInput.value,
-      request: images[0].request || state.lastRequestPayload
+      request: images[0].request || state.lastRequestPayload,
+      remoteAssetId: images[0].remoteAssetId || images[0].generatedAssetId || "",
+      generatedAssetId: images[0].generatedAssetId || images[0].remoteAssetId || ""
     };
     renderEditResults([refined]);
     state.selectedImage = refined;
@@ -2499,18 +2492,23 @@ async function handleRefine() {
   }
 }
 
-async function requestImages({ prompt, count, size, referenceImages = [] }) {
+async function requestImages({ prompt, templateId, variantIndex = 0, count, size, referenceImages = [] }) {
   const references = normalizeReferenceImages(referenceImages);
-  const finalPrompt = withStrictProductReference(withReferenceContext(prompt, references));
   const requestSize = normalizeImageSize(size) || "1024x1024";
+  const requestBody = {
+    count,
+    size: requestSize,
+    referenceImages: references
+  };
+  if (templateId) {
+    requestBody.templateId = templateId;
+    if (variantIndex) requestBody.variantIndex = variantIndex;
+  } else {
+    requestBody.prompt = withStrictProductReference(withReferenceContext(prompt, references));
+  }
   const payload = await apiFetch("/generate", {
     method: "POST",
-    body: JSON.stringify({
-      prompt: finalPrompt,
-      count,
-      size: requestSize,
-      referenceImages: references
-    })
+    body: JSON.stringify(requestBody)
   });
   const images = payload.images || [];
   if (!images.length) {
@@ -2518,11 +2516,7 @@ async function requestImages({ prompt, count, size, referenceImages = [] }) {
   }
   const requestSnapshot = payload.request || {
     model: payload.model || state.auth.modelSettings.model || DEFAULT_MODEL,
-    body: {
-      prompt: finalPrompt,
-      n: count,
-      size: requestSize
-    }
+    body: sanitizeRequestPayload(requestBody)
   };
   recordRequestPayload(requestSnapshot);
   if (payload.apiKeyConfigured !== undefined) {
@@ -3018,11 +3012,14 @@ async function requestImagesExact(options) {
 
   while (images.length < targetCount) {
     const index = images.length + 1;
-    const supplementalPrompt = [
-      options.prompt,
-      promptText(currentPromptConfig().single.supplementalVariantPrompt, { index })
-    ].join("\n");
-    const extraBatch = await requestImages({ ...options, prompt: supplementalPrompt, count: 1 });
+    const extraOptions = options.templateId
+      ? { ...options, variantIndex: index, count: 1 }
+      : {
+          ...options,
+          prompt: [options.prompt, promptText(currentPromptConfig().single.supplementalVariantPrompt, { index })].join("\n"),
+          count: 1
+        };
+    const extraBatch = await requestImages(extraOptions);
     calls += 1;
     images.push(...extraBatch);
   }
@@ -3311,6 +3308,11 @@ async function saveAssetWithFolder(item, options) {
     savedAt: new Date().toISOString()
   };
   await putStore(STORES.assets, asset);
+  if (asset.remoteAssetId && state.auth.user) {
+    const importedIds = loadImportedGeneratedAssetIds();
+    importedIds.add(asset.remoteAssetId);
+    saveImportedGeneratedAssetIds(importedIds);
+  }
   return asset;
 }
 
@@ -3619,6 +3621,7 @@ function readImageDimensions(url) {
 function applyDetectedSize(size) {
   const normalizedSize = normalizeImageSize(size);
   if (!normalizedSize) return;
+  const preserveSingleSize = state.userSelectedSingleSize;
   const labelPrefix = normalizedSize === size ? "原图尺寸" : "API兼容尺寸";
   const exists = Array.from(els.sizeInput.options).some((option) => option.value === normalizedSize);
   if (!exists) {
@@ -3628,7 +3631,10 @@ function applyDetectedSize(size) {
     option.dataset.detected = "true";
     els.sizeInput.prepend(option);
   }
-  els.sizeInput.value = normalizedSize;
+  if (!preserveSingleSize) {
+    els.sizeInput.value = normalizedSize;
+    localStorage.setItem("imageStudio.size", normalizedSize);
+  }
   if (els.suiteSizeInput) {
     const suiteExists = Array.from(els.suiteSizeInput.options).some((option) => option.value === normalizedSize);
     if (!suiteExists) {
@@ -3640,7 +3646,6 @@ function applyDetectedSize(size) {
     }
     els.suiteSizeInput.value = normalizedSize;
   }
-  localStorage.setItem("imageStudio.size", normalizedSize);
 }
 
 function normalizeImageSize(size) {

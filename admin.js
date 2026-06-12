@@ -20,6 +20,7 @@ const state = {
   summary: null,
   modelProviders: [],
   defaultImageModelId: "",
+  defaultVideoModelId: "",
   legacyModelConfig: {
     defaultEndpoint: "",
     defaultModel: "",
@@ -83,6 +84,7 @@ function cacheElements() {
     providerBaseUrlInput: document.getElementById("providerBaseUrlInput"),
     providerTokenInput: document.getElementById("providerTokenInput"),
     providerModelNameInput: document.getElementById("providerModelNameInput"),
+    providerModelKindInput: document.getElementById("providerModelKindInput"),
     providerModelPriorityInput: document.getElementById("providerModelPriorityInput"),
     providerEnabledInput: document.getElementById("providerEnabledInput"),
     refreshUsersBtn: document.getElementById("refreshUsersBtn"),
@@ -101,20 +103,10 @@ function cacheElements() {
     adminKeyModalTitle: document.getElementById("adminKeyModalTitle"),
     adminKeyUserText: document.getElementById("adminKeyUserText"),
     adminKeyHelpText: document.getElementById("adminKeyHelpText"),
-    adminKeyInputLabel: document.getElementById("adminKeyInputLabel"),
-    adminApiKeyInput: document.getElementById("adminApiKeyInput"),
-    adminImageEndpointField: document.getElementById("adminImageEndpointField"),
-    adminImageEndpointInput: document.getElementById("adminImageEndpointInput"),
-    adminImageModelField: document.getElementById("adminImageModelField"),
-    adminImageModelInput: document.getElementById("adminImageModelInput"),
     adminAllowedImageModelSection: document.getElementById("adminAllowedImageModelSection"),
     adminAllowedImageModelList: document.getElementById("adminAllowedImageModelList"),
-    adminVideoModelField: document.getElementById("adminVideoModelField"),
-    adminVideoModelInput: document.getElementById("adminVideoModelInput"),
-    adminVideoEndpointPrimaryField: document.getElementById("adminVideoEndpointPrimaryField"),
-    adminVideoEndpointPrimaryInput: document.getElementById("adminVideoEndpointPrimaryInput"),
-    adminVideoEndpointSecondaryField: document.getElementById("adminVideoEndpointSecondaryField"),
-    adminVideoEndpointSecondaryInput: document.getElementById("adminVideoEndpointSecondaryInput"),
+    adminAllowedVideoModelSection: document.getElementById("adminAllowedVideoModelSection"),
+    adminAllowedVideoModelList: document.getElementById("adminAllowedVideoModelList"),
     closeAdminKeyModalBtn: document.getElementById("closeAdminKeyModalBtn"),
     cancelUserKeyBtn: document.getElementById("cancelUserKeyBtn"),
     saveUserKeyBtn: document.getElementById("saveUserKeyBtn"),
@@ -155,9 +147,6 @@ function bindEvents() {
   els.cancelUserKeyBtn.addEventListener("click", closeUserKeyModal);
   els.saveUserKeyBtn.addEventListener("click", saveUserKey);
   els.clearUserKeyBtn.addEventListener("click", clearUserKey);
-  els.adminApiKeyInput.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") saveUserKey();
-  });
 }
 
 function renderShell() {
@@ -316,6 +305,7 @@ function renderModelConfig(config = {}) {
     usageNote: config.usageNote || ""
   };
   state.defaultImageModelId = config.defaultImageModelId || "";
+  state.defaultVideoModelId = config.defaultVideoModelId || "";
   state.modelProviders = Array.isArray(config.modelProviders) ? config.modelProviders : [];
   renderModelProviders();
 }
@@ -367,6 +357,7 @@ function renderProviderTable(entries) {
             <th>URL</th>
             <th>Token</th>
             <th>模型</th>
+            <th>类型</th>
             <th>状态</th>
             <th>操作</th>
           </tr>
@@ -381,9 +372,12 @@ function renderProviderTable(entries) {
 
 function renderProviderTableRow({ provider, providerIndex, model, modelIndex }) {
   const modelId = model?.id || "";
-  const isDefault = modelId && modelId === state.defaultImageModelId;
+  const modelKind = normalizeModelKind(model?.modelKind);
+  const isDefault = modelId && modelId === (modelKind === "video" ? state.defaultVideoModelId : state.defaultImageModelId);
   const isEnabled = provider.enabled !== false && model?.enabled !== false;
   const canSetDefault = Boolean(modelId && isEnabled);
+  const defaultLabel = modelKind === "video" ? "默认视频" : "默认图片";
+  const defaultActiveLabel = modelKind === "video" ? "视频默认" : "图片默认";
   return `
     <tr class="${isDefault ? "default-provider-row" : ""}">
       <td>
@@ -399,18 +393,27 @@ function renderProviderTableRow({ provider, providerIndex, model, modelIndex }) 
         <strong>${escapeHtml(model?.modelName || "未命名模型")}</strong>
         <small>优先级 ${escapeHtml(model?.priority || 100)}</small>
       </td>
+      <td><span class="status-chip neutral">${escapeHtml(modelKindText(modelKind))}</span></td>
       <td>
         <span class="status-chip ${isEnabled ? "ready" : "neutral"}">${isEnabled ? "启用" : "停用"}</span>
       </td>
       <td>
         <div class="admin-action-row">
-          <button class="small-button ${isDefault ? "primary" : ""}" type="button" data-provider-action="set-default-model" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" ${canSetDefault && !isDefault ? "" : "disabled"}>${isDefault ? "已默认" : "默认模型"}</button>
+          <button class="small-button ${isDefault ? "primary" : ""}" type="button" data-provider-action="set-default-model" data-provider-index="${providerIndex}" data-model-index="${modelIndex}" ${canSetDefault && !isDefault ? "" : "disabled"}>${isDefault ? defaultActiveLabel : defaultLabel}</button>
           <button class="small-button" type="button" data-provider-action="edit-provider" data-provider-index="${providerIndex}" data-model-index="${modelIndex}">修改</button>
           <button class="small-button danger" type="button" data-provider-action="remove-provider" data-provider-index="${providerIndex}" data-model-index="${modelIndex}">删除</button>
         </div>
       </td>
     </tr>
   `;
+}
+
+function normalizeModelKind(value) {
+  return value === "video" ? "video" : "image";
+}
+
+function modelKindText(value) {
+  return normalizeModelKind(value) === "video" ? "视频模型" : "图片模型";
 }
 
 function providerTypeText(value) {
@@ -432,12 +435,14 @@ function defaultProviderBaseUrl(providerType) {
 function snapshotModelProviderState() {
   return {
     defaultImageModelId: state.defaultImageModelId,
+    defaultVideoModelId: state.defaultVideoModelId,
     modelProviders: JSON.parse(JSON.stringify(state.modelProviders))
   };
 }
 
 function restoreModelProviderState(snapshot) {
   state.defaultImageModelId = snapshot.defaultImageModelId;
+  state.defaultVideoModelId = snapshot.defaultVideoModelId || "";
   state.modelProviders = snapshot.modelProviders;
   renderModelProviders();
 }
@@ -460,6 +465,7 @@ function openProviderConfigModal(providerIndex = -1, modelIndex = -1) {
     ? `已配置：${provider.apiKeyMasked || "******"}`
     : "粘贴供应商 Token";
   els.providerModelNameInput.value = model?.modelName || (providerType === "muskapis_image" ? "gpt-image-2" : "");
+  els.providerModelKindInput.value = normalizeModelKind(model?.modelKind);
   els.providerModelPriorityInput.value = model?.priority || nextProviderPriority();
   els.providerEnabledInput.checked = provider?.enabled !== false;
   els.providerConfigModal.classList.add("active");
@@ -475,6 +481,7 @@ function closeProviderConfigModal() {
   els.providerBaseUrlInput.value = "";
   els.providerTokenInput.value = "";
   els.providerModelNameInput.value = "";
+  els.providerModelKindInput.value = "image";
   els.providerModelPriorityInput.value = "100";
   els.providerEnabledInput.checked = true;
   els.providerConfigModal.classList.remove("active");
@@ -489,6 +496,7 @@ async function saveProviderFromModal() {
   const baseUrl = els.providerBaseUrlInput.value.trim();
   const tokenValue = els.providerTokenInput.value.trim();
   const modelName = els.providerModelNameInput.value.trim();
+  const modelKind = normalizeModelKind(els.providerModelKindInput.value);
   const priority = Number(els.providerModelPriorityInput.value) || nextProviderPriority();
   if (!baseUrl || !modelName) {
     showToast("URL 和模型名不能为空", true);
@@ -521,6 +529,7 @@ async function saveProviderFromModal() {
   const targetModelIndex = modelIndex >= 0 ? modelIndex : 0;
   const nextModel = nextProvider.models[targetModelIndex] || { id: "", enabled: true };
   nextModel.modelName = modelName;
+  nextModel.modelKind = modelKind;
   nextModel.priority = priority;
   nextModel.enabled = true;
   nextProvider.models[targetModelIndex] = nextModel;
@@ -562,8 +571,12 @@ async function setDefaultProviderModel(providerIndex, modelIndex, button) {
     return;
   }
   const previousState = snapshotModelProviderState();
-  state.defaultImageModelId = model.id;
-  const saved = await persistModelConfig("默认模型已设置", button);
+  if (normalizeModelKind(model.modelKind) === "video") {
+    state.defaultVideoModelId = model.id;
+  } else {
+    state.defaultImageModelId = model.id;
+  }
+  const saved = await persistModelConfig(`${modelKindText(model.modelKind)}默认模型已设置`, button);
   if (!saved) restoreModelProviderState(previousState);
 }
 
@@ -575,6 +588,7 @@ async function removeProviderModel(providerIndex, modelIndex, button) {
   if (!window.confirm("删除这个模型供应商配置？")) return;
   const previousState = snapshotModelProviderState();
   if (model?.id && state.defaultImageModelId === model.id) state.defaultImageModelId = "";
+  if (model?.id && state.defaultVideoModelId === model.id) state.defaultVideoModelId = "";
   if (models.length <= 1) {
     state.modelProviders.splice(providerIndex, 1);
   } else {
@@ -595,6 +609,7 @@ function collectModelProviders() {
     models: (provider.models || []).map((model) => ({
       id: model.id || "",
       modelName: String(model.modelName || "").trim(),
+      modelKind: normalizeModelKind(model.modelKind),
       priority: Number(model.priority) || 100,
       enabled: model.enabled !== false
     }))
@@ -611,6 +626,7 @@ async function persistModelConfig(successMessage = "模型配置已保存", busy
         defaultModel: state.legacyModelConfig.defaultModel,
         usageNote: state.legacyModelConfig.usageNote,
         defaultImageModelId: state.defaultImageModelId || "",
+        defaultVideoModelId: state.defaultVideoModelId || "",
         modelProviders: collectModelProviders()
       })
     });
@@ -909,18 +925,12 @@ function renderUsers() {
           <td><span class="status-chip ${user.disabled ? "danger" : "ready"}">${user.disabled ? "已禁用" : "正常"}</span></td>
           <td><span class="status-chip ${user.role === "admin" ? "ready" : "neutral"}">${escapeHtml(userRoleLabel(user.role))}</span></td>
           <td>
-            <span class="status-chip ${(user.imageApiKeyConfigured ?? user.apiKeyConfigured) ? "ready" : "danger"}">${(user.imageApiKeyConfigured ?? user.apiKeyConfigured) ? "已配置" : "未配置"}</span>
-            <small>${escapeHtml(user.imageApiKeyMasked || user.apiKeyMasked || "未设置")}</small>
-            <small>模型：${escapeHtml(user.imageModel || "默认模型")}</small>
-            <small>地址：${escapeHtml(user.imageEndpoint || "未设置")}</small>
-            <small>可用模型：${formatNumber((user.allowedImageModels || []).length)} 个</small>
+            <span class="status-chip ${(user.allowedImageModels || []).length ? "ready" : "neutral"}">${(user.allowedImageModels || []).length ? "已指定" : "默认模型"}</span>
+            <small>${escapeHtml(userAllowedModelSummary(user.allowedImageModels, state.defaultImageModelId))}</small>
           </td>
           <td>
-            <span class="status-chip ${user.videoApiKeyConfigured ? "ready" : "danger"}">${user.videoApiKeyConfigured ? "已配置" : "未配置"}</span>
-            <small>${escapeHtml(user.videoApiKeyMasked || "未设置")}</small>
-            <small>模型：${escapeHtml(user.videoModel || "未设置")}</small>
-            <small>地址1：${escapeHtml(user.videoEndpointPrimary || "未设置")}</small>
-            <small>地址2：${escapeHtml(user.videoEndpointSecondary || "未设置")}</small>
+            <span class="status-chip ${(user.allowedVideoModels || []).length ? "ready" : "neutral"}">${(user.allowedVideoModels || []).length ? "已指定" : "默认模型"}</span>
+            <small>${escapeHtml(userAllowedModelSummary(user.allowedVideoModels, state.defaultVideoModelId))}</small>
           </td>
           <td>${formatNumber(user.usage.calls)}</td>
           <td>${formatNumber(user.usage.images)}</td>
@@ -932,10 +942,10 @@ function renderUsers() {
           <td>
             <div class="admin-action-row">
               <button class="small-button" type="button" data-action="config-image-key" data-user-id="${escapeAttr(user.id)}">
-                图片 Key
+                图片模型
               </button>
               <button class="small-button" type="button" data-action="config-video-key" data-user-id="${escapeAttr(user.id)}">
-                视频配置
+                视频模型
               </button>
               <button class="small-button" type="button" data-action="toggle-role" data-user-id="${escapeAttr(user.id)}">
                 ${user.role === "admin" ? "设为普通用户" : "设为管理员"}
@@ -997,25 +1007,77 @@ async function toggleUserRole(userId) {
   }
 }
 
-function renderAllowedImageModelList(user) {
-  if (!els.adminAllowedImageModelList) return;
-  const selectedIds = new Set((user?.allowedImageModels || []).map((model) => model.id));
-  const providers = state.modelProviders.filter((provider) => (provider.models || []).length);
-  if (!providers.length) {
-    els.adminAllowedImageModelList.innerHTML = `<div class="empty-state compact-empty">暂无可授权图片模型</div>`;
+function defaultModelIdForKind(kind) {
+  return normalizeModelKind(kind) === "video" ? state.defaultVideoModelId : state.defaultImageModelId;
+}
+
+function userModelsForKind(user, kind) {
+  return normalizeModelKind(kind) === "video" ? user?.allowedVideoModels || [] : user?.allowedImageModels || [];
+}
+
+function providerModelOptions(kind) {
+  const targetKind = normalizeModelKind(kind);
+  return state.modelProviders
+    .map((provider) => ({
+      provider,
+      models: (provider.models || []).filter((model) => normalizeModelKind(model.modelKind) === targetKind)
+    }))
+    .filter((entry) => entry.models.length);
+}
+
+function resolveModelLabel(modelId) {
+  for (const provider of state.modelProviders) {
+    const model = (provider.models || []).find((entry) => entry.id === modelId);
+    if (model) {
+      return `${provider.name || providerTypeText(provider.providerType)} / ${model.modelName || "未命名模型"}`;
+    }
+  }
+  return "";
+}
+
+function userAllowedModelSummary(models = [], defaultModelId = "") {
+  if (models.length) {
+    return models
+      .map((model) => model.displayName || `${model.providerName || "供应商"} / ${model.modelName || "未命名模型"}`)
+      .join("、");
+  }
+  const defaultLabel = resolveModelLabel(defaultModelId);
+  return defaultLabel ? `默认：${defaultLabel}` : "未设置默认模型";
+}
+
+function selectedAllowedModelIds(kind) {
+  const list = normalizeModelKind(kind) === "video" ? els.adminAllowedVideoModelList : els.adminAllowedImageModelList;
+  if (!list) return [];
+  return Array.from(list.querySelectorAll("input[type='checkbox']:checked"))
+    .map((input) => input.value)
+    .filter(Boolean);
+}
+
+function renderAllowedModelList(user, kind) {
+  const targetKind = normalizeModelKind(kind);
+  const list = targetKind === "video" ? els.adminAllowedVideoModelList : els.adminAllowedImageModelList;
+  if (!list) return;
+  const explicitModels = userModelsForKind(user, targetKind);
+  const explicitIds = explicitModels.map((model) => model.id).filter(Boolean);
+  const defaultModelId = defaultModelIdForKind(targetKind);
+  const selectedIds = new Set(explicitIds.length ? explicitIds : defaultModelId ? [defaultModelId] : []);
+  const providerGroups = providerModelOptions(targetKind);
+  if (!providerGroups.length) {
+    list.innerHTML = `<div class="empty-state compact-empty">暂无可授权${targetKind === "video" ? "视频" : "图片"}模型</div>`;
     return;
   }
-  els.adminAllowedImageModelList.innerHTML = providers
-    .map((provider) => {
-      const models = (provider.models || []).map((model) => {
+  list.innerHTML = providerGroups
+    .map(({ provider, models }) => {
+      const rows = models.map((model) => {
         const modelId = model.id || "";
         const disabled = !provider.enabled || model.enabled === false || !modelId;
+        const isDefault = defaultModelId && modelId === defaultModelId;
         return `
           <label class="checkbox-row admin-allowed-model-row ${disabled ? "muted" : ""}">
             <input type="checkbox" value="${escapeAttr(modelId)}" ${selectedIds.has(modelId) ? "checked" : ""} ${disabled ? "disabled" : ""} />
             <span>
               <strong>${escapeHtml(model.modelName || "未命名模型")}</strong>
-              <small>优先级 ${escapeHtml(model.priority || 100)} · ${disabled ? "不可用" : "可用"}</small>
+              <small>优先级 ${escapeHtml(model.priority || 100)} · ${isDefault ? "默认模型" : disabled ? "不可用" : "可用"}</small>
             </span>
           </label>
         `;
@@ -1023,18 +1085,11 @@ function renderAllowedImageModelList(user) {
       return `
         <section class="admin-allowed-provider-group">
           <h4>${escapeHtml(provider.name || "未命名供应商")}</h4>
-          ${models.join("")}
+          ${rows.join("")}
         </section>
       `;
     })
     .join("");
-}
-
-function selectedAllowedImageModelIds() {
-  if (!els.adminAllowedImageModelList) return [];
-  return Array.from(els.adminAllowedImageModelList.querySelectorAll("input[type='checkbox']:checked"))
-    .map((input) => input.value)
-    .filter(Boolean);
 }
 
 function openUserKeyModal(userId, mode = "image") {
@@ -1045,79 +1100,40 @@ function openUserKeyModal(userId, mode = "image") {
   delete els.saveUserKeyBtn.dataset.originalText;
   delete els.clearUserKeyBtn.dataset.originalText;
   const isVideo = state.selectedKeyMode === "video";
-  const imageKeyConfigured = user.imageApiKeyConfigured ?? user.apiKeyConfigured;
+  const selectedModels = userModelsForKind(user, state.selectedKeyMode);
   els.adminKeyUserText.textContent = `${userDisplayName(user)} / ${userMetaText(user)}`;
-  els.adminKeyModalTitle.textContent = isVideo ? "配置视频 Key" : "配置图片 Key";
+  els.adminKeyModalTitle.textContent = isVideo ? "配置视频模型" : "配置图片模型";
   els.adminKeyHelpText.textContent = isVideo
-    ? "视频配置仅在 B 端保存，普通用户不能查看明文 Key、模型和地址。"
-    : "图片生成请求由后端使用该用户的图片 Key、模型和 Base URL 调用模型。";
-  els.adminKeyInputLabel.textContent = isVideo ? "视频 API Key" : "图片 API Key";
-  els.adminApiKeyInput.value = "";
-  els.adminApiKeyInput.placeholder = isVideo
-    ? user.videoApiKeyConfigured
-      ? "粘贴新的视频 Key，留空不修改"
-      : "粘贴视频 Key"
-    : imageKeyConfigured
-      ? "粘贴新的图片 Key，留空不修改"
-      : "粘贴图片 Key";
-  els.adminImageEndpointField.hidden = isVideo;
-  els.adminImageModelField.hidden = isVideo;
+    ? "勾选该用户可用的视频模型；未指定时使用模型配置里的默认视频模型。"
+    : "勾选该用户可用的图片模型；未指定时使用模型配置里的默认图片模型。";
   els.adminAllowedImageModelSection.hidden = isVideo;
-  els.adminVideoModelField.hidden = !isVideo;
-  els.adminVideoEndpointPrimaryField.hidden = !isVideo;
-  els.adminVideoEndpointSecondaryField.hidden = !isVideo;
-  els.adminImageEndpointInput.value = user.imageEndpoint || "";
-  els.adminImageModelInput.value = user.imageModel || "";
-  els.adminVideoModelInput.value = user.videoModel || "";
-  els.adminVideoEndpointPrimaryInput.value = user.videoEndpointPrimary || "";
-  els.adminVideoEndpointSecondaryInput.value = user.videoEndpointSecondary || "";
-  renderAllowedImageModelList(user);
-  els.clearUserKeyBtn.disabled = isVideo ? !user.videoApiKeyConfigured : !imageKeyConfigured;
-  els.clearUserKeyBtn.textContent = isVideo ? "清空视频 Key" : "清空图片 Key";
-  els.saveUserKeyBtn.textContent = isVideo ? "保存视频配置" : "保存图片配置";
+  els.adminAllowedVideoModelSection.hidden = !isVideo;
+  renderAllowedModelList(user, state.selectedKeyMode);
+  els.clearUserKeyBtn.disabled = !selectedModels.length;
+  els.clearUserKeyBtn.textContent = "恢复默认模型";
+  els.saveUserKeyBtn.textContent = isVideo ? "保存视频模型" : "保存图片模型";
   els.adminKeyModal.classList.add("active");
   els.adminKeyModal.setAttribute("aria-hidden", "false");
-  window.setTimeout(() => els.adminApiKeyInput.focus(), 0);
+  const firstCheckbox = (isVideo ? els.adminAllowedVideoModelList : els.adminAllowedImageModelList)?.querySelector("input[type='checkbox']:not(:disabled)");
+  if (firstCheckbox) window.setTimeout(() => firstCheckbox.focus(), 0);
 }
 
 function closeUserKeyModal() {
   state.selectedKeyUserId = "";
   state.selectedKeyMode = "image";
-  els.adminApiKeyInput.value = "";
-  els.adminImageEndpointInput.value = "";
-  els.adminImageModelInput.value = "";
-  els.adminVideoModelInput.value = "";
-  els.adminVideoEndpointPrimaryInput.value = "";
-  els.adminVideoEndpointSecondaryInput.value = "";
   els.adminAllowedImageModelList.innerHTML = "";
+  els.adminAllowedVideoModelList.innerHTML = "";
   els.adminKeyModal.classList.remove("active");
   els.adminKeyModal.setAttribute("aria-hidden", "true");
 }
 
 async function saveUserKey() {
   const userId = state.selectedKeyUserId;
-  const apiKey = els.adminApiKeyInput.value.trim();
   const isVideo = state.selectedKeyMode === "video";
   if (!userId) return;
   const body = isVideo
-    ? {
-        videoModel: els.adminVideoModelInput.value.trim(),
-        videoEndpointPrimary: els.adminVideoEndpointPrimaryInput.value.trim(),
-        videoEndpointSecondary: els.adminVideoEndpointSecondaryInput.value.trim()
-      }
-    : {
-        imageModel: els.adminImageModelInput.value.trim(),
-        imageEndpoint: els.adminImageEndpointInput.value.trim(),
-        allowedImageModelIds: selectedAllowedImageModelIds()
-      };
-  if (apiKey) {
-    if (isVideo) body.videoApiKey = apiKey;
-    else body.imageApiKey = apiKey;
-  }
-  if (!apiKey && !Object.values(body).some(Boolean)) {
-    showToast(isVideo ? "请输入视频 Key 或视频地址" : "请输入图片 Key 或图片地址", true);
-    return;
-  }
+    ? { allowedVideoModelIds: selectedAllowedModelIds("video") }
+    : { allowedImageModelIds: selectedAllowedModelIds("image") };
   setBusy(els.saveUserKeyBtn, "保存中", true);
   try {
     await adminFetch(`/users/${encodeURIComponent(userId)}`, {
@@ -1126,47 +1142,35 @@ async function saveUserKey() {
     });
     closeUserKeyModal();
     await Promise.all([loadUsers(), loadSummary()]);
-    showToast(isVideo ? "用户视频配置已保存" : "用户图片配置已保存");
+    showToast(isVideo ? "用户视频模型已保存" : "用户图片模型已保存");
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    setBusy(els.saveUserKeyBtn, isVideo ? "保存视频配置" : "保存图片配置", false);
+    setBusy(els.saveUserKeyBtn, isVideo ? "保存视频模型" : "保存图片模型", false);
   }
 }
 
 async function clearUserKey() {
   const userId = state.selectedKeyUserId;
   if (!userId) return;
-  const user = state.users.find((entry) => entry.id === userId);
   const isVideo = state.selectedKeyMode === "video";
-  const ok = window.confirm(`清空 ${userDisplayName(user)} 的${isVideo ? "视频" : "图片"} Key？`);
+  const user = state.users.find((entry) => entry.id === userId);
+  const ok = window.confirm(`恢复 ${userDisplayName(user)} 的${isVideo ? "视频" : "图片"}默认模型？`);
   if (!ok) return;
-  setBusy(els.clearUserKeyBtn, "清空中", true);
+  setBusy(els.clearUserKeyBtn, "恢复中", true);
   try {
-    const body = isVideo
-      ? {
-          clearVideoApiKey: true,
-          videoModel: els.adminVideoModelInput.value.trim(),
-          videoEndpointPrimary: els.adminVideoEndpointPrimaryInput.value.trim(),
-          videoEndpointSecondary: els.adminVideoEndpointSecondaryInput.value.trim()
-        }
-      : {
-          clearImageApiKey: true,
-          imageModel: els.adminImageModelInput.value.trim(),
-          imageEndpoint: els.adminImageEndpointInput.value.trim(),
-          allowedImageModelIds: selectedAllowedImageModelIds()
-        };
+    const body = isVideo ? { allowedVideoModelIds: [] } : { allowedImageModelIds: [] };
     await adminFetch(`/users/${encodeURIComponent(userId)}`, {
       method: "PATCH",
       body: JSON.stringify(body)
     });
     closeUserKeyModal();
     await Promise.all([loadUsers(), loadSummary()]);
-    showToast(isVideo ? "用户视频 Key 已清空" : "用户图片 Key 已清空");
+    showToast(isVideo ? "已恢复默认视频模型" : "已恢复默认图片模型");
   } catch (error) {
     showToast(error.message, true);
   } finally {
-    setBusy(els.clearUserKeyBtn, isVideo ? "清空视频 Key" : "清空图片 Key", false);
+    setBusy(els.clearUserKeyBtn, "恢复默认模型", false);
   }
 }
 
