@@ -1,0 +1,79 @@
+<h2>B端图片提示词工厂入口方案</h2>
+<p class="subtitle">这一步只决定管理台信息架构：生成、沉淀、发布到 C 端应该放在哪里最顺手。</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">A. 放进“提示词配置”下</div>
+        <div class="mockup-body">
+          <div style="display:flex;gap:12px;min-height:260px">
+            <div class="mock-sidebar" style="width:150px">
+              单图模板<br>套图生成<br>二次编辑<br>参考图规则<br><strong>提示词工厂</strong>
+            </div>
+            <div class="mock-content" style="flex:1">
+              <div class="label">提示词工厂</div>
+              <div class="placeholder">上传参考图 / 批量上传</div>
+              <div class="placeholder">生成中文+英文提示词</div>
+              <div class="placeholder">保存到素材库 / 发布为 C 端模板</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>提示词配置内扩展</h3>
+      <p>改动最轻，沿用现有保存下发链路；适合第一版快速上线，但页面会变得更重。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">B. 新增一级导航“提示词工厂”</div>
+        <div class="mockup-body">
+          <div style="display:flex;gap:12px;min-height:260px">
+            <div class="mock-sidebar" style="width:150px">
+              模型配置<br>图片反馈<br>注册用户<br>生成记录<br>提示词配置<br><strong>提示词工厂</strong>
+            </div>
+            <div class="mock-content" style="flex:1">
+              <div style="display:grid;grid-template-columns:1.1fr .9fr;gap:10px">
+                <div class="placeholder">新建任务：参考图上传、生成参数、批量队列</div>
+                <div class="placeholder">素材库：草稿、已保存、已发布</div>
+              </div>
+              <div class="placeholder">结果预览：分析摘要、中文提示词、英文提示词、发布目标</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>独立工作台</h3>
+      <p>最清晰，承载单图/批量/发布状态更舒服；我推荐这个，后续扩展空间好。</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="c" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mockup">
+        <div class="mockup-header">C. 分成“生成工厂”+“发布管理”</div>
+        <div class="mockup-body">
+          <div style="display:flex;gap:12px;min-height:260px">
+            <div class="mock-sidebar" style="width:150px">
+              模型配置<br>图片反馈<br>注册用户<br>生成记录<br>提示词配置<br><strong>生成工厂</strong><br><strong>发布管理</strong>
+            </div>
+            <div class="mock-content" style="flex:1">
+              <div class="placeholder">生成工厂：参考图到提示词</div>
+              <div class="placeholder">发布管理：审核、排序、上下架、灰度</div>
+              <div class="placeholder">C 端模板矩阵映射</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>运营系统化</h3>
+      <p>适合大量模板和多人审核；第一版成本更高，当前项目体量可能略超前。</p>
+    </div>
+  </div>
+</div>

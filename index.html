@@ -1,0 +1,668 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI智能图片编辑器</title>
+    <link rel="stylesheet" href="./styles.css?v=20260610-auth-tabs" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="rail">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">AI</div>
+          <div>
+            <h1>AI智能图片编辑器</h1>
+            <span>Commerce Vision Lab</span>
+          </div>
+        </div>
+        <nav class="main-nav" aria-label="主导航">
+          <button class="nav-item disabled" type="button" data-view="suite" disabled aria-disabled="true">
+            <span class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z" /><path d="M18 15v4" /><path d="M16 17h4" /></svg>
+            </span>
+            <span>套图</span>
+          </button>
+          <button class="nav-item active" type="button" data-view="generate">
+            <span class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+            </span>
+            <span>单图</span>
+          </button>
+          <button class="nav-item" type="button" data-view="edit">
+            <span class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="m14.7 6.3 3 3L8 19H5v-3z" /><path d="m13 8 3 3" /></svg>
+            </span>
+            <span>二次编辑</span>
+          </button>
+          <button class="nav-item" type="button" data-view="video">
+            <span class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" /><path d="m16 10 4-3v10l-4-3" /></svg>
+            </span>
+            <span>AI视频</span>
+          </button>
+          <button class="nav-item" type="button" data-view="library">
+            <span class="icon" aria-hidden="true">
+              <svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
+            </span>
+            <span>素材库</span>
+          </button>
+        </nav>
+        <section class="account-card" aria-label="账号状态">
+          <span id="accountTitle">未登录</span>
+          <strong id="accountNameText">注册后使用工具</strong>
+          <div class="account-key-status" id="accountKeyStatus" aria-label="模型 Key 配置状态">
+            <span><b>图片 Key</b><em>登录后查看</em></span>
+            <span><b>视频 Key</b><em>登录后查看</em></span>
+          </div>
+          <div class="account-credits" id="accountCredits" hidden>
+            <span class="account-credits-label">剩余积分</span>
+            <strong class="account-credits-value" id="creditsRemainingText">0</strong>
+            <button class="mini-button ghost-button" id="openCreditsModalBtn" type="button" title="兑换积分" style="margin-left:8px;font-size:11px;">增加积分</button>
+          </div>
+          <div class="account-actions">
+            <button class="mini-button ghost-button" id="openAuthBtn" type="button">登录 / 注册</button>
+            <button class="mini-button ghost-button danger" id="logoutBtn" type="button">退出</button>
+          </div>
+        </section>
+        <div class="rail-footer">
+          <div class="metric">
+            <span id="folderCount">0</span>
+            <label>文件夹</label>
+          </div>
+          <div class="metric">
+            <span id="assetCount">0</span>
+            <label>素材</label>
+          </div>
+        </div>
+      </aside>
+
+      <main class="workspace">
+        <div class="workspace-global-actions">
+          <button class="ghost-button admin-entry-button" id="adminEntryBtn" type="button">管理员入口</button>
+        </div>
+
+        <section id="view-suite" class="view suite-disabled-view" aria-labelledby="suiteTitle" aria-disabled="true">
+          <div class="topbar hero-topbar">
+            <div>
+              <p class="eyebrow">AI COMMERCE KIT</p>
+              <h2 id="suiteTitle">一键生成商品详情页套图</h2>
+            </div>
+            <button class="status-pill" id="connectionState" type="button">API 未保存</button>
+          </div>
+
+          <div class="suite-layout">
+            <section class="panel suite-panel" aria-label="套图生成参数">
+              <div class="panel-header">
+                <h3>商品输入</h3>
+                <span class="mini-badge">Batch</span>
+              </div>
+
+              <div class="dropzone compact-dropzone" id="suiteDropzone">
+                <input id="suiteUploadInput" type="file" accept="image/*" />
+                <div class="drop-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M20 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3" /></svg>
+                </div>
+                <strong>上传商品基图</strong>
+                <span>生成时保持主体、颜色、材质和比例一致</span>
+              </div>
+              <div id="suiteReferencePreview" class="suite-reference empty-state">
+                <div class="empty-copy">
+                  <strong>未选择基图</strong>
+                  <span>可上传商品图片作为参考。</span>
+                </div>
+              </div>
+
+              <div class="suite-control-grid">
+                <label class="field">
+                  <span>商品名称</span>
+                  <input id="suiteProductNameInput" type="text" placeholder="例如：不锈钢保温杯" />
+                </label>
+                <label class="field">
+                  <span>品类</span>
+                  <input id="suiteCategoryInput" type="text" placeholder="例如：厨房用品 / 3C 配件" />
+                </label>
+              </div>
+
+              <label class="field">
+                <span>核心卖点</span>
+                <textarea id="suiteSellingPointsInput" rows="4" placeholder="材质、功能、使用场景、包装配件、目标人群..."></textarea>
+              </label>
+
+              <div class="suite-control-grid">
+                <label class="field">
+                  <span>套图类型</span>
+                  <select id="suitePresetInput">
+                    <option value="amazon-aplus">Amazon A+ 内容套图</option>
+                    <option value="amazon">Amazon 详情页套图</option>
+                    <option value="mall-long">商城详情长图</option>
+                    <option value="ads">品牌广告套图</option>
+                  </select>
+                </label>
+                <label class="field">
+                  <span>视觉风格</span>
+                  <select id="suiteStyleInput">
+                    <option value="premium">清爽质感</option>
+                    <option value="tech">现代冷调</option>
+                    <option value="warm">自然生活</option>
+                    <option value="bold">活动吸睛</option>
+                    <option value="minimal">纯净白底</option>
+                  </select>
+                </label>
+              </div>
+
+              <label class="field suite-size-field">
+                <span>批量尺寸</span>
+                <select id="suiteSizeInput">
+                  <option value="preset">按套图图位推荐尺寸</option>
+                  <option value="1024x1024">1024 x 1024</option>
+                  <option value="1024x1792">1024 x 1792</option>
+                  <option value="1792x1024">1792 x 1024</option>
+                </select>
+              </label>
+
+              <label class="switch suite-switch">
+                <input id="suiteAutoSaveToggle" type="checkbox" checked />
+                <span>生成后保存到素材库</span>
+              </label>
+
+              <button class="generate-button suite-generate-button" id="generateSuiteBtn" type="button" disabled>
+                <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8z" /></svg>
+                暂未开放
+              </button>
+            </section>
+
+            <section class="panel suite-plan-panel" aria-label="套图计划">
+              <div class="panel-header">
+                <h3>套图结构</h3>
+                <button class="ghost-button" id="saveSuiteBtn" type="button">保存整套</button>
+              </div>
+              <div id="suiteShotList" class="suite-shot-list"></div>
+              <div id="suiteResultGrid" class="result-grid suite-result-grid empty-state">
+                <div class="empty-copy">
+                  <strong>等待生成套图</strong>
+                  <span>整套商品图会按用途出现在这里。</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-generate" class="view active" aria-labelledby="generateTitle">
+          <div class="topbar">
+            <div>
+              <p class="eyebrow">SINGLE IMAGE</p>
+              <h2 id="generateTitle">单张商品图生成</h2>
+            </div>
+            <button class="status-pill" id="singleConnectionState" type="button">API 未保存</button>
+          </div>
+
+          <div class="generator-layout">
+            <section class="panel form-panel" aria-label="生成参数">
+              <div class="panel-header">
+                <h3>输入</h3>
+                <button class="icon-button" type="button" id="clearFormBtn" aria-label="清空输入" title="清空输入">
+                  <svg viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m10 11 0 6" /><path d="m14 11 0 6" /><path d="M5 6l1 14h12l1-14" /></svg>
+                </button>
+              </div>
+
+              <div class="dropzone" id="dropzone">
+                <input id="uploadInput" type="file" accept="image/*" multiple />
+                <div class="drop-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M20 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3" /></svg>
+                </div>
+                <strong>上传商品参考图</strong>
+                <span>支持本地预览与保存到素材库</span>
+              </div>
+              <div id="uploadPreview" class="upload-preview" aria-live="polite"></div>
+
+              <div class="template-block">
+                <div class="template-head">
+                  <span>提示词模板</span>
+                  <div class="template-tools">
+                    <select id="platformSelect" aria-label="选择平台">
+                      <option value="all">全部模板</option>
+                      <option value="main">主图</option>
+                      <option value="scene">场景图</option>
+                      <option value="infographic">信息图</option>
+                      <option value="content">内容图</option>
+                      <option value="aplus" selected>Amazon A+</option>
+                      <option value="season">活动图</option>
+                    </select>
+                    <select id="categorySelect" aria-label="选择品类"></select>
+                    <select id="scenarioSelect" aria-label="选择场景"></select>
+                  </div>
+                </div>
+                <div id="templateSelectionHint" class="template-selection-hint" aria-live="polite"></div>
+              </div>
+
+              <div class="settings-grid">
+                <label class="field">
+                  <span>生成张数</span>
+                  <input id="countInput" type="number" min="1" max="8" value="1" />
+                </label>
+                <label class="field">
+                  <span>尺寸</span>
+                  <select id="sizeInput">
+                    <option value="1024x1024">1024 x 1024</option>
+                    <option value="1024x1792">1024 x 1792</option>
+                    <option value="1792x1024">1792 x 1024</option>
+                  </select>
+                </label>
+              </div>
+
+              <button class="generate-button" id="generateBtn" type="button">
+                <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8z" /></svg>
+                生成图片
+              </button>
+            </section>
+
+            <section class="panel output-panel" aria-label="生成结果">
+              <div class="panel-header">
+                <h3>生成结果</h3>
+                <div class="result-actions">
+                  <button class="ghost-button" id="saveAllBtn" type="button">批量保存</button>
+                </div>
+              </div>
+              <div id="resultGrid" class="result-grid empty-state">
+                <div class="empty-copy">
+                  <strong>等待生成</strong>
+                  <span>图片会出现在这里，可保存或进入二次编辑。</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-edit" class="view" aria-labelledby="editTitle">
+          <div class="topbar">
+            <div>
+              <p class="eyebrow">REFINE</p>
+              <h2 id="editTitle">商品图二次编辑</h2>
+            </div>
+            <button class="ghost-button" id="openLibraryPickBtn" type="button">从素材库选择</button>
+          </div>
+
+          <div class="edit-layout">
+            <section class="panel preview-panel">
+              <div class="panel-header">
+                <h3>基图</h3>
+                <span class="muted" id="selectedImageName">未选择</span>
+              </div>
+              <div id="editPreview" class="edit-preview empty-state">
+                <div class="empty-copy">
+                  <strong>选择一张图片</strong>
+                  <span>可从生成结果或素材库进入二次编辑。</span>
+                </div>
+              </div>
+            </section>
+
+            <section class="panel edit-panel">
+              <div class="panel-header">
+                <h3>微调</h3>
+                <label class="switch">
+                  <input id="autoSaveToggle" type="checkbox" checked />
+                  <span>保存到素材库</span>
+                </label>
+              </div>
+              <label class="field">
+                <span>二次编辑提示词</span>
+                <textarea id="editPromptInput" rows="8" placeholder="例如：保持产品主体不变，替换为明亮厨房场景，画面干净自然，保留真实材质和核心卖点。"></textarea>
+              </label>
+              <div class="quick-edits" id="quickEditGrid"></div>
+              <div class="save-inline" id="autoSaveOptions">
+                <label class="field">
+                  <span>图片名称</span>
+                  <input id="autoSaveNameInput" type="text" />
+                </label>
+                <label class="field">
+                  <span>文件夹</span>
+                  <select id="autoSaveFolderSelect"></select>
+                </label>
+                <label class="field">
+                  <span>新建文件夹</span>
+                  <input id="autoSaveNewFolderInput" type="text" placeholder="留空则使用所选文件夹" />
+                </label>
+              </div>
+              <button class="generate-button" id="refineBtn" type="button">
+                <svg viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="m19 15 .7 2.1L22 18l-2.3.9L19 21l-.7-2.1L16 18l2.3-.9z" /></svg>
+                生成微调版本
+              </button>
+              <div id="editResultGrid" class="result-grid compact empty-state">
+                <div class="empty-copy">
+                  <strong>暂无微调结果</strong>
+                  <span>生成后可以继续迭代或保存。</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-video" class="view" aria-labelledby="videoTitle">
+          <div class="topbar">
+            <div>
+              <p class="eyebrow">AI VIDEO</p>
+              <h2 id="videoTitle">AI视频</h2>
+            </div>
+          </div>
+
+          <div class="video-layout">
+            <section class="panel video-control-panel" aria-label="AI视频生成参数">
+              <div class="panel-header">
+                <h3>图生视频</h3>
+                <span class="mini-badge">演示模式</span>
+              </div>
+
+              <div class="dropzone compact-dropzone" id="videoDropzone">
+                <input id="videoUploadInput" type="file" accept="image/*" />
+                <div class="drop-icon" aria-hidden="true">
+                  <svg viewBox="0 0 24 24"><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M20 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3" /></svg>
+                </div>
+                <strong>上传商品图（必填）</strong>
+                <span>演示版会以这张图作为商品外观参考，不调用真实视频接口。</span>
+              </div>
+              <div id="videoReferencePreview" class="suite-reference video-reference-preview is-empty"></div>
+
+              <div class="video-config-panel">
+                <section class="video-usage-section" aria-labelledby="videoUsageLabel">
+                  <div class="video-config-head">
+                    <strong id="videoUsageLabel">视频用途</strong>
+                    <small>决定下方可用比例和时长</small>
+                  </div>
+                  <select id="videoPresetInput" class="visually-hidden" aria-label="Amazon 视频用途">
+                    <option value="shoppable">商品详情页 Shoppable Video</option>
+                    <option value="sponsored-brands">Sponsored Brands Video</option>
+                    <option value="store-a-plus">Store / A+ 后台模块</option>
+                  </select>
+                  <div id="videoPresetCards" class="video-preset-cards" role="listbox" aria-label="Amazon 视频用途"></div>
+                </section>
+
+                <section class="video-output-section" aria-labelledby="videoOutputLabel">
+                  <div class="video-config-head compact">
+                    <strong id="videoOutputLabel">输出设置</strong>
+                    <small id="videoOutputHint">已按当前用途筛选比例和时长</small>
+                  </div>
+                  <div class="video-output-group">
+                    <div class="video-output-label">画幅比例</div>
+                    <select id="videoAspectInput" class="visually-hidden" aria-label="画幅比例"></select>
+                    <div id="videoAspectOptions" class="video-choice-row" role="radiogroup" aria-label="画幅比例"></div>
+                  </div>
+                  <div class="video-output-group">
+                    <div class="video-output-label">目标时长</div>
+                    <select id="videoDurationInput" class="visually-hidden" aria-label="目标时长"></select>
+                    <div id="videoDurationOptions" class="video-choice-row" role="radiogroup" aria-label="目标时长"></div>
+                  </div>
+                  <div class="video-composition-note">当前方案会生成 1 条成片视频</div>
+                </section>
+              </div>
+              <div id="videoInlineSummary" class="video-inline-summary" aria-live="polite"></div>
+
+              <label class="field">
+                <span>视频描述</span>
+                <textarea id="videoSellingPointsInput" rows="4" placeholder="可选：描述产品卖点、使用场景或想要的视频感觉，例如：家庭场景中展示大屏读数和便携使用..."></textarea>
+              </label>
+
+              <details class="video-advanced-details">
+                <summary>更多设置</summary>
+                <div class="video-output-group">
+                  <div class="video-output-label">镜头数</div>
+                  <select id="videoSceneCountInput" class="visually-hidden" aria-label="镜头数"></select>
+                  <div id="videoSceneCountOptions" class="video-choice-row" role="radiogroup" aria-label="镜头数"></div>
+                </div>
+                <div class="suite-control-grid">
+                  <label class="field">
+                    <span>商品名称</span>
+                    <input id="videoProductNameInput" type="text" placeholder="例如：指夹式血氧仪" />
+                  </label>
+                  <label class="field">
+                    <span>品类</span>
+                    <input id="videoCategoryInput" type="text" placeholder="例如：家用健康监测设备" />
+                  </label>
+                </div>
+
+                <label class="field">
+                  <span>视频风格</span>
+                  <select id="videoStyleInput">
+                    <option value="clean-medical">医疗清爽</option>
+                    <option value="home-lifestyle">家庭生活</option>
+                    <option value="premium-tech">高级科技</option>
+                    <option value="store-brand">品牌叙事</option>
+                  </select>
+                </label>
+              </details>
+
+              <button class="generate-button" id="generateVideoPlanBtn" type="button">
+                <svg viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M5 21h14" /></svg>
+                <span id="generateVideoPlanLabel">生成视频</span>
+              </button>
+            </section>
+
+            <section class="panel video-result-panel" aria-label="视频生成结果">
+              <div class="panel-header">
+                <h3>生成结果</h3>
+                <span id="videoPresetBadge" class="mini-badge">自然视频</span>
+              </div>
+              <div id="videoResultPreview" class="video-result-preview empty-state">
+                <div class="empty-copy">
+                  <strong>生成后在这里预览视频</strong>
+                  <span>右侧会显示 Mock 成片预览、规格摘要和可编辑分镜。</span>
+                </div>
+              </div>
+              <div class="video-result-section">
+                <h4>当前规格摘要</h4>
+                <div id="videoSpecCards" class="video-spec-grid"></div>
+              </div>
+              <p id="videoPresetMeta" class="video-preset-meta">商品详情页顶部主媒体区、详情页视频区、部分搜索结果</p>
+              <details class="video-compliance">
+                <summary class="video-compliance-head">
+                  <strong>医疗设备合规已开启</strong>
+                  <span>查看规则</span>
+                </summary>
+                <ul id="videoComplianceList"></ul>
+                <div class="video-policy-details">
+                  <strong>当前用途补充规则</strong>
+                  <ul id="videoPolicyDetailList"></ul>
+                </div>
+              </details>
+              <details id="videoStoryboardDetails" class="video-storyboard-details" hidden>
+                <summary class="video-compliance-head scene-header">
+                  <strong>视频分镜预览</strong>
+                  <span id="videoSceneCount">待生成</span>
+                </summary>
+                <div id="videoSceneList" class="video-scene-list"></div>
+              </details>
+            </section>
+          </div>
+        </section>
+
+        <section id="view-library" class="view" aria-labelledby="libraryTitle">
+          <div class="topbar">
+            <div>
+              <p class="eyebrow">素材库</p>
+              <h2 id="libraryTitle">素材管理</h2>
+            </div>
+            <button class="primary-button" id="createFolderBtn" type="button">
+              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+              新建文件夹
+            </button>
+          </div>
+
+          <div class="library-layout">
+            <aside class="panel library-sidebar">
+              <label class="field search-field">
+                <span>搜索文件夹及文件</span>
+                <input id="librarySearchInput" type="search" placeholder="输入名称、提示词、标签..." />
+              </label>
+              <div class="folder-create">
+                <input id="folderNameInput" type="text" placeholder="文件夹名称" />
+                <button class="icon-button" id="folderQuickCreateBtn" type="button" aria-label="创建文件夹" title="创建文件夹">
+                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+                </button>
+              </div>
+              <div id="folderList" class="folder-list"></div>
+            </aside>
+
+            <section class="panel library-main">
+              <div class="panel-header">
+                <h3 id="libraryHeading">全部素材</h3>
+                <div class="result-actions">
+                  <button class="ghost-button" id="renameSelectedBtn" type="button">重命名</button>
+                  <button class="ghost-button danger" id="deleteSelectedBtn" type="button">删除</button>
+                </div>
+              </div>
+              <div id="assetGrid" class="asset-grid empty-state">
+                <div class="empty-copy">
+                  <strong>素材库为空</strong>
+                  <span>生成或上传图片后可以保存到这里。</span>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+
+      </main>
+    </div>
+
+    <div class="modal-backdrop" id="saveModal" aria-hidden="true">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="saveModalTitle">
+        <div class="modal-header">
+          <h3 id="saveModalTitle">保存到素材库</h3>
+          <button class="icon-button" type="button" id="closeSaveModalBtn" aria-label="关闭" title="关闭">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div id="savePreview" class="save-preview"></div>
+          <label class="field">
+            <span>图片名称</span>
+            <input id="saveNameInput" type="text" />
+          </label>
+          <label class="field">
+            <span>选择历史文件夹</span>
+            <select id="saveFolderSelect"></select>
+          </label>
+          <label class="field">
+            <span>新建文件夹</span>
+            <input id="newFolderInput" type="text" placeholder="留空则使用历史文件夹" />
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-button" type="button" id="cancelSaveBtn">取消</button>
+          <button class="primary-button" type="button" id="confirmSaveBtn">保存</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="settingsModal" aria-hidden="true">
+      <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
+        <div class="modal-header">
+          <h3 id="settingsModalTitle">模型配置</h3>
+          <button class="icon-button" type="button" id="closeSettingsModalBtn" aria-label="关闭" title="关闭">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <label class="field">
+            <span>模型 API Key</span>
+            <input id="apiKeyInput" type="text" autocomplete="off" placeholder="由管理员配置" readonly />
+          </label>
+          <div class="settings-grid">
+            <input id="endpointInput" type="hidden" value="https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/" />
+            <label class="field">
+              <span>模型</span>
+              <select id="modelInput" aria-label="模型">
+                <option value="">gemini-2.5-flash-image</option>
+              </select>
+            </label>
+          </div>
+          <div id="referenceProbePanel" class="reference-probe-panel" aria-live="polite"></div>
+          <div class="request-payload-panel">
+            <div class="request-payload-head">
+              <strong>最近一次大模型入参</strong>
+              <span id="requestPayloadMeta">尚未发送请求</span>
+            </div>
+            <pre id="requestPayloadPreview">点击生成或测试入参图片后，这里会显示实际发送给模型的 JSON。图片数据会自动截断。</pre>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="ghost-button" type="button" id="testReferenceBtn">测试入参图片</button>
+          <button class="ghost-button" type="button" id="cancelSettingsBtn">取消</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop auth-backdrop" id="authModal" aria-hidden="true">
+      <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">ACCOUNT REQUIRED</p>
+            <h3 id="authModalTitle">注册或登录后使用</h3>
+          </div>
+        </div>
+        <div class="auth-tabs" role="tablist" aria-label="账号操作">
+          <button class="auth-tab active" id="authLoginTab" type="button" role="tab" aria-selected="true" data-auth-mode="login">登录</button>
+          <button class="auth-tab" id="authRegisterTab" type="button" role="tab" aria-selected="false" data-auth-mode="register">注册</button>
+        </div>
+        <div class="modal-body">
+          <label class="field">
+            <span>登录方式</span>
+            <select id="authTypeInput">
+              <option value="username">用户名登录</option>
+              <option value="email">邮箱登录</option>
+            </select>
+          </label>
+          <label class="field">
+            <span id="authNameLabel">用户名</span>
+            <input id="authNameInput" type="text" autocomplete="username" placeholder="例如：AIECO Studio" />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="至少 8 位" />
+          </label>
+          <div class="auth-note">
+            <strong>账号用于绑定管理员配置的 API Key 和生成日志。</strong>
+          </div>
+        </div>
+        <div class="modal-actions">
+          <button class="primary-button" id="authSubmitBtn" type="button">登录</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="modal-backdrop" id="creditsModal" aria-hidden="true">
+      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="creditsModalTitle">
+        <div class="modal-header">
+          <h3 id="creditsModalTitle">兑换积分</h3>
+          <button class="icon-button" type="button" id="closeCreditsModalBtn" aria-label="关闭">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <div class="credits-summary">
+            <p>本次需要 <strong id="creditsRequiredText">0</strong> 积分</p>
+            <p>当前剩余 <strong id="creditsRemainingModalText">0</strong> 积分</p>
+          </div>
+          <div class="credits-redeem-form">
+            <label class="field">
+              <span style="display:flex;justify-content:space-between;align-items:baseline;">
+                <span>兑换码</span>
+                <a href="https://item.taobao.com/item.htm?id=1059575526082&spm=a213gs.v2success.0.0.28eb48315dWcFz" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary,#1a73e8);">获取兑换码 →</a>
+              </span>
+              <input id="creditsRedeemInput" type="text" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" />
+            </label>
+            <p class="form-message" id="creditsRedeemMessage"></p>
+          </div>
+        </div>
+        <div class="modal-actions" style="display:flex;align-items:center;justify-content:center;">
+          <button class="primary-button" id="submitRedeemBtn" type="button">兑换</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./video-constraints.js?v=20260610-video-merge" defer></script>
+    <script src="./video-planner.js?v=20260610-video-merge" defer></script>
+    <script src="./video-mock-service.js?v=20260610-video-merge" defer></script>
+    <script src="./app.js?v=20260612-model-status" defer></script>
+  </body>
+</html>

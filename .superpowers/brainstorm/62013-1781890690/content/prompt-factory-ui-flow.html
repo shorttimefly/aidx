@@ -1,0 +1,90 @@
+<h2>提示词配置内的图片提示词工厂</h2>
+<p class="subtitle">目标：在一个分组里完成批量上传、生成验证、素材审核、发布到现有 C 端矩阵。</p>
+
+<div class="mockup">
+  <div class="mockup-header">B端管理台 / 提示词配置 / 图片提示词工厂</div>
+  <div class="mockup-body">
+    <div style="display:flex;gap:14px;min-height:560px">
+      <div class="mock-sidebar" style="width:170px;line-height:2.1">
+        单图模板<br>
+        套图生成<br>
+        二次编辑<br>
+        参考图规则<br>
+        入参探测<br>
+        <strong>图片提示词工厂</strong>
+      </div>
+
+      <div class="mock-content" style="flex:1;display:grid;grid-template-columns:360px 1fr;gap:14px">
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div class="placeholder" style="height:120px">
+            商品原图（可选）<br>
+            用于验证 Image A / Image B 的产品迁移效果
+          </div>
+          <div class="placeholder" style="height:150px">
+            参考图批量上传<br>
+            每张参考图生成一条素材
+          </div>
+          <div class="placeholder" style="height:90px">
+            模型选择<br>
+            复用已配置的 Gemini 类图片模型
+          </div>
+          <button class="mock-button">生成提示词与验证图</button>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:12px">
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+            <div class="placeholder">全部 18</div>
+            <div class="placeholder">草稿 6</div>
+            <div class="placeholder">待发布 9</div>
+            <div class="placeholder">已发布 3</div>
+          </div>
+
+          <div style="display:grid;grid-template-columns:240px 1fr;gap:12px;min-height:360px">
+            <div class="placeholder" style="height:auto;text-align:left;padding:14px">
+              素材队列 / 素材库<br><br>
+              <strong>参考图 01</strong> 已生成<br>
+              参考图 02 生成中<br>
+              参考图 03 B图失败<br>
+              参考图 04 草稿<br>
+              参考图 05 已发布
+            </div>
+            <div class="placeholder" style="height:auto;text-align:left;padding:14px">
+              <strong>参考图 01 审核详情</strong><br><br>
+              参考分析摘要<br>
+              中文 Prompt / English Prompt<br>
+              Image A：参考图辅助结果<br>
+              Image B：Prompt-only 结果<br>
+              对比结论与风险提示<br><br>
+              发布目标：平台 / 品类 / 场景<br>
+              发布方式：追加新场景 / 覆盖已有场景
+            </div>
+          </div>
+
+          <div style="display:flex;gap:10px;justify-content:flex-end">
+            <button class="mock-button">保存草稿</button>
+            <button class="mock-button">重试当前素材</button>
+            <button class="mock-button">发布到 C 端</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="pros-cons">
+  <div class="pros">
+    <h4>设计意图</h4>
+    <ul>
+      <li>左侧是新建任务，右侧是素材库与审核发布。</li>
+      <li>每条参考图独立状态，批量失败不会拖垮整批。</li>
+      <li>发布时仍映射到现有平台 / 品类 / 场景。</li>
+    </ul>
+  </div>
+  <div class="cons">
+    <h4>取舍</h4>
+    <ul>
+      <li>放在提示词配置内会比较密，但符合你选的入口。</li>
+      <li>完整验证会消耗更多模型调用，需要显示进度和失败原因。</li>
+    </ul>
+  </div>
+</div>
