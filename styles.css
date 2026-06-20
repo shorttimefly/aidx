@@ -3805,3 +3805,21 @@ input[readonly] {
 .credits-tooltip-row { display: flex; justify-content: space-between; gap: 12px; }
 .credits-tooltip-row span:first-child { color: rgba(255,255,255,0.6); }
 .credits-tooltip-row span:last-child { text-align: right; }
+
+.card-meta-row { font-size: 11px; color: var(--on-surface-variant, #666); margin-top: 2px; }
+
+/* ── Reference thumb badges ───────────────────────────────────────────────── */
+
+.ref-thumb-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; border-radius: 4px;
+  background: var(--surface-container-high, #ddd); font-size: 10px; font-weight: 700;
+  cursor: default; position: relative; vertical-align: middle;
+}
+.ref-thumb-badge .ref-thumb-pop {
+  display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+  margin-bottom: 4px; z-index: 200; border-radius: 4px; overflow: hidden;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3); line-height: 0;
+}
+.ref-thumb-badge:hover .ref-thumb-pop { display: block; }
+.ref-thumb-badge .ref-thumb-pop img { display: block; width: 160px; height: 160px; object-fit: cover; }

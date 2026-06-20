@@ -1538,14 +1538,15 @@ function libraryItemFromGeneratedAsset(asset) {
     id: createId("asset"),
     name: asset.name || timestampName(),
     url: asset.url,
-    prompt: asset.prompt || "",
+    prompt: asset.templateTitle ? `模板：${asset.templateTitle}` : (asset.prompt || ""),
     createdAt,
     source: "remote-generation",
     remoteAssetId: asset.id,
     logId: asset.logId || "",
     model: asset.model || state.auth.modelSettings.model || DEFAULT_MODEL,
     size: asset.size || "",
-    request: asset.request || null
+    request: asset.request || null,
+    refCount: asset.refCount || 0
   };
 }
 
@@ -2878,11 +2879,15 @@ async function handleGenerate() {
       size: els.sizeInput.value,
       referenceImages: state.uploaded
     });
+    const refThumbs = await thumbnailRefs(state.uploaded);
     state.generated = images.map((image, index) => ({
       id: createId("gen"),
       name: `${timestampName()}-${index + 1}`,
       url: image.url,
       prompt: `模板：${template.title}`,
+      templateTitle: template.title,
+      refCount: state.uploaded.length,
+      refThumbs: refThumbs,
       createdAt: new Date().toISOString(),
 	      source: "generation",
 	      model: selectedImageModelName(),
@@ -3488,6 +3493,34 @@ function withReferenceContext(prompt, references) {
   return [...lines.filter(Boolean), prompt].join("\n");
 }
 
+/** Generate 160x160 thumbnails from reference image data URLs (low-fidelity, low storage). */
+async function thumbnailRefs(refs) {
+  if (!refs || !refs.length) return [];
+  const SIZE = 160;
+  const thumbs = [];
+  for (const ref of refs) {
+    try {
+      const thumb = await new Promise((resolve, reject) => {
+        const img = new Image();
+        img.onload = function () {
+          const canvas = document.createElement("canvas");
+          canvas.width = SIZE;
+          canvas.height = SIZE;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0, SIZE, SIZE);
+          resolve(canvas.toDataURL("image/jpeg", 0.6));
+        };
+        img.onerror = function () { resolve(null); };
+        img.src = ref.dataUrl || ref.url;
+      });
+      if (thumb) thumbs.push(thumb);
+    } catch {
+      // skip failed thumb
+    }
+  }
+  return thumbs;
+}
+
 async function requestImagesExact(options) {
   const targetCount = clamp(parseInt(options.count, 10) || 1, 1, 8);
   let calls = 0;
@@ -3563,6 +3596,15 @@ function renderImageCard(item) {
           <span>${formatTime(item.createdAt)}</span>
         </div>
         <div class="prompt-preview">${escapeHtml(item.prompt || "")}</div>
+        <div class="card-meta-row">
+          ${escapeHtml(item.model || "")} · ${escapeHtml(item.size || "")}${item.refCount ? ` · ` : ""}
+          ${(item.refThumbs || []).length ? item.refThumbs.map((thumb, i) => `
+            <span class="ref-thumb-badge" data-thumb="${escapeAttr(thumb)}">
+              🖼${i + 1}
+              <span class="ref-thumb-pop"><img src="${escapeAttr(thumb)}" alt="参考图${i + 1}" width="160" height="160" /></span>
+            </span>
+          `).join(" ") : item.refCount ? `${item.refCount}张参考图` : ""}
+        </div>
         <div class="card-actions five">
           <button class="small-button" type="button" data-action="save" data-id="${escapeHtml(item.id)}">保存</button>
           <button class="small-button" type="button" data-action="edit" data-id="${escapeHtml(item.id)}">编辑</button>
@@ -3904,6 +3946,7 @@ function renderAssetGrid() {
               <span>${formatTime(asset.savedAt || asset.createdAt)}</span>
             </div>
             <div class="prompt-preview">${escapeHtml(asset.prompt || "")}</div>
+            <div class="card-meta-row">${escapeHtml(asset.model || "")} · ${escapeHtml(asset.size || "")}${asset.refCount ? ` · ${asset.refCount}张参考图` : ""}</div>
             <div class="card-actions three">
               <button class="small-button" type="button" data-action="edit" data-id="${escapeAttr(asset.id)}">编辑</button>
               <button class="small-button" type="button" data-action="download" data-id="${escapeAttr(asset.id)}">下载</button>
@@ -4301,11 +4344,15 @@ async function handleGenerate() {
       size: els.sizeInput.value,
       referenceImages: state.uploaded
     });
+    const refThumbs = await thumbnailRefs(state.uploaded);
     state.generated = images.map((image, index) => ({
       id: createId("gen"),
       name: `${timestampName()}-${index + 1}`,
       url: image.url,
       prompt: `模板：${template.title}`,
+      templateTitle: template.title,
+      refCount: state.uploaded.length,
+      refThumbs: refThumbs,
       createdAt: new Date().toISOString(),
       source: "generation",
       model: selectedImageModelName(),
