@@ -85,10 +85,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     await adminFetch("/me");
     await loadDashboard();
   } catch (error) {
-    if (error.accessDenied) {
-      renderAccessDenied();
-      return;
-    }
     if (state.token) showToast(error.message, true);
   }
   renderShell();
@@ -266,16 +262,14 @@ async function adminFetch(path, options = {}) {
   }
   if (!response.ok) {
     if (response.status === 403) {
-      const error = new Error("你不是管理员");
-      error.accessDenied = true;
       clearAdmin();
-      throw error;
+      redirectToAdminLogin("forbidden");
+      throw new Error("你不是管理员");
     }
-    if (response.status === 401 || response.status === 403) {
-      const error = new Error("登录已过期，请重新登录");
-      error.authFailure = true;
-      handleAuthFailure();
-      throw error;
+    if (response.status === 401) {
+      clearAdmin();
+      redirectToAdminLogin("expired");
+      throw new Error("登录已过期，请重新登录");
     }
     const message = payload?.error || payload?.message || response.statusText || "请求失败";
     if (response.status === 404 && message === "接口不存在" && path.startsWith("/downvotes")) {

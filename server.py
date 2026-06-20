@@ -2592,18 +2592,33 @@ class Handler(SimpleHTTPRequestHandler):
         now = int(time.time())
         with connect() as conn:
             session = conn.execute(
-                "SELECT * FROM sessions WHERE token=? AND role='user' AND expires_at>?",
+                "SELECT * FROM sessions WHERE token=? AND expires_at>?",
                 (token, now),
             ).fetchone()
             if not session:
                 raise AppError(HTTPStatus.UNAUTHORIZED, "登录已失效")
-            user = conn.execute("SELECT * FROM users WHERE id=?", (session["user_id"],)).fetchone()
+            user_id = row_value(session, "user_id", "")
+            if not user_id:
+                # built-in admin — resolve to any user with admin role or return virtual user
+                user = conn.execute(
+                    "SELECT * FROM users WHERE role='admin' AND disabled=0 AND email<>'' LIMIT 1"
+                ).fetchone()
+                if not user:
+                    user = conn.execute("SELECT * FROM users WHERE email=? LIMIT 1", (ADMIN_EMAIL,)).fetchone()
+                if not user:
+                    raise AppError(HTTPStatus.UNAUTHORIZED, "用户不存在")
+                return user
+            user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
             if not user:
                 raise AppError(HTTPStatus.UNAUTHORIZED, "用户不存在")
             if user["disabled"]:
-                conn.execute("DELETE FROM sessions WHERE user_id=? AND role='user'", (user["id"],))
+                conn.execute("DELETE FROM sessions WHERE user_id=?", (user["id"],))
                 conn.commit()
                 raise AppError(HTTPStatus.FORBIDDEN, "账号已被禁用")
+            if session["role"] == ADMIN_ROLE and normalize_user_role(row_value(user, "role", USER_ROLE)) != ADMIN_ROLE:
+                conn.execute("DELETE FROM sessions WHERE user_id=? AND role=?", (user["id"], ADMIN_ROLE))
+                conn.commit()
+                raise AppError(HTTPStatus.FORBIDDEN, "管理员权限已撤销")
             return user
 
     def require_admin(self) -> dict:
