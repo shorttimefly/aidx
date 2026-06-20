@@ -1530,10 +1530,14 @@ def normalize_prompt_asset_kind(value) -> str:
     return kind if kind in VALID_PROMPT_ASSET_KINDS else PROMPT_ASSET_KIND_SINGLE
 
 
+def normalize_prompt_asset_image_url(value) -> str:
+    return str(value or "").strip()
+
+
 def normalize_prompt_asset_image(value) -> dict:
     if not isinstance(value, dict):
         return {}
-    url = str(value.get("url") or "").strip()
+    url = normalize_prompt_asset_image_url(value.get("url"))
     if not url:
         return {}
     return {
@@ -1584,13 +1588,11 @@ def normalize_suite_prompt_shots(value, references: list[dict] | None = None) ->
                 "description": description,
                 "chinesePrompt": chinese_prompt,
                 "englishPrompt": english_prompt,
-                "promptOnlyImageUrl": trim_text(
-                    str(item.get("promptOnlyImageUrl") or item.get("prompt_only_image_url") or ""),
-                    PROMPT_ASSET_IMAGE_URL_LIMIT,
+                "promptOnlyImageUrl": normalize_prompt_asset_image_url(
+                    item.get("promptOnlyImageUrl") or item.get("prompt_only_image_url")
                 ),
-                "referenceImageUrl": trim_text(
-                    str(item.get("referenceImageUrl") or item.get("reference_image_url") or ""),
-                    PROMPT_ASSET_IMAGE_URL_LIMIT,
+                "referenceImageUrl": normalize_prompt_asset_image_url(
+                    item.get("referenceImageUrl") or item.get("reference_image_url")
                 ),
                 "imageError": trim_text(str(item.get("imageError") or item.get("image_error") or ""), 1000),
             }
@@ -1843,16 +1845,13 @@ def update_prompt_asset(conn: sqlite3.Connection, asset_id: str, values: dict) -
         "assetKind": ("asset_kind", normalize_prompt_asset_kind),
         "suiteShots": (
             "suite_shots_json",
-            lambda value: trim_text(
-                json.dumps(normalize_suite_prompt_shots(value), ensure_ascii=False),
-                PROMPT_ASSET_JSON_LIMIT,
-            ),
+            lambda value: json.dumps(normalize_suite_prompt_shots(value), ensure_ascii=False),
         ),
         "referenceAnalysis": ("reference_analysis", lambda value: trim_text(value, PROMPT_ASSET_TEXT_LIMIT)),
         "chinesePrompt": ("chinese_prompt", lambda value: trim_text(value, PROMPT_ASSET_TEXT_LIMIT)),
         "englishPrompt": ("english_prompt", lambda value: trim_text(value, PROMPT_ASSET_TEXT_LIMIT)),
-        "imageAUrl": ("image_a_url", lambda value: trim_text(value, PROMPT_ASSET_IMAGE_URL_LIMIT)),
-        "imageBUrl": ("image_b_url", lambda value: trim_text(value, PROMPT_ASSET_IMAGE_URL_LIMIT)),
+        "imageAUrl": ("image_a_url", normalize_prompt_asset_image_url),
+        "imageBUrl": ("image_b_url", normalize_prompt_asset_image_url),
         "comparison": ("comparison", lambda value: trim_text(value, PROMPT_ASSET_TEXT_LIMIT)),
         "targetPlatformId": ("target_platform_id", lambda value: trim_text(value, 120)),
         "targetCategoryId": ("target_category_id", lambda value: trim_text(value, 120)),

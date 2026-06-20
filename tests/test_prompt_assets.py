@@ -112,6 +112,48 @@ class PromptAssetStorageTests(unittest.TestCase):
         self.assertEqual(updated["imageAUrl"], large_image)
         self.assertEqual(reloaded["imageAUrl"], large_image)
 
+    def test_update_prompt_asset_preserves_oversized_validation_image_data_urls(self):
+        large_image = "data:image/png;base64," + ("A" * 2_500_000)
+        with server.connect() as conn:
+            created = server.create_prompt_assets(
+                conn,
+                {},
+                [{"name": "ref.png", "size": "1024x1024", "url": DATA_IMAGE}],
+            )[0]
+            updated = server.update_prompt_asset(conn, created["id"], {"imageAUrl": large_image})
+            reloaded = server.prompt_asset_by_id(conn, created["id"])
+
+        self.assertEqual(updated["imageAUrl"], large_image)
+        self.assertEqual(reloaded["imageAUrl"], large_image)
+
+    def test_update_prompt_asset_preserves_oversized_suite_shot_image_data_urls(self):
+        large_image = "data:image/png;base64," + ("B" * 2_500_000)
+        with server.connect() as conn:
+            created = server.create_suite_prompt_asset(
+                conn,
+                {"name": "product.png", "size": "1024x1024", "url": DATA_IMAGE},
+                [{"name": "ref.png", "size": "1024x1024", "url": DATA_IMAGE + "r"}],
+            )
+            updated = server.update_prompt_asset(
+                conn,
+                created["id"],
+                {
+                    "suiteShots": [
+                        {
+                            "id": "shot-1",
+                            "name": "01 首屏品牌横幅",
+                            "size": "1024x1024",
+                            "chinesePrompt": "生成首屏品牌横幅。",
+                            "promptOnlyImageUrl": large_image,
+                        }
+                    ]
+                },
+            )
+            reloaded = server.prompt_asset_by_id(conn, created["id"])
+
+        self.assertEqual(updated["suiteShots"][0]["promptOnlyImageUrl"], large_image)
+        self.assertEqual(reloaded["suiteShots"][0]["promptOnlyImageUrl"], large_image)
+
     def test_delete_prompt_asset_removes_history_asset(self):
         with server.connect() as conn:
             created = server.create_prompt_assets(
