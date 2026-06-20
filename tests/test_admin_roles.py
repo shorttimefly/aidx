@@ -203,6 +203,9 @@ class UsernameAuthSchemaTests(unittest.TestCase):
         self.assertEqual(caught.exception.status, 502)
         self.assertIn("connection reset", caught.exception.message)
 
+    def test_upstream_model_default_timeout_waits_five_minutes(self):
+        self.assertEqual(server.UPSTREAM_TIMEOUT_SECONDS, 300)
+
     def test_call_upstream_model_wraps_curl_timeout_errors(self):
         with mock.patch("server.should_use_curl_transport", return_value=True):
             with mock.patch(
@@ -463,6 +466,37 @@ class AdminRoleTests(unittest.TestCase):
         self.assertFalse(providers[0]["models"][1]["enabled"])
         self.assertEqual(providers[0]["models"][2]["modelName"], "musk-video")
         self.assertEqual(providers[0]["models"][2]["modelKind"], "video")
+
+    def test_admin_can_save_muskapis_gpt55_text_understanding_model(self):
+        admin_token = self.builtin_admin_token()
+
+        status, _ = self.request(
+            "PUT",
+            "/api/admin/model-config",
+            {
+                "modelProviders": [
+                    {
+                        "name": "Muskapis GPT",
+                        "providerType": "openai_image",
+                        "baseUrl": "https://api.muskapis.com/v1",
+                        "apiKey": "text-secret-key",
+                        "enabled": True,
+                        "models": [
+                            {"modelName": "gpt-5.5", "modelKind": "text", "priority": 5, "enabled": True},
+                        ],
+                    }
+                ],
+            },
+            token=admin_token,
+        )
+        self.assertEqual(status, 200)
+        status, payload = self.request("GET", "/api/admin/model-config", token=admin_token)
+        self.assertEqual(status, 200)
+        providers = payload["modelConfig"]["modelProviders"]
+
+        self.assertEqual(providers[0]["baseUrl"], "https://api.muskapis.com/v1")
+        self.assertEqual(providers[0]["models"][0]["modelName"], "gpt-5.5")
+        self.assertEqual(providers[0]["models"][0]["modelKind"], "text")
 
     def test_admin_can_set_default_provider_model_for_c端_generation(self):
         user_payload = self.register_user()
@@ -764,6 +798,7 @@ class AdminRoleTests(unittest.TestCase):
         self.assertEqual(status, 200)
         request_body = call_model.call_args.args[2]
         self.assertIn("平台合规白底主图", json.dumps(request_body, ensure_ascii=False))
+        self.assertIn("图片中的所有可见文案", json.dumps(request_body, ensure_ascii=False))
         self.assertEqual(payload["request"]["body"]["templateId"], "main-white")
         self.assertNotIn("prompt", payload["request"]["body"])
         self.assertNotIn("平台合规白底主图", json.dumps(payload, ensure_ascii=False))

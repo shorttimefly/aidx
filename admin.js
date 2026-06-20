@@ -8,7 +8,17 @@ const PROMPT_GROUPS = [
   { id: "suite", label: "套图生成" },
   { id: "refinement", label: "二次编辑" },
   { id: "reference", label: "参考图规则" },
-  { id: "probe", label: "入参探测" }
+  { id: "probe", label: "入参探测" },
+  { id: "factory", label: "图片提示词工厂" },
+  { id: "suiteFactory", label: "套图提示词工厂" }
+];
+const FACTORY_GENERATION_STEPS = [
+  { id: "prepare", label: "准备请求", detail: "选择文本理解模型和验证出图模型" },
+  { id: "analysis", label: "分析参考图风格", detail: "读取参考图构图、文字层级和电商模块" },
+  { id: "prompt", label: "生成提示词", detail: "输出中文和英文可复用 Prompt" },
+  { id: "imageA", label: "生成 Image A", detail: "用商品图和参考图生成参考辅助版本" },
+  { id: "imageB", label: "生成 Image B", detail: "只用商品图和 Prompt 验证复用效果" },
+  { id: "compare", label: "对比验证图", detail: "比较两张验证图并写出审核结论" }
 ];
 
 const state = {
@@ -29,6 +39,19 @@ const state = {
   },
   activeAdminView: "model",
   promptConfig: null,
+  promptAssets: [],
+  suitePromptAssets: [],
+  factoryModelOptions: [],
+  factoryProductImage: null,
+  factoryReferenceImages: [],
+  suiteFactoryProductImage: null,
+  suiteFactoryReferenceImages: [],
+  factoryGenerationJobs: new Map(),
+  suiteFactoryGenerationJobs: new Map(),
+  activePromptAssetId: "",
+  activeSuitePromptAssetId: "",
+  factoryStatusFilter: "",
+  suiteFactoryStatusFilter: "",
   activePromptGroup: "single",
   selectedKeyUserId: "",
   selectedKeyMode: "image",
@@ -104,6 +127,7 @@ function cacheElements() {
     adminLogTable: document.getElementById("adminLogTable"),
     adminFeedbackTable: document.getElementById("adminFeedbackTable"),
     savePromptConfigBtn: document.getElementById("savePromptConfigBtn"),
+    promptPanelTitle: document.getElementById("promptPanelTitle"),
     promptGroupList: document.getElementById("promptGroupList"),
     promptConfigEditor: document.getElementById("promptConfigEditor"),
     adminKeyModal: document.getElementById("adminKeyModal"),
@@ -118,6 +142,10 @@ function cacheElements() {
     cancelUserKeyBtn: document.getElementById("cancelUserKeyBtn"),
     saveUserKeyBtn: document.getElementById("saveUserKeyBtn"),
     clearUserKeyBtn: document.getElementById("clearUserKeyBtn"),
+    factoryImagePreviewModal: document.getElementById("factoryImagePreviewModal"),
+    factoryImagePreviewTitle: document.getElementById("factoryImagePreviewTitle"),
+    factoryImagePreviewImg: document.getElementById("factoryImagePreviewImg"),
+    closeFactoryImagePreviewBtn: document.getElementById("closeFactoryImagePreviewBtn"),
     toast: document.getElementById("toast")
   });
 }
@@ -135,6 +163,8 @@ function bindEvents() {
   els.providerConfigModal.addEventListener("click", (event) => {
     if (event.target === els.providerConfigModal) closeProviderConfigModal();
   });
+  els.providerTypeInput.addEventListener("change", refreshProviderModalDefaults);
+  els.providerModelKindInput.addEventListener("change", refreshProviderModalDefaults);
   els.refreshUsersBtn.addEventListener("click", loadUsers);
   els.refreshLogsBtn.addEventListener("click", loadLogs);
   els.refreshFeedbackBtn.addEventListener("click", () => loadFeedbacks(true));
@@ -150,10 +180,18 @@ function bindEvents() {
     const field = event.target.closest("[data-prompt-path]");
     if (field) setPromptConfigValue(field.dataset.promptPath, field.value);
   });
+  bindPromptFactoryEvents();
   els.closeAdminKeyModalBtn.addEventListener("click", closeUserKeyModal);
   els.cancelUserKeyBtn.addEventListener("click", closeUserKeyModal);
   els.saveUserKeyBtn.addEventListener("click", saveUserKey);
   els.clearUserKeyBtn.addEventListener("click", clearUserKey);
+  els.closeFactoryImagePreviewBtn.addEventListener("click", closeFactoryImagePreview);
+  els.factoryImagePreviewModal.addEventListener("click", (event) => {
+    if (event.target === els.factoryImagePreviewModal) closeFactoryImagePreview();
+  });
+  document.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && els.factoryImagePreviewModal?.classList.contains("active")) closeFactoryImagePreview();
+  });
 }
 
 function renderShell() {
@@ -195,14 +233,19 @@ function renderAccessDenied() {
 
 function switchAdminView(viewName) {
   state.activeAdminView = viewName || "model";
+  if (state.activeAdminView === "factory") state.activePromptGroup = "factory";
+  if (state.activeAdminView === "suite-factory") state.activePromptGroup = "suiteFactory";
   els.adminNavItems.forEach((button) => {
     const active = button.dataset.adminView === state.activeAdminView;
     button.classList.toggle("active", active);
     button.setAttribute("aria-current", active ? "page" : "false");
   });
   els.adminViews.forEach((view) => {
-    view.classList.toggle("active", view.dataset.adminViewPanel === state.activeAdminView);
+    const activePanel = ["factory", "suite-factory"].includes(state.activeAdminView) ? "prompts" : state.activeAdminView;
+    view.classList.toggle("active", view.dataset.adminViewPanel === activePanel);
   });
+  renderPromptWorkspaceMode();
+  if (state.activeAdminView === "factory" || state.activeAdminView === "suite-factory") renderPromptConfigEditor();
 }
 
 async function adminFetch(path, options = {}) {
@@ -274,6 +317,8 @@ function redirectToAdminLogin(reason) {
 
 async function loadDashboard() {
   await Promise.all([loadSummary(), loadUsers(), loadLogs(), loadFeedbacks(), loadPromptConfig()]);
+  await loadPromptAssets();
+  await loadSuitePromptAssets();
 }
 
 async function loadSummary() {
@@ -315,6 +360,310 @@ async function loadPromptConfig() {
   state.promptConfig = payload.promptConfig;
   renderPromptGroups();
   renderPromptConfigEditor();
+}
+
+async function loadPromptAssets() {
+  const params = new URLSearchParams({ limit: "100" });
+  params.set("assetKind", "single");
+  if (state.factoryStatusFilter) params.set("status", state.factoryStatusFilter);
+  const payload = await adminFetch(`/prompt-assets?${params.toString()}`);
+  state.promptAssets = mergePromptAssetsWithLocalJobs(payload.assets || []);
+  state.factoryModelOptions = payload.modelOptions || [];
+  if (!state.activePromptAssetId && state.promptAssets[0]) state.activePromptAssetId = state.promptAssets[0].id;
+  renderPromptConfigEditor();
+}
+
+async function loadSuitePromptAssets() {
+  const params = new URLSearchParams({ limit: "100", assetKind: "suite" });
+  if (state.suiteFactoryStatusFilter) params.set("status", state.suiteFactoryStatusFilter);
+  const payload = await adminFetch(`/prompt-assets?${params.toString()}`);
+  state.suitePromptAssets = mergePromptAssetsWithLocalJobs(payload.assets || [], "suite");
+  state.factoryModelOptions = payload.modelOptions || state.factoryModelOptions || [];
+  if (!state.activeSuitePromptAssetId && state.suitePromptAssets[0]) state.activeSuitePromptAssetId = state.suitePromptAssets[0].id;
+  renderPromptConfigEditor();
+}
+
+function mergePromptAssetsWithLocalJobs(assets, scope = "single") {
+  const jobs = scope === "suite" ? state.suiteFactoryGenerationJobs : state.factoryGenerationJobs;
+  return assets.map((asset) => {
+    const job = jobs.get(asset.id);
+    if (job?.status === "running" && asset.status !== "generated" && asset.status !== "published" && asset.status !== "failed") {
+      return { ...asset, status: "generating", error: "" };
+    }
+    if (job?.status === "success" && asset.status === "draft") return { ...asset, status: "generating" };
+    return asset;
+  });
+}
+
+async function createPromptAssets(scope = "single") {
+  const suiteMode = scope === "suite";
+  const referenceImages = suiteMode ? state.suiteFactoryReferenceImages : state.factoryReferenceImages;
+  const productImage = suiteMode ? state.suiteFactoryProductImage : state.factoryProductImage;
+  if (!referenceImages.length) {
+    showToast(suiteMode ? "请先上传套图参考图" : "请先上传参考图", true);
+    return;
+  }
+  const modelSelect = document.getElementById(suiteMode ? "suiteFactoryModelSelect" : "factoryModelSelect");
+  const titleInput = document.getElementById("suiteFactoryTitleInput");
+  const payload = await adminFetch("/prompt-assets", {
+    method: "POST",
+    body: JSON.stringify({
+      assetKind: suiteMode ? "suite" : "single",
+      productImage: productImage || {},
+      referenceImages,
+      providerModelId: modelSelect?.value || "",
+      title: suiteMode ? titleInput?.value || "同款电商套图" : ""
+    })
+  });
+  if (suiteMode) {
+    state.suitePromptAssets = [...(payload.assets || []), ...state.suitePromptAssets];
+    state.activeSuitePromptAssetId = payload.assets?.[0]?.id || state.activeSuitePromptAssetId;
+  } else {
+    state.promptAssets = [...(payload.assets || []), ...state.promptAssets];
+    state.activePromptAssetId = payload.assets?.[0]?.id || state.activePromptAssetId;
+  }
+  renderPromptConfigEditor();
+  showToast(suiteMode ? "已创建 1 套提示词素材" : `已创建 ${(payload.assets || []).length} 条提示词素材`);
+  return payload.assets || [];
+}
+
+async function createSuitePromptAsset() {
+  return createPromptAssets("suite");
+}
+
+async function savePromptAsset(assetId, scope = "single") {
+  const suiteMode = scope === "suite";
+  const detail = document.getElementById(suiteMode ? "suitePromptFactoryAssetDetail" : "promptFactoryAssetDetail");
+  if (!detail) return;
+  const body = {
+    title: detail.querySelector("[data-factory-field='title']")?.value || "",
+    chinesePrompt: detail.querySelector("[data-factory-field='chinesePrompt']")?.value || "",
+    englishPrompt: detail.querySelector("[data-factory-field='englishPrompt']")?.value || "",
+    comparison: detail.querySelector("[data-factory-field='comparison']")?.value || "",
+    targetPlatformId: detail.querySelector("[data-factory-field='targetPlatformId']")?.value || "",
+    targetCategoryId: detail.querySelector("[data-factory-field='targetCategoryId']")?.value || "",
+    targetScenarioId: detail.querySelector("[data-factory-field='targetScenarioId']")?.value || "",
+    publishMode: detail.querySelector("[data-factory-field='publishMode']")?.value || "append"
+  };
+  if (suiteMode) body.suiteShots = collectSuiteFactoryShots(detail);
+  const payload = await adminFetch(`/prompt-assets/${encodeURIComponent(assetId)}`, {
+    method: "PATCH",
+    body: JSON.stringify(body)
+  });
+  replacePromptAsset(payload.asset, scope);
+  renderPromptConfigEditor();
+  showToast(suiteMode ? "套图提示词素材已保存" : "提示词素材已保存");
+}
+
+async function generatePromptAsset(assetId, button = null, scope = "single") {
+  const suiteMode = scope === "suite";
+  const modelSelect = document.getElementById(suiteMode ? "suiteFactoryModelSelect" : "factoryModelSelect");
+  startFactoryGenerationJob(assetId, { modelLabel: selectedFactoryModelLabel(modelSelect?.value || ""), scope });
+  setBusy(button, "生成中", true);
+  try {
+    const payload = await adminFetch(`/prompt-assets/${encodeURIComponent(assetId)}/generate`, {
+      method: "POST",
+      body: JSON.stringify({ providerModelId: modelSelect?.value || "" })
+    });
+    finishFactoryGenerationJob(assetId, "success", "生成完成，已拿到提示词、验证图和对比结论。", scope);
+    replacePromptAsset(payload.asset, scope);
+    renderPromptConfigEditor();
+    showToast(suiteMode ? "套图提示词与验证图已生成" : "提示词与验证图已生成");
+  } catch (error) {
+    finishFactoryGenerationJob(assetId, "failed", error.message || "生成失败", scope);
+    if (suiteMode) await loadSuitePromptAssets();
+    else await loadPromptAssets();
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, "重试当前素材", false);
+  }
+}
+
+async function publishPromptAsset(assetId, button = null, scope = "single") {
+  const suiteMode = scope === "suite";
+  const detail = document.getElementById(suiteMode ? "suitePromptFactoryAssetDetail" : "promptFactoryAssetDetail");
+  if (!detail) return;
+  const mode = detail.querySelector("[data-factory-field='publishMode']")?.value || "append";
+  if (mode === "overwrite" && !window.confirm(suiteMode ? "覆盖已有 C 端套图？这个操作会替换整套图位和提示词。" : "覆盖已有 C 端场景？这个操作会替换原场景标题和提示词。")) return;
+  setBusy(button, "发布中", true);
+  try {
+    await savePromptAsset(assetId, scope);
+    const body = {
+      platformId: detail.querySelector("[data-factory-field='targetPlatformId']")?.value || "",
+      categoryId: detail.querySelector("[data-factory-field='targetCategoryId']")?.value || "",
+      scenarioId: detail.querySelector("[data-factory-field='targetScenarioId']")?.value || "",
+      presetId: detail.querySelector("[data-factory-field='targetPresetId']")?.value || "",
+      mode,
+      title: detail.querySelector("[data-factory-field='title']")?.value || "",
+      factoryScope: suiteMode ? "suite" : "single"
+    };
+    if (suiteMode) Object.assign(body, { factoryScope: "suite" });
+    const payload = await adminFetch(`/prompt-assets/${encodeURIComponent(assetId)}/publish`, {
+      method: "POST",
+      body: JSON.stringify(body)
+    });
+    replacePromptAsset(payload.asset, scope);
+    if (payload.promptConfig) state.promptConfig = payload.promptConfig;
+    renderPromptConfigEditor();
+    showToast(suiteMode ? "已发布整套图到 C 端" : "已发布到 C 端模板");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, suiteMode ? "发布整套图到 C 端" : "发布到 C 端", false);
+  }
+}
+
+async function publishSuitePromptAsset(assetId, button = null) {
+  return publishPromptAsset(assetId, button, "suite");
+}
+
+async function deletePromptAsset(assetId, button = null, scope = "single") {
+  const suiteMode = scope === "suite";
+  const list = suiteMode ? state.suitePromptAssets : state.promptAssets;
+  const asset = list.find((entry) => entry.id === assetId);
+  if (!assetId || !window.confirm(`删除「${asset?.title || "这条提示词素材"}」？历史提示词、验证图和发布状态都会从 B 端列表移除。`)) return;
+  setBusy(button, "删除中", true);
+  try {
+    await adminFetch(`/prompt-assets/${encodeURIComponent(assetId)}`, { method: "DELETE" });
+    const jobs = suiteMode ? state.suiteFactoryGenerationJobs : state.factoryGenerationJobs;
+    jobs.delete(assetId);
+    if (suiteMode) {
+      state.suitePromptAssets = state.suitePromptAssets.filter((entry) => entry.id !== assetId);
+      state.activeSuitePromptAssetId = state.suitePromptAssets[0]?.id || "";
+    } else {
+      state.promptAssets = state.promptAssets.filter((entry) => entry.id !== assetId);
+      state.activePromptAssetId = state.promptAssets[0]?.id || "";
+    }
+    renderPromptConfigEditor();
+    showToast(suiteMode ? "套图提示词素材已删除" : "提示词素材已删除");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, "删除", false);
+  }
+}
+
+function replacePromptAsset(asset, scope = "single") {
+  if (!asset?.id) return;
+  const list = scope === "suite" ? state.suitePromptAssets : state.promptAssets;
+  const index = list.findIndex((entry) => entry.id === asset.id);
+  if (index >= 0) list.splice(index, 1, asset);
+  else list.unshift(asset);
+}
+
+function collectSuiteFactoryShots(detail) {
+  return Array.from(detail.querySelectorAll("[data-suite-shot-index]")).map((row, index) => ({
+    id: row.querySelector("[data-suite-shot-field='id']")?.value || `shot-${index + 1}`,
+    name: row.querySelector("[data-suite-shot-field='name']")?.value || `0${index + 1} 套图图位`,
+    size: row.querySelector("[data-suite-shot-field='size']")?.value || "1024x1024",
+    description: row.querySelector("[data-suite-shot-field='description']")?.value || "",
+    chinesePrompt: row.querySelector("[data-suite-shot-field='chinesePrompt']")?.value || "",
+    englishPrompt: row.querySelector("[data-suite-shot-field='englishPrompt']")?.value || ""
+  }));
+}
+
+function selectedFactoryModelLabel(providerModelId) {
+  const option = state.factoryModelOptions.find((item) => item.providerModelId === providerModelId) || state.factoryModelOptions[0];
+  if (!option) return "未选择模型";
+  return `${option.providerName || "模型"} / ${option.modelName || ""}`.trim();
+}
+
+function factoryJobStore(scope = "single") {
+  return scope === "suite" ? state.suiteFactoryGenerationJobs : state.factoryGenerationJobs;
+}
+
+function factoryAssetList(scope = "single") {
+  return scope === "suite" ? state.suitePromptAssets : state.promptAssets;
+}
+
+function factoryScopeForAsset(asset) {
+  return asset?.assetKind === "suite" ? "suite" : "single";
+}
+
+function startFactoryGenerationJob(assetId, options = {}) {
+  const scope = options.scope === "suite" ? "suite" : "single";
+  const jobs = factoryJobStore(scope);
+  const existing = jobs.get(assetId);
+  if (existing?.timer) window.clearInterval(existing.timer);
+  if (existing?.pollTimer) window.clearInterval(existing.pollTimer);
+  const job = {
+    assetId,
+    scope,
+    status: "running",
+    startedAt: Date.now(),
+    modelLabel: options.modelLabel || "文本理解模型",
+    message: "请求已提交，正在等待远端模型响应。",
+    timer: null,
+    pollTimer: null,
+  };
+  job.timer = window.setInterval(() => {
+    if (state.activeAdminView === (scope === "suite" ? "suite-factory" : "factory") || state.activePromptGroup === (scope === "suite" ? "suiteFactory" : "factory")) renderPromptConfigEditor();
+  }, 1000);
+  job.pollTimer = window.setInterval(() => {
+    (scope === "suite" ? loadSuitePromptAssets() : loadPromptAssets()).catch(() => {});
+  }, 3000);
+  jobs.set(assetId, job);
+  const asset = factoryAssetList(scope).find((entry) => entry.id === assetId);
+  if (asset) {
+    asset.status = "generating";
+    asset.error = "";
+  }
+  renderPromptConfigEditor();
+}
+
+function finishFactoryGenerationJob(assetId, status, message, scope = "single") {
+  const jobs = factoryJobStore(scope);
+  const job = jobs.get(assetId);
+  if (!job) return;
+  if (job.timer) window.clearInterval(job.timer);
+  if (job.pollTimer) window.clearInterval(job.pollTimer);
+  job.status = status;
+  job.message = message;
+  job.finishedAt = Date.now();
+  jobs.set(assetId, job);
+  window.setTimeout(() => {
+    const latest = jobs.get(assetId);
+    if (latest?.finishedAt === job.finishedAt) {
+      jobs.delete(assetId);
+      renderPromptConfigEditor();
+    }
+  }, 2600);
+}
+
+function factoryGenerationJob(asset) {
+  if (!asset?.id) return null;
+  return factoryJobStore(factoryScopeForAsset(asset)).get(asset.id) || null;
+}
+
+function factoryProgressFromAsset(asset) {
+  const progress = asset?.request?.progress;
+  return progress && typeof progress === "object" ? progress : null;
+}
+
+function factoryCurrentStep(asset, job) {
+  const remoteStep = factoryProgressFromAsset(asset)?.step;
+  if (remoteStep) return remoteStep;
+  if (!job?.startedAt) return asset?.status === "generated" || asset?.status === "published" ? "done" : "prepare";
+  const seconds = Math.floor((Date.now() - job.startedAt) / 1000);
+  const index = Math.min(FACTORY_GENERATION_STEPS.length - 1, Math.floor(seconds / 8));
+  return FACTORY_GENERATION_STEPS[index].id;
+}
+
+function factoryElapsedText(job) {
+  if (!job?.startedAt) return "--";
+  const end = job.finishedAt || Date.now();
+  const seconds = Math.max(0, Math.floor((end - job.startedAt) / 1000));
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return minutes ? `${minutes}分${String(rest).padStart(2, "0")}秒` : `${rest}秒`;
+}
+
+function isFactoryStageStale(asset, job, thresholdMs = 300000) {
+  if (asset?.status !== "generating" && job?.status !== "running") return false;
+  const progress = factoryProgressFromAsset(asset);
+  const updatedAt = progress?.updatedAt ? new Date(progress.updatedAt).getTime() : job?.startedAt || 0;
+  if (!updatedAt || Number.isNaN(updatedAt)) return false;
+  return Date.now() - updatedAt > thresholdMs;
 }
 
 function renderSummary(summary = {}) {
@@ -417,10 +766,10 @@ function renderProviderTable(entries) {
 function renderProviderTableRow({ provider, providerIndex, model, modelIndex }) {
   const modelId = model?.id || "";
   const modelKind = normalizeModelKind(model?.modelKind);
-  const isDefault = modelId && modelId === (modelKind === "video" ? state.defaultVideoModelId : state.defaultImageModelId);
+  const isDefault = modelId && modelKind !== "text" && modelId === (modelKind === "video" ? state.defaultVideoModelId : state.defaultImageModelId);
   const isEnabled = provider.enabled !== false && model?.enabled !== false;
-  const canSetDefault = Boolean(modelId && isEnabled);
-  const defaultLabel = modelKind === "video" ? "默认视频" : "默认图片";
+  const canSetDefault = Boolean(modelId && isEnabled && modelKind !== "text");
+  const defaultLabel = modelKind === "text" ? "提示词模型" : modelKind === "video" ? "默认视频" : "默认图片";
   const defaultActiveLabel = modelKind === "video" ? "视频默认" : "图片默认";
   return `
     <tr class="${isDefault ? "default-provider-row" : ""}">
@@ -453,19 +802,24 @@ function renderProviderTableRow({ provider, providerIndex, model, modelIndex }) 
 }
 
 function normalizeModelKind(value) {
-  return value === "video" ? "video" : "image";
+  if (value === "video") return "video";
+  if (value === "text") return "text";
+  return "image";
 }
 
 function modelKindText(value) {
-  return normalizeModelKind(value) === "video" ? "视频模型" : "图片模型";
+  const kind = normalizeModelKind(value);
+  if (kind === "video") return "视频模型";
+  if (kind === "text") return "文本理解模型";
+  return "图片模型";
 }
 
 function providerTypeText(value) {
   return {
     aokapi_gemini: "AOKAPI / Gemini",
     muskapis_image: "Muskapis Image",
-    openai_image: "OpenAI Image Compatible"
-  }[value] || "OpenAI Image Compatible";
+    openai_image: "OpenAI Compatible"
+  }[value] || "OpenAI Compatible";
 }
 
 function defaultProviderBaseUrl(providerType) {
@@ -474,6 +828,18 @@ function defaultProviderBaseUrl(providerType) {
     muskapis_image: "https://api.muskapis.com/v1",
     openai_image: "https://api.openai.com/v1"
   }[providerType] || "https://api.openai.com/v1";
+}
+
+function isPromptFactoryCompatibleModelConfig(providerType, baseUrl, modelName) {
+  if (providerType !== "aokapi_gemini") return true;
+  const endpoint = `${baseUrl || ""} ${modelName || ""}`.toLowerCase();
+  return endpoint.includes("generatecontent") || endpoint.includes("gemini-2.5-flash-image") || endpoint.includes("gemini-3-pro-image");
+}
+
+function defaultModelNameForProvider(providerType, modelKind) {
+  if (normalizeModelKind(modelKind) === "text") return "gpt-5.5";
+  if (providerType === "muskapis_image") return "gpt-image-2";
+  return "";
 }
 
 function snapshotModelProviderState() {
@@ -508,7 +874,7 @@ function openProviderConfigModal(providerIndex = -1, modelIndex = -1) {
   els.providerTokenInput.placeholder = provider?.apiKeyConfigured
     ? `已配置：${provider.apiKeyMasked || "******"}`
     : "粘贴供应商 Token";
-  els.providerModelNameInput.value = model?.modelName || (providerType === "muskapis_image" ? "gpt-image-2" : "");
+  els.providerModelNameInput.value = model?.modelName || defaultModelNameForProvider(providerType, model?.modelKind || "image");
   els.providerModelKindInput.value = normalizeModelKind(model?.modelKind);
   els.providerModelPriorityInput.value = model?.priority || nextProviderPriority();
   els.providerEnabledInput.checked = provider?.enabled !== false;
@@ -532,6 +898,15 @@ function closeProviderConfigModal() {
   els.providerConfigModal.setAttribute("aria-hidden", "true");
 }
 
+function refreshProviderModalDefaults() {
+  const providerType = els.providerTypeInput.value || "muskapis_image";
+  const modelKind = normalizeModelKind(els.providerModelKindInput.value);
+  if (!els.providerBaseUrlInput.value.trim()) els.providerBaseUrlInput.value = defaultProviderBaseUrl(providerType);
+  if (!els.providerModelNameInput.value.trim() || ["gpt-image-2", "gpt-5.5"].includes(els.providerModelNameInput.value.trim())) {
+    els.providerModelNameInput.value = defaultModelNameForProvider(providerType, modelKind);
+  }
+}
+
 async function saveProviderFromModal() {
   const providerIndex = state.selectedProviderIndex;
   const modelIndex = state.selectedProviderModelIndex;
@@ -544,6 +919,10 @@ async function saveProviderFromModal() {
   const priority = Number(els.providerModelPriorityInput.value) || nextProviderPriority();
   if (!baseUrl || !modelName) {
     showToast("URL 和模型名不能为空", true);
+    return;
+  }
+  if (!isPromptFactoryCompatibleModelConfig(providerType, baseUrl, modelName)) {
+    showToast("AOKAPI / Gemini 需要填写 Gemini generateContent URL 和 Gemini 图片模型名", true);
     return;
   }
   if (!tokenValue && (!existingProvider || !existingProvider.apiKeyConfigured)) {
@@ -719,7 +1098,17 @@ function renderPromptGroups() {
   ).join("");
 }
 
+function renderPromptWorkspaceMode() {
+  if (!els.promptGroupList || !els.promptPanelTitle || !els.savePromptConfigBtn) return;
+  const directFactoryMode = state.activeAdminView === "factory" || state.activeAdminView === "suite-factory";
+  els.promptPanelTitle.textContent = state.activeAdminView === "suite-factory" ? "套图提示词工厂" : directFactoryMode ? "图片提示词工厂" : "提示词配置";
+  els.promptGroupList.hidden = directFactoryMode;
+  els.savePromptConfigBtn.hidden = directFactoryMode;
+  els.promptConfigEditor?.classList.toggle("factory-direct-mode", directFactoryMode);
+}
+
 function renderPromptConfigEditor() {
+  renderPromptWorkspaceMode();
   if (!state.promptConfig) {
     els.promptConfigEditor.innerHTML = `<div class="empty-copy"><strong>正在加载提示词配置</strong><span>请稍候。</span></div>`;
     return;
@@ -730,7 +1119,9 @@ function renderPromptConfigEditor() {
     suite: renderSuitePromptConfig,
     refinement: renderRefinementPromptConfig,
     reference: renderReferencePromptConfig,
-    probe: renderProbePromptConfig
+    probe: renderProbePromptConfig,
+    factory: renderPromptFactoryConfig,
+    suiteFactory: renderSuitePromptFactoryConfig
   };
   els.promptConfigEditor.innerHTML = (renderers[group] || renderers.single)(state.promptConfig);
 }
@@ -899,6 +1290,671 @@ function renderProbePromptConfig(config) {
       ].join("")
     )
   ].join("");
+}
+
+function renderPromptFactoryConfig(config) {
+  const activeAsset = state.promptAssets.find((asset) => asset.id === state.activePromptAssetId) || state.promptAssets[0] || null;
+  const counts = promptAssetCounts();
+  return `
+    <section class="prompt-factory-shell">
+      <div class="prompt-factory-create">
+        <h4>生成提示词素材</h4>
+        <label class="field admin-prompt-field">
+          <span>商品原图（可选）</span>
+          <input id="factoryProductImageInput" type="file" accept="image/*" />
+        </label>
+        <div class="prompt-factory-upload-preview">${renderFactoryImagePreview(state.factoryProductImage, "未上传商品原图")}</div>
+        <label class="field admin-prompt-field">
+          <span>参考图（可多选）</span>
+          <input id="factoryReferenceImagesInput" type="file" accept="image/*" multiple />
+        </label>
+        <div class="prompt-factory-reference-list">${renderFactoryReferenceImages()}</div>
+        <label class="field admin-prompt-field">
+          <span>生成模型</span>
+          <select id="factoryModelSelect">
+            ${state.factoryModelOptions.length ? state.factoryModelOptions.map((option) => `<option value="${escapeAttr(option.providerModelId)}">${escapeHtml(option.providerName)} / ${escapeHtml(option.modelName)} / ${escapeHtml(modelKindText(option.modelKind))}</option>`).join("") : `<option value="">请配置 Muskapis gpt-5.5 文本理解模型</option>`}
+          </select>
+        </label>
+        <button class="primary-button" id="generateFactoryAssetsBtn" type="button" ${state.factoryModelOptions.length ? "" : "disabled"}>生成提示词与验证图</button>
+      </div>
+      <div class="prompt-factory-library">
+        <div class="prompt-factory-toolbar">
+          ${renderFactoryStatusButton("", "全部", counts.all)}
+          ${renderFactoryStatusButton("draft", "草稿", counts.draft)}
+          ${renderFactoryStatusButton("generated", "待发布", counts.generated)}
+          ${renderFactoryStatusButton("failed", "失败", counts.failed)}
+          ${renderFactoryStatusButton("published", "已发布", counts.published)}
+        </div>
+        <div class="prompt-factory-workspace">
+          <div class="prompt-factory-asset-list" id="promptFactoryAssetList">${renderPromptFactoryAssetList()}</div>
+          <div class="prompt-factory-asset-detail" id="promptFactoryAssetDetail">${activeAsset ? renderPromptFactoryAssetDetail(activeAsset, config) : renderPromptFactoryEmptyDetail()}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function renderSuitePromptFactoryConfig(config) {
+  const activeAsset = state.suitePromptAssets.find((asset) => asset.id === state.activeSuitePromptAssetId) || state.suitePromptAssets[0] || null;
+  const counts = promptAssetCounts("suite");
+  return `
+    <section class="suite-prompt-factory-shell prompt-factory-shell">
+      <div class="prompt-factory-create">
+        <h4>生成套图提示词</h4>
+        <label class="field admin-prompt-field">
+          <span>套图名称</span>
+          <input id="suiteFactoryTitleInput" type="text" value="同款电商套图" placeholder="例如：A+ 同款套图" />
+        </label>
+        <label class="field admin-prompt-field">
+          <span>商品原图（可选）</span>
+          <input id="suiteFactoryProductImageInput" type="file" accept="image/*" />
+        </label>
+        <div class="prompt-factory-upload-preview">${renderFactoryImagePreview(state.suiteFactoryProductImage, "未上传商品原图")}</div>
+        <label class="field admin-prompt-field">
+          <span>套图参考图（多选）</span>
+          <input id="suiteFactoryReferenceImagesInput" type="file" accept="image/*" multiple />
+        </label>
+        <div class="suite-factory-reference-strip prompt-factory-reference-list">${renderSuiteFactoryReferenceImages()}</div>
+        <label class="field admin-prompt-field">
+          <span>生成模型</span>
+          <select id="suiteFactoryModelSelect">
+            ${state.factoryModelOptions.length ? state.factoryModelOptions.map((option) => `<option value="${escapeAttr(option.providerModelId)}">${escapeHtml(option.providerName)} / ${escapeHtml(option.modelName)} / ${escapeHtml(modelKindText(option.modelKind))}</option>`).join("") : `<option value="">请配置 Muskapis gpt-5.5 文本理解模型</option>`}
+          </select>
+        </label>
+        <button class="primary-button" id="generateSuiteFactoryAssetBtn" type="button" ${state.factoryModelOptions.length ? "" : "disabled"}>生成套图提示词与验证图</button>
+      </div>
+      <div class="prompt-factory-library">
+        <div class="prompt-factory-toolbar">
+          ${renderFactoryStatusButton("", "全部", counts.all, "suite")}
+          ${renderFactoryStatusButton("draft", "草稿", counts.draft, "suite")}
+          ${renderFactoryStatusButton("generated", "待发布", counts.generated, "suite")}
+          ${renderFactoryStatusButton("failed", "失败", counts.failed, "suite")}
+          ${renderFactoryStatusButton("published", "已发布", counts.published, "suite")}
+        </div>
+        <div class="prompt-factory-workspace">
+          <div class="prompt-factory-asset-list" id="suitePromptFactoryAssetList">${renderPromptFactoryAssetList("suite")}</div>
+          <div class="prompt-factory-asset-detail" id="suitePromptFactoryAssetDetail">${activeAsset ? renderSuitePromptFactoryAssetDetail(activeAsset, config) : renderSuitePromptFactoryEmptyDetail()}</div>
+        </div>
+      </div>
+    </section>
+  `;
+}
+
+function promptAssetCounts(scope = "single") {
+  return factoryAssetList(scope).reduce(
+    (counts, asset) => {
+      counts.all += 1;
+      counts[asset.status] = (counts[asset.status] || 0) + 1;
+      return counts;
+    },
+    { all: 0, draft: 0, generated: 0, failed: 0, published: 0 }
+  );
+}
+
+function renderFactoryStatusButton(status, label, count, scope = "single") {
+  const active = ((scope === "suite" ? state.suiteFactoryStatusFilter : state.factoryStatusFilter) || "") === status;
+  return `<button class="small-button ${active ? "primary" : ""}" type="button" data-factory-status="${escapeAttr(status)}" data-factory-scope="${escapeAttr(scope)}">${escapeHtml(label)} ${Number(count || 0)}</button>`;
+}
+
+function renderFactoryImagePreview(image, emptyText) {
+  if (!image?.url) return `<div class="empty-state compact-empty">${escapeHtml(emptyText)}</div>`;
+  return `<figure class="prompt-factory-thumb"><img src="${escapeAttr(image.url)}" alt="${escapeAttr(image.name || "图片")}" /><figcaption>${escapeHtml(image.name || "图片")}</figcaption></figure>`;
+}
+
+function renderFactoryReferenceImages() {
+  if (!state.factoryReferenceImages.length) return `<div class="empty-state compact-empty">未上传参考图</div>`;
+  return state.factoryReferenceImages.map((image) => renderFactoryImagePreview(image, "")).join("");
+}
+
+function renderSuiteFactoryReferenceImages() {
+  if (!state.suiteFactoryReferenceImages.length) return `<div class="empty-state compact-empty">未上传套图参考图</div>`;
+  return state.suiteFactoryReferenceImages.map((image) => renderFactoryImagePreview(image, "")).join("");
+}
+
+function factorySimilarityScoreText(asset) {
+  const value = String(asset?.comparison || "").trim();
+  if (!value) return asset?.status === "generated" || asset?.status === "published" ? "相似度待复核" : "等待生成";
+  try {
+    const parsed = JSON.parse(value);
+    const rawScore = parsed?.similarityScore ?? parsed?.similarity_score ?? parsed?.score ?? parsed?.similarity;
+    if (rawScore !== undefined && rawScore !== null && rawScore !== "") {
+      const score = Math.max(0, Math.min(100, Math.round(Number(rawScore))));
+      if (Number.isFinite(score)) return `相似度 ${score}分`;
+    }
+  } catch {}
+  const match = value.match(/(?:相似度|similarity|score)\D{0,12}(\d{1,3})/i);
+  if (match) return `相似度 ${Math.max(0, Math.min(100, Number(match[1])))}分`;
+  if (value.startsWith("相似度") && value.length <= 24) return value;
+  return asset?.status === "failed" ? asset.error || "生成失败" : "相似度待复核";
+}
+
+function renderPromptFactoryAssetList(scope = "single") {
+  const list = factoryAssetList(scope);
+  const activeId = scope === "suite" ? state.activeSuitePromptAssetId : state.activePromptAssetId;
+  if (!list.length) return `<div class="empty-state compact-empty">暂无提示词素材</div>`;
+  return list
+    .map((asset) => {
+      const job = factoryGenerationJob(asset);
+      const generating = asset.status === "generating" || job?.status === "running";
+      const progress = factoryProgressFromAsset(asset);
+      const step = FACTORY_GENERATION_STEPS.find((item) => item.id === factoryCurrentStep(asset, job)) || FACTORY_GENERATION_STEPS[0];
+      const summary = generating
+        ? `${progress?.label || step.label} · 已等待 ${factoryElapsedText(job)}`
+        : factorySimilarityScoreText(asset);
+      return `
+        <button class="prompt-factory-asset-row ${asset.id === activeId ? "active" : ""} ${generating ? "generating" : ""}" type="button" data-factory-asset-id="${escapeAttr(asset.id)}" data-factory-scope="${escapeAttr(scope)}">
+          <strong>${escapeHtml(asset.title || "未命名素材")}</strong>
+          <span class="status-chip ${promptAssetStatusClass(asset.status)}">${escapeHtml(promptAssetStatusLabel(asset.status))}</span>
+          ${generating ? `<span class="prompt-factory-mini-progress"><span style="width:${escapeAttr(String(factoryStepPercent(step.id)))}%"></span></span>` : ""}
+          <small class="prompt-factory-score">${escapeHtml(summary)}</small>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function factoryStepPercent(stepId) {
+  const index = FACTORY_GENERATION_STEPS.findIndex((step) => step.id === stepId);
+  if (stepId === "done") return 100;
+  return Math.max(8, Math.round(((index < 0 ? 0 : index) + 1) / FACTORY_GENERATION_STEPS.length * 100));
+}
+
+function renderPromptFactoryEmptyDetail() {
+  return `<div class="empty-state"><strong>选择或创建提示词素材</strong><span>上传参考图后会在这里审核提示词、验证图和发布目标。</span></div>`;
+}
+
+function renderSuitePromptFactoryEmptyDetail() {
+  return `<div class="empty-state"><strong>选择或创建套图提示词素材</strong><span>上传多张参考图后会在这里审核整套提示词、图位和发布状态。</span></div>`;
+}
+
+function renderPromptFactoryAssetDetail(asset, config) {
+  const platforms = config.single?.matrix?.platforms || [];
+  const selectedPlatform = platforms.find((platform) => platform.id === asset.targetPlatformId) || platforms[0] || { categories: [] };
+  const selectedCategory = (selectedPlatform.categories || []).find((category) => category.id === asset.targetCategoryId) || selectedPlatform.categories?.[0] || { scenarios: [] };
+  const publishMode = asset.publishMode || "append";
+  const progressPanel = renderFactoryGenerationProgress(asset);
+  return `
+    <div class="prompt-factory-detail-head">
+      <label class="field admin-prompt-field">
+        <span>素材标题</span>
+        <input type="text" data-factory-field="title" value="${escapeAttr(asset.title || "")}" />
+      </label>
+      <span class="status-chip ${promptAssetStatusClass(asset.status)}">${escapeHtml(promptAssetStatusLabel(asset.status))}</span>
+    </div>
+    ${progressPanel}
+    <section class="prompt-factory-section">
+      <h4>参考分析</h4>
+      <textarea rows="4" data-factory-field="referenceAnalysis">${escapeHtml(asset.referenceAnalysis || "")}</textarea>
+    </section>
+    <section class="prompt-factory-section">
+      <h4>中文 Prompt</h4>
+      <textarea rows="7" data-factory-field="chinesePrompt">${escapeHtml(asset.chinesePrompt || "")}</textarea>
+    </section>
+    <section class="prompt-factory-section">
+      <h4>English Prompt</h4>
+      <textarea rows="7" data-factory-field="englishPrompt">${escapeHtml(asset.englishPrompt || "")}</textarea>
+    </section>
+    <div class="prompt-factory-preview-grid">
+      ${renderFactoryValidationImage("Image A", asset.imageAUrl, asset, "imageA")}
+      ${renderFactoryValidationImage("Image B", asset.imageBUrl, asset, "imageB")}
+    </div>
+    <section class="prompt-factory-section">
+      <h4>相似分数</h4>
+      <div class="prompt-factory-score-card">${escapeHtml(factorySimilarityScoreText(asset))}</div>
+      <textarea rows="2" data-factory-field="comparison">${escapeHtml(asset.comparison || asset.error || "")}</textarea>
+    </section>
+    <section class="prompt-factory-publish-row">
+      <label class="field compact-field"><span>平台</span><select data-factory-field="targetPlatformId">${platforms.map((platform) => `<option value="${escapeAttr(platform.id)}" ${platform.id === selectedPlatform.id ? "selected" : ""}>${escapeHtml(platform.label || platform.id)}</option>`).join("")}</select></label>
+      <label class="field compact-field"><span>品类</span><select data-factory-field="targetCategoryId">${(selectedPlatform.categories || []).map((category) => `<option value="${escapeAttr(category.id)}" ${category.id === selectedCategory.id ? "selected" : ""}>${escapeHtml(category.label || category.id)}</option>`).join("")}</select></label>
+      <label class="field compact-field"><span>方式</span><select data-factory-field="publishMode"><option value="append" ${publishMode === "append" ? "selected" : ""}>追加新场景</option><option value="overwrite" ${publishMode === "overwrite" ? "selected" : ""}>覆盖已有场景</option></select></label>
+      <label class="field compact-field"><span>${publishMode === "overwrite" ? "覆盖场景" : "新场景名"}</span>${publishMode === "overwrite" ? `<select data-factory-field="targetScenarioId">${(selectedCategory.scenarios || []).map((scenario) => `<option value="${escapeAttr(scenario.id)}" ${scenario.id === asset.targetScenarioId ? "selected" : ""}>${escapeHtml(scenario.title || scenario.id)}</option>`).join("")}</select>` : `<input type="text" data-factory-field="targetScenarioId" value="${escapeAttr(asset.targetScenarioId || "")}" aria-label="留空则按标题生成" />`}</label>
+    </section>
+    <div class="admin-action-row prompt-factory-actions">
+      <button class="small-button" type="button" data-factory-action="save" data-asset-id="${escapeAttr(asset.id)}">保存草稿</button>
+      <button class="small-button" type="button" data-factory-action="retry" data-asset-id="${escapeAttr(asset.id)}">重试当前素材</button>
+      <button class="small-button danger prompt-factory-delete-button" type="button" data-factory-action="delete" data-asset-id="${escapeAttr(asset.id)}">删除</button>
+      <button class="primary-button" type="button" data-factory-action="publish" data-asset-id="${escapeAttr(asset.id)}">发布到 C 端</button>
+    </div>
+  `;
+}
+
+function renderSuitePromptFactoryAssetDetail(asset, config) {
+  const suitePresets = config.suite?.presets || [];
+  const publishMode = asset.publishMode || "append";
+  const selectedPresetId = asset.publishedTemplateId || suitePresets[0]?.id || "";
+  return `
+    <div class="prompt-factory-detail-head">
+      <label class="field admin-prompt-field">
+        <span>套图标题</span>
+        <input type="text" data-factory-field="title" value="${escapeAttr(asset.title || "")}" />
+      </label>
+      <span class="status-chip ${promptAssetStatusClass(asset.status)}">${escapeHtml(promptAssetStatusLabel(asset.status))}</span>
+    </div>
+    ${renderFactoryGenerationProgress(asset)}
+    <section class="prompt-factory-section">
+      <h4>参考分析</h4>
+      <textarea rows="4" data-factory-field="referenceAnalysis">${escapeHtml(asset.referenceAnalysis || "")}</textarea>
+    </section>
+    <section class="prompt-factory-section">
+      <h4>套图中文总 Prompt</h4>
+      <textarea rows="7" data-factory-field="chinesePrompt">${escapeHtml(asset.chinesePrompt || "")}</textarea>
+    </section>
+    <section class="prompt-factory-section">
+      <h4>Suite English Prompt</h4>
+      <textarea rows="6" data-factory-field="englishPrompt">${escapeHtml(asset.englishPrompt || "")}</textarea>
+    </section>
+    <section class="prompt-factory-section">
+      <h4>套图图位提示词</h4>
+      <div class="suite-factory-shot-list">${renderSuiteFactoryShotList(asset)}</div>
+    </section>
+    <section class="prompt-factory-section">
+      <h4>生成概况</h4>
+      <div class="prompt-factory-score-card">${escapeHtml(factorySimilarityScoreText(asset))}</div>
+      <textarea rows="2" data-factory-field="comparison">${escapeHtml(asset.comparison || asset.error || "")}</textarea>
+    </section>
+    <section class="prompt-factory-publish-row suite-factory-publish-row">
+      <label class="field compact-field"><span>方式</span><select data-factory-field="publishMode"><option value="append" ${publishMode === "append" ? "selected" : ""}>追加新套图</option><option value="overwrite" ${publishMode === "overwrite" ? "selected" : ""}>覆盖已有套图</option></select></label>
+      ${publishMode === "overwrite" ? `<label class="field compact-field"><span>覆盖套图</span><select data-factory-field="targetPresetId">${suitePresets.map((preset) => `<option value="${escapeAttr(preset.id)}" ${preset.id === selectedPresetId ? "selected" : ""}>${escapeHtml(preset.title || preset.id)}</option>`).join("")}</select></label>` : `<div class="suite-factory-publish-note"><strong>发布整套图到 C 端</strong><span>会在 C 端“套图类型”里新增一个同名预设。</span></div>`}
+    </section>
+    <div class="admin-action-row prompt-factory-actions">
+      <button class="small-button" type="button" data-suite-factory-action="save" data-asset-id="${escapeAttr(asset.id)}">保存草稿</button>
+      <button class="small-button" type="button" data-suite-factory-action="retry" data-asset-id="${escapeAttr(asset.id)}">重试当前素材</button>
+      <button class="small-button danger prompt-factory-delete-button" type="button" data-suite-factory-action="delete" data-asset-id="${escapeAttr(asset.id)}">删除</button>
+      <button class="primary-button" type="button" data-suite-factory-action="publish" data-asset-id="${escapeAttr(asset.id)}">发布整套图到 C 端</button>
+    </div>
+  `;
+}
+
+function renderSuiteFactoryShotList(asset) {
+  const shots = Array.isArray(asset.suiteShots) && asset.suiteShots.length ? asset.suiteShots : [];
+  if (!shots.length) return `<div class="empty-state compact-empty">等待模型生成套图图位</div>`;
+  return shots.map((shot, index) => `
+    <article class="suite-factory-shot-card" data-suite-shot-index="${index}">
+      <input type="hidden" data-suite-shot-field="id" value="${escapeAttr(shot.id || `shot-${index + 1}`)}" />
+      <div class="admin-prompt-grid two">
+        <label class="field admin-prompt-field"><span>图位名称</span><input type="text" data-suite-shot-field="name" value="${escapeAttr(shot.name || `0${index + 1} 套图图位`)}" /></label>
+        <label class="field admin-prompt-field"><span>输出尺寸</span><input type="text" data-suite-shot-field="size" value="${escapeAttr(shot.size || "1024x1024")}" /></label>
+      </div>
+      <label class="field admin-prompt-field"><span>图位说明</span><input type="text" data-suite-shot-field="description" value="${escapeAttr(shot.description || "")}" /></label>
+      <label class="field admin-prompt-field"><span>中文图位 Prompt</span><textarea rows="5" data-suite-shot-field="chinesePrompt">${escapeHtml(shot.chinesePrompt || "")}</textarea></label>
+      <label class="field admin-prompt-field"><span>English Shot Prompt</span><textarea rows="4" data-suite-shot-field="englishPrompt">${escapeHtml(shot.englishPrompt || "")}</textarea></label>
+      <div class="suite-factory-shot-images">
+        <div class="suite-factory-shot-image">
+          <strong>Prompt-only 图</strong>
+          ${renderSuiteShotImagePreview("Prompt-only 图", shot.promptOnlyImageUrl || "", `图位${index + 1}-Prompt-only`, "等待生成后展示提示词验证图")}
+        </div>
+        <div class="suite-factory-shot-image">
+          <strong>参考辅助图</strong>
+          ${renderSuiteShotImagePreview("参考辅助图", shot.referenceImageUrl || "", `图位${index + 1}-参考辅助图`, "点击后使用参考图+原图生成")}
+          <button class="small-button" type="button" data-suite-shot-action="reference-image" data-asset-id="${escapeAttr(asset.id)}" data-shot-id="${escapeAttr(shot.id || `shot-${index + 1}`)}">生成参考辅助图</button>
+        </div>
+      </div>
+      ${shot.imageError ? `<div class="empty-state compact-empty danger-empty">${escapeHtml(shot.imageError)}</div>` : ""}
+    </article>
+  `).join("");
+}
+
+function renderSuiteShotImagePreview(label, url, name, emptyText) {
+  if (!url) return `<div class="prompt-factory-validation-state suite-shot-empty-image"><span></span><strong>${escapeHtml(emptyText)}</strong></div>`;
+  return renderFactoryValidationImage(label, url, { title: name, status: "generated" }, "suiteShot");
+}
+
+function renderFactoryGenerationProgress(asset) {
+  const job = factoryGenerationJob(asset);
+  const progress = factoryProgressFromAsset(asset);
+  const shouldShow = asset.status === "generating" || job || progress;
+  if (!shouldShow) return "";
+  const currentStepId = factoryCurrentStep(asset, job);
+  const currentIndex = FACTORY_GENERATION_STEPS.findIndex((step) => step.id === currentStepId);
+  const currentStep = FACTORY_GENERATION_STEPS[currentIndex >= 0 ? currentIndex : 0];
+  const done = asset.status === "generated" || asset.status === "published" || job?.status === "success";
+  const failed = asset.status === "failed" || job?.status === "failed";
+  const stale = isFactoryStageStale(asset, job);
+  const percent = done ? 100 : factoryStepPercent(currentStep.id);
+  const modelText = progress?.textModel || job?.modelLabel || selectedFactoryModelLabel(asset.providerModelId);
+  const imageText = progress?.imageModel ? `验证图：${progress.imageModel}` : "验证图：按图片模型配置自动执行";
+  const message = failed
+    ? job?.message || asset.error || "生成失败，请检查模型配置或远端接口返回。"
+    : stale
+      ? "当前阶段可能卡住，远端图片接口长时间没有返回。可以稍等片刻，或点击“重试当前素材”。"
+    : done
+      ? job?.message || "生成完成，可以审核提示词和验证图。"
+      : progress?.detail || currentStep.detail;
+  return `
+    <section class="prompt-factory-progress ${failed || stale ? "failed" : done ? "done" : "running"}" aria-live="polite">
+      <div class="prompt-factory-progress-head">
+        <div>
+          <strong>${escapeHtml(done ? "生成完成" : failed ? "生成失败" : stale ? "可能卡住" : progress?.label || currentStep.label)}</strong>
+          <span>${escapeHtml(message)}</span>
+        </div>
+        <div class="prompt-factory-runtime">
+          <span>${escapeHtml(job ? `已等待 ${factoryElapsedText(job)}` : formatTime(progress?.updatedAt))}</span>
+          <span>${escapeHtml(`提示词：${modelText}`)}</span>
+          <span>${escapeHtml(imageText)}</span>
+        </div>
+      </div>
+      <div class="prompt-factory-progress-bar"><span style="width:${escapeAttr(String(percent))}%"></span></div>
+      <div class="prompt-factory-step-list">
+        ${FACTORY_GENERATION_STEPS.map((step, index) => {
+          const complete = done || index < currentIndex;
+          const active = !done && !failed && step.id === currentStep.id;
+          return `
+            <div class="prompt-factory-step ${complete ? "complete" : ""} ${active ? "active" : ""} ${failed && step.id === currentStep.id ? "failed" : ""}">
+              <span></span>
+              <strong>${escapeHtml(step.label)}</strong>
+              <small>${escapeHtml(step.detail)}</small>
+            </div>
+          `;
+        }).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function renderFactoryValidationImage(label, url, asset = null, slot = "") {
+  const imageBroken = isLikelyTruncatedFactoryImage(url);
+  const status = renderFactoryValidationStatus(asset, slot, Boolean(url));
+  const safeTitle = `${asset?.title || "提示词素材"}-${label}`;
+  return `
+    <figure class="prompt-factory-validation ${imageBroken ? "failed" : status.className}">
+      <div class="prompt-factory-validation-head">
+        <strong>${escapeHtml(label)}</strong>
+        <span>${escapeHtml(imageBroken ? "数据不完整" : status.badge)}</span>
+      </div>
+      ${url && !imageBroken ? `
+        <div class="prompt-factory-preview-frame">
+          <button class="prompt-factory-preview-button" type="button" data-factory-preview-image="${escapeAttr(url)}" data-factory-preview-title="${escapeAttr(label)}">
+            <img src="${escapeAttr(url)}" alt="${escapeAttr(label)}" />
+            <span>点击全屏查看</span>
+          </button>
+          <div class="prompt-factory-image-actions">
+            <button class="small-button" type="button" data-factory-preview-image="${escapeAttr(url)}" data-factory-preview-title="${escapeAttr(label)}">全屏查看</button>
+            <button class="small-button prompt-factory-download-button" type="button" data-factory-download-image="${escapeAttr(url)}" data-factory-download-name="${escapeAttr(safeTitle)}">下载图片</button>
+          </div>
+        </div>
+      ` : `<div class="prompt-factory-validation-state"><span></span><strong>${escapeHtml(imageBroken ? "图片数据不完整" : status.title)}</strong><small>${escapeHtml(imageBroken ? "这张历史图的 base64 数据已被截断，浏览器只能显示顶部残片。请点击重试当前素材重新生成。" : status.detail)}</small></div>`}
+    </figure>
+  `;
+}
+
+function isLikelyTruncatedFactoryImage(url) {
+  const value = String(url || "");
+  if (!value.startsWith("data:image/")) return false;
+  const commaIndex = value.indexOf(",");
+  const data = commaIndex >= 0 ? value.slice(commaIndex + 1) : "";
+  if (!data) return false;
+  if (data.length % 4 !== 0) return true;
+  return value.length === 180000 || value.endsWith("[base64 图片数据已截断") || value.includes("base64 图片数据已截断");
+}
+
+function renderFactoryValidationStatus(asset, slot, hasImage) {
+  if (hasImage) {
+    return { className: "ready", badge: "已生成", title: "验证图已生成", detail: "可以检查产品一致性和版式贴合度。" };
+  }
+  const job = factoryGenerationJob(asset);
+  const currentStep = factoryCurrentStep(asset, job);
+  const failed = asset?.status === "failed" || job?.status === "failed";
+  const stale = isFactoryStageStale(asset, job);
+  if (stale) {
+    return { className: "failed", badge: "可能卡住", title: `${slot === "imageB" ? "Image B" : "Image A"} 生成等待过久`, detail: "远端图片接口长时间没有返回，可稍等或点击重试当前素材。" };
+  }
+  if (failed) {
+    return { className: "failed", badge: "失败", title: "验证图未生成", detail: asset?.error || job?.message || "远端请求失败，请重试当前素材。" };
+  }
+  const generating = asset?.status === "generating" || job?.status === "running";
+  if (generating && slot === "imageA") {
+    if (currentStep === "imageA") {
+      return { className: "generating", badge: "生成中", title: "正在生成参考辅助图", detail: "使用商品原图和参考图生成 Image A。" };
+    }
+    if (["imageB", "compare"].includes(currentStep)) {
+      return { className: "waiting", badge: "处理中", title: "Image A 已提交", detail: "远端正在返回或进入下一步验证。" };
+    }
+  }
+  if (generating && slot === "imageB") {
+    if (currentStep === "imageB") {
+      return { className: "generating", badge: "生成中", title: "正在生成 Prompt-only 验证图", detail: "只使用商品原图和生成 Prompt，验证是否可下发复用。" };
+    }
+    if (currentStep === "compare") {
+      return { className: "waiting", badge: "对比中", title: "等待对比验证", detail: "Image B 已提交，正在进入对比结论阶段。" };
+    }
+  }
+  if (generating) {
+    return { className: "queued", badge: "排队", title: "等待验证图生成", detail: "提示词分析完成后会自动进入图片验证。" };
+  }
+  return { className: "empty", badge: "未生成", title: "等待验证图生成", detail: "点击生成后这里会显示 Image A / Image B 的实时状态。" };
+}
+
+function promptAssetStatusLabel(status) {
+  return { draft: "草稿", generating: "生成中", generated: "待发布", published: "已发布", failed: "失败" }[status] || "草稿";
+}
+
+function promptAssetStatusClass(status) {
+  return { generated: "ready", published: "ready", failed: "danger", generating: "neutral", draft: "neutral" }[status] || "neutral";
+}
+
+function bindPromptFactoryEvents() {
+  els.promptConfigEditor.addEventListener("click", handlePromptFactoryClick);
+  els.promptConfigEditor.addEventListener("change", handlePromptFactoryChange);
+}
+
+async function handlePromptFactoryClick(event) {
+  const downloadButton = event.target.closest("[data-factory-download-image]");
+  if (downloadButton) {
+    downloadFactoryImage(downloadButton.dataset.factoryDownloadImage || "", downloadButton.dataset.factoryDownloadName || "factory-image");
+    return;
+  }
+
+  const previewButton = event.target.closest("[data-factory-preview-image]");
+  if (previewButton) {
+    openFactoryImagePreview(previewButton.dataset.factoryPreviewImage || "", previewButton.dataset.factoryPreviewTitle || "验证图预览");
+    return;
+  }
+
+  const statusButton = event.target.closest("[data-factory-status]");
+  if (statusButton) {
+    const scope = statusButton.dataset.factoryScope === "suite" ? "suite" : "single";
+    if (scope === "suite") {
+      state.suiteFactoryStatusFilter = statusButton.dataset.factoryStatus || "";
+      await loadSuitePromptAssets();
+    } else {
+      state.factoryStatusFilter = statusButton.dataset.factoryStatus || "";
+      await loadPromptAssets();
+    }
+    return;
+  }
+
+  const assetButton = event.target.closest("[data-factory-asset-id]");
+  if (assetButton) {
+    if (assetButton.dataset.factoryScope === "suite") state.activeSuitePromptAssetId = assetButton.dataset.factoryAssetId;
+    else state.activePromptAssetId = assetButton.dataset.factoryAssetId;
+    renderPromptConfigEditor();
+    return;
+  }
+
+  const suiteGenerateButton = event.target.closest("#generateSuiteFactoryAssetBtn");
+  if (suiteGenerateButton) {
+    const createdAssets = await createSuitePromptAsset();
+    await runFactoryBatchGeneration(suiteGenerateButton, createdAssets, "suite");
+    return;
+  }
+
+  const generateButton = event.target.closest("#generateFactoryAssetsBtn");
+  if (generateButton) {
+    const createdAssets = await createPromptAssets();
+    await runFactoryBatchGeneration(generateButton, createdAssets);
+    return;
+  }
+
+  const suiteActionButton = event.target.closest("[data-suite-factory-action]");
+  if (suiteActionButton) {
+    const assetId = suiteActionButton.dataset.assetId;
+    if (suiteActionButton.dataset.suiteFactoryAction === "save") await savePromptAsset(assetId, "suite");
+    if (suiteActionButton.dataset.suiteFactoryAction === "retry") await generatePromptAsset(assetId, suiteActionButton, "suite");
+    if (suiteActionButton.dataset.suiteFactoryAction === "delete") await deletePromptAsset(assetId, suiteActionButton, "suite");
+    if (suiteActionButton.dataset.suiteFactoryAction === "publish") await publishSuitePromptAsset(assetId, suiteActionButton);
+    return;
+  }
+
+  const suiteShotButton = event.target.closest("[data-suite-shot-action]");
+  if (suiteShotButton) {
+    const assetId = suiteShotButton.dataset.assetId;
+    const shotId = suiteShotButton.dataset.shotId;
+    if (suiteShotButton.dataset.suiteShotAction === "reference-image") await generateSuiteShotReferenceImage(assetId, shotId, suiteShotButton);
+    return;
+  }
+
+  const actionButton = event.target.closest("[data-factory-action]");
+  if (!actionButton) return;
+  const assetId = actionButton.dataset.assetId;
+  if (actionButton.dataset.factoryAction === "save") await savePromptAsset(assetId);
+  if (actionButton.dataset.factoryAction === "retry") await generatePromptAsset(assetId, actionButton);
+  if (actionButton.dataset.factoryAction === "delete") await deletePromptAsset(assetId, actionButton);
+  if (actionButton.dataset.factoryAction === "publish") await publishPromptAsset(assetId, actionButton);
+}
+
+function openFactoryImagePreview(url, title = "验证图预览") {
+  if (!url || !els.factoryImagePreviewModal || !els.factoryImagePreviewImg) return;
+  els.factoryImagePreviewTitle.textContent = title;
+  els.factoryImagePreviewImg.src = url;
+  els.factoryImagePreviewImg.alt = title;
+  els.factoryImagePreviewModal.classList.add("active");
+  els.factoryImagePreviewModal.setAttribute("aria-hidden", "false");
+}
+
+function closeFactoryImagePreview() {
+  if (!els.factoryImagePreviewModal || !els.factoryImagePreviewImg) return;
+  els.factoryImagePreviewModal.classList.remove("active");
+  els.factoryImagePreviewModal.setAttribute("aria-hidden", "true");
+  els.factoryImagePreviewImg.removeAttribute("src");
+}
+
+function downloadFactoryImage(url, name = "factory-image") {
+  if (!url) return;
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = factoryImageDownloadName(name, url);
+  anchor.rel = "noopener";
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+}
+
+function factoryImageDownloadName(name, url) {
+  const safeBase = String(name || "factory-image")
+    .trim()
+    .replace(/[\\/:*?"<>|]+/g, "-")
+    .replace(/\s+/g, "-")
+    .slice(0, 80) || "factory-image";
+  const mimeMatch = String(url || "").match(/^data:image\/([^;,]+)/i);
+  const ext = mimeMatch ? (mimeMatch[1].toLowerCase() === "jpeg" ? "jpg" : mimeMatch[1].toLowerCase()) : "png";
+  return `${safeBase}.${ext}`;
+}
+
+async function handlePromptFactoryChange(event) {
+  if (event.target.id === "suiteFactoryProductImageInput") {
+    const images = await readFactoryImageFiles(event.target.files, 1);
+    state.suiteFactoryProductImage = images[0] || null;
+    renderPromptConfigEditor();
+    return;
+  }
+
+  if (event.target.id === "suiteFactoryReferenceImagesInput") {
+    state.suiteFactoryReferenceImages = await readFactoryImageFiles(event.target.files, 20);
+    renderPromptConfigEditor();
+    return;
+  }
+
+  if (event.target.id === "factoryProductImageInput") {
+    const images = await readFactoryImageFiles(event.target.files, 1);
+    state.factoryProductImage = images[0] || null;
+    renderPromptConfigEditor();
+    return;
+  }
+
+  if (event.target.id === "factoryReferenceImagesInput") {
+    state.factoryReferenceImages = await readFactoryImageFiles(event.target.files, 20);
+    renderPromptConfigEditor();
+    return;
+  }
+
+  if (
+    event.target.dataset.factoryField === "targetPlatformId" ||
+    event.target.dataset.factoryField === "targetCategoryId" ||
+    event.target.dataset.factoryField === "publishMode" ||
+    event.target.dataset.factoryField === "targetPresetId"
+  ) {
+    const suiteMode = state.activeAdminView === "suite-factory" || state.activePromptGroup === "suiteFactory";
+    const active = suiteMode
+      ? state.suitePromptAssets.find((asset) => asset.id === state.activeSuitePromptAssetId)
+      : state.promptAssets.find((asset) => asset.id === state.activePromptAssetId);
+    if (!active) return;
+    if (event.target.dataset.factoryField === "targetPlatformId") {
+      active.targetPlatformId = event.target.value;
+      active.targetCategoryId = "";
+      active.targetScenarioId = "";
+    }
+    if (event.target.dataset.factoryField === "targetCategoryId") {
+      active.targetCategoryId = event.target.value;
+      active.targetScenarioId = "";
+    }
+    if (event.target.dataset.factoryField === "publishMode") active.publishMode = event.target.value;
+    if (event.target.dataset.factoryField === "targetPresetId") active.publishedTemplateId = event.target.value;
+    renderPromptConfigEditor();
+  }
+}
+
+async function generateSuiteShotReferenceImage(assetId, shotId, button = null) {
+  if (!assetId || !shotId) return;
+  setBusy(button, "生成中", true);
+  try {
+    await savePromptAsset(assetId, "suite");
+    const payload = await adminFetch(`/prompt-assets/${encodeURIComponent(assetId)}/suite-shots/${encodeURIComponent(shotId)}/reference-image`, {
+      method: "POST",
+      body: JSON.stringify({})
+    });
+    replacePromptAsset(payload.asset, "suite");
+    renderPromptConfigEditor();
+    showToast("参考辅助图已生成");
+  } catch (error) {
+    showToast(error.message, true);
+  } finally {
+    setBusy(button, "生成参考辅助图", false);
+  }
+}
+
+async function readFactoryImageFiles(fileList, limit) {
+  const files = Array.from(fileList || [])
+    .filter((file) => file.type.startsWith("image/"))
+    .slice(0, limit);
+  const images = [];
+  for (const file of files) {
+    images.push(await fileToFactoryImage(file));
+  }
+  return images;
+}
+
+function fileToFactoryImage(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      resolve({ name: file.name || "图片", size: "", url: String(reader.result || "") });
+    };
+    reader.onerror = () => reject(reader.error || new Error("图片读取失败"));
+    reader.readAsDataURL(file);
+  });
+}
+
+async function runFactoryBatchGeneration(button, assets = state.promptAssets, scope = "single") {
+  const pendingAssets = assets.filter((asset) => asset.status === "draft");
+  if (!pendingAssets.length) return;
+  setBusy(button, "批量生成中", true);
+  try {
+    for (const asset of pendingAssets) {
+      await generatePromptAsset(asset.id, null, scope);
+    }
+  } finally {
+    setBusy(button, scope === "suite" ? "生成套图提示词与验证图" : "生成提示词与验证图", false);
+  }
 }
 
 function promptSection(title, body) {

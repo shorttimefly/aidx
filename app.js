@@ -589,7 +589,14 @@ function mergePromptConfig(defaultValue, overrideValue) {
           ? overrideValue.filter((item) => item && typeof item === "object").map((item) => [item.id, item])
           : []
       );
-      return defaultValue.map((item) => mergePromptConfig(item, overrideById.get(item.id)));
+      const merged = defaultValue.map((item) => mergePromptConfig(item, overrideById.get(item.id)));
+      const defaultIds = new Set(defaultValue.map((item) => item.id));
+      if (Array.isArray(overrideValue)) {
+        overrideValue.forEach((item) => {
+          if (item && typeof item === "object" && item.id && !defaultIds.has(item.id)) merged.push(item);
+        });
+      }
+      return merged;
     }
     return Array.isArray(overrideValue) && overrideValue.length === defaultValue.length ? overrideValue : defaultValue;
   }

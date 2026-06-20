@@ -7,6 +7,7 @@ from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 import base64
 import binascii
+import calendar
 import copy
 import errno
 import hashlib
@@ -14,6 +15,7 @@ import hmac
 import json
 import os
 from pathlib import Path
+import re
 import secrets
 import shutil
 import socket
@@ -54,8 +56,9 @@ DEFAULT_PROVIDER_BASE_URLS = {
 }
 MODEL_KIND_IMAGE = "image"
 MODEL_KIND_VIDEO = "video"
-VALID_MODEL_KINDS = {MODEL_KIND_IMAGE, MODEL_KIND_VIDEO}
-UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "120"))
+MODEL_KIND_TEXT = "text"
+VALID_MODEL_KINDS = {MODEL_KIND_IMAGE, MODEL_KIND_VIDEO, MODEL_KIND_TEXT}
+UPSTREAM_TIMEOUT_SECONDS = float(os.environ.get("UPSTREAM_TIMEOUT_SECONDS", "300"))
 UPSTREAM_MAX_ATTEMPTS = max(1, int(os.environ.get("UPSTREAM_MAX_ATTEMPTS", "2")))
 UPSTREAM_RETRY_DELAY_SECONDS = max(0.0, float(os.environ.get("UPSTREAM_RETRY_DELAY_SECONDS", "1")))
 PROMPT_CONFIG_KEY = "prompt_config_json"
@@ -63,6 +66,32 @@ DEFAULT_IMAGE_MODEL_KEY = "default_image_model_id"
 DEFAULT_VIDEO_MODEL_KEY = "default_video_model_id"
 PROMPT_CONFIG_PATH = ROOT / "prompt-config-defaults.json"
 PROMPT_TEXT_LIMIT = 20_000
+PROMPT_ASSET_STATUS_DRAFT = "draft"
+PROMPT_ASSET_STATUS_GENERATING = "generating"
+PROMPT_ASSET_STATUS_GENERATED = "generated"
+PROMPT_ASSET_STATUS_PUBLISHED = "published"
+PROMPT_ASSET_STATUS_FAILED = "failed"
+VALID_PROMPT_ASSET_STATUSES = {
+    PROMPT_ASSET_STATUS_DRAFT,
+    PROMPT_ASSET_STATUS_GENERATING,
+    PROMPT_ASSET_STATUS_GENERATED,
+    PROMPT_ASSET_STATUS_PUBLISHED,
+    PROMPT_ASSET_STATUS_FAILED,
+}
+VALID_PROMPT_ASSET_PUBLISH_MODES = {"append", "overwrite"}
+PROMPT_ASSET_KIND_SINGLE = "single"
+PROMPT_ASSET_KIND_SUITE = "suite"
+VALID_PROMPT_ASSET_KINDS = {PROMPT_ASSET_KIND_SINGLE, PROMPT_ASSET_KIND_SUITE}
+PROMPT_ASSET_TEXT_LIMIT = 20_000
+PROMPT_ASSET_JSON_LIMIT = 180_000
+PROMPT_ASSET_IMAGE_URL_LIMIT = 2_400_000
+IN_IMAGE_COPY_LANGUAGE_RULE_ZH = "图片中的所有可见文案必须使用英文，不要生成中文或其他语言文字；如果参考图里有中文文案，请翻译为简短、自然、适合电商图片的英文。"
+IN_IMAGE_COPY_LANGUAGE_RULE_EN = "All visible in-image copy must be in English. Do not render Chinese or any other language; translate any Chinese reference copy into short, natural ecommerce English."
+IN_IMAGE_COPY_LANGUAGE_NEEDLES = (
+    "图片中的所有可见文案",
+    "All visible in-image copy",
+    "Use concise English text inside generated images",
+)
 LOCKED_PROMPT_CONFIG_KEYS = {"id", "url"}
 USER_ROLE = "user"
 ADMIN_ROLE = "admin"
@@ -298,6 +327,16 @@ SINGLE_PLATFORM_SCENES = {
 
 def now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def parse_iso_seconds(value: str) -> int:
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    try:
+        return int(calendar.timegm(time.strptime(text, "%Y-%m-%dT%H:%M:%SZ")))
+    except ValueError:
+        return 0
 
 
 def make_id(prefix: str) -> str:
@@ -570,11 +609,40 @@ def init_db() -> None:
               created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS prompt_assets (
+              id TEXT PRIMARY KEY,
+              asset_kind TEXT NOT NULL DEFAULT 'single',
+              title TEXT NOT NULL DEFAULT '',
+              status TEXT NOT NULL DEFAULT 'draft',
+              provider_model_id TEXT NOT NULL DEFAULT '',
+              reference_images_json TEXT NOT NULL DEFAULT '[]',
+              product_image_json TEXT NOT NULL DEFAULT '{}',
+              suite_shots_json TEXT NOT NULL DEFAULT '[]',
+              reference_analysis TEXT NOT NULL DEFAULT '',
+              chinese_prompt TEXT NOT NULL DEFAULT '',
+              english_prompt TEXT NOT NULL DEFAULT '',
+              image_a_url TEXT NOT NULL DEFAULT '',
+              image_b_url TEXT NOT NULL DEFAULT '',
+              comparison TEXT NOT NULL DEFAULT '',
+              target_platform_id TEXT NOT NULL DEFAULT '',
+              target_category_id TEXT NOT NULL DEFAULT '',
+              target_scenario_id TEXT NOT NULL DEFAULT '',
+              publish_mode TEXT NOT NULL DEFAULT 'append',
+              published_template_id TEXT NOT NULL DEFAULT '',
+              error TEXT NOT NULL DEFAULT '',
+              request_json TEXT NOT NULL DEFAULT '{}',
+              response_json TEXT NOT NULL DEFAULT '{}',
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL,
+              published_at TEXT
+            );
+
             CREATE INDEX IF NOT EXISTS idx_logs_user_created ON generation_logs(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_logs_created ON generation_logs(created_at);
             CREATE INDEX IF NOT EXISTS idx_generated_assets_user_created ON generated_assets(user_id, created_at);
             CREATE INDEX IF NOT EXISTS idx_feedback_created ON image_feedback(created_at);
             CREATE INDEX IF NOT EXISTS idx_feedback_source ON image_feedback(user_source, image_source, created_at);
+            CREATE INDEX IF NOT EXISTS idx_prompt_assets_status_updated ON prompt_assets(status, updated_at);
             CREATE INDEX IF NOT EXISTS idx_provider_models_provider_priority ON provider_models(provider_id, priority);
             CREATE INDEX IF NOT EXISTS idx_user_model_access_user ON user_model_access(user_id, enabled);
             """
@@ -594,6 +662,8 @@ def init_db() -> None:
         ensure_column(conn, "user_settings", "video_endpoint_primary", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "user_settings", "video_endpoint_secondary", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "provider_models", "model_kind", "TEXT NOT NULL DEFAULT 'image'")
+        ensure_column(conn, "prompt_assets", "asset_kind", "TEXT NOT NULL DEFAULT 'single'")
+        ensure_column(conn, "prompt_assets", "suite_shots_json", "TEXT NOT NULL DEFAULT '[]'")
         migrate_default_endpoint(conn)
         ensure_sessions_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, role)")
@@ -804,10 +874,45 @@ def default_prompt_config() -> dict:
     return config
 
 
+def merge_single_matrix_custom_scenarios(single: dict, source_single: dict | None) -> None:
+    source_matrix = source_single.get("matrix") if isinstance(source_single, dict) else None
+    if not isinstance(source_matrix, dict):
+        return
+    target_platforms = single.get("matrix", {}).get("platforms", [])
+    for source_platform in source_matrix.get("platforms", []):
+        platform_id = str(source_platform.get("id") or "")
+        target_platform = next((item for item in target_platforms if str(item.get("id") or "") == platform_id), None)
+        if not target_platform:
+            continue
+        target_categories = target_platform.get("categories", [])
+        for source_category in source_platform.get("categories", []):
+            category_id = str(source_category.get("id") or "")
+            target_category = next((item for item in target_categories if str(item.get("id") or "") == category_id), None)
+            if not target_category:
+                continue
+            target_scenarios = target_category.setdefault("scenarios", [])
+            target_ids = {str(item.get("id") or "") for item in target_scenarios}
+            for source_scenario in source_category.get("scenarios", []):
+                scenario_id = trim_text(str(source_scenario.get("id") or ""), 120)
+                template_id = trim_text(str(source_scenario.get("templateId") or ""), 160)
+                if not scenario_id or not template_id or scenario_id in target_ids:
+                    continue
+                target_scenarios.append(
+                    {
+                        "id": scenario_id,
+                        "title": trim_text(str(source_scenario.get("title") or scenario_id), 200),
+                        "prompt": trim_text(str(source_scenario.get("prompt") or ""), PROMPT_TEXT_LIMIT),
+                        "templateId": template_id,
+                    }
+                )
+                target_ids.add(scenario_id)
+
+
 def normalize_single_prompt_config(source_single, default_single: dict) -> dict:
     single = merge_prompt_config(copy.deepcopy(default_single), source_single if isinstance(source_single, dict) else {})
     if isinstance(source_single, dict) and not isinstance(source_single.get("matrix"), dict):
         apply_legacy_single_template_overrides(single.get("matrix", {}), source_single.get("templates", []))
+    merge_single_matrix_custom_scenarios(single, source_single if isinstance(source_single, dict) else None)
     defaults = normalize_single_defaults(single)
     single["defaults"] = defaults
     single["matrix"]["defaults"] = defaults
@@ -880,7 +985,7 @@ def merge_prompt_config(default, override):
             override_by_id = {
                 item.get("id"): item for item in override if isinstance(item, dict)
             } if isinstance(override, list) else {}
-            return [
+            merged = [
                 merge_prompt_config(
                     item,
                     override_by_id.get(item["id"])
@@ -888,6 +993,12 @@ def merge_prompt_config(default, override):
                 )
                 for index, item in enumerate(default)
             ]
+            default_ids = {item.get("id") for item in default}
+            if isinstance(override, list):
+                for item in override:
+                    if isinstance(item, dict) and item.get("id") and item.get("id") not in default_ids:
+                        merged.append(sanitize_payload(item))
+            return merged
         return override if isinstance(override, list) and len(override) == len(default) else default
     if isinstance(default, str):
         return trim_text(override, PROMPT_TEXT_LIMIT) if isinstance(override, str) else default
@@ -930,6 +1041,8 @@ def normalize_model_kind(value) -> str:
         return MODEL_KIND_IMAGE
     if kind in {"vid", "movie"}:
         return MODEL_KIND_VIDEO
+    if kind in {"llm", "chat", "vision", "text_understanding"}:
+        return MODEL_KIND_TEXT
     return MODEL_KIND_IMAGE
 
 
@@ -950,8 +1063,8 @@ def provider_type_label(provider_type: str) -> str:
     return {
         PROVIDER_TYPE_AOKAPI_GEMINI: "AOKAPI / Gemini",
         PROVIDER_TYPE_MUSKAPIS_IMAGE: "Muskapis Image",
-        PROVIDER_TYPE_OPENAI_IMAGE: "OpenAI Image Compatible",
-    }.get(provider_type, "OpenAI Image Compatible")
+        PROVIDER_TYPE_OPENAI_IMAGE: "OpenAI Compatible",
+    }.get(provider_type, "OpenAI Compatible")
 
 
 def normalize_provider_base_url(base_url: str, provider_type: str) -> str:
@@ -1150,6 +1263,47 @@ def configured_model_options(conn: sqlite3.Connection, model_kind: str = MODEL_K
         }
         for row in rows
     ]
+
+
+def prompt_factory_model_options(conn: sqlite3.Connection) -> list[dict]:
+    return [
+        option
+        for option in [
+            *configured_model_options(conn, MODEL_KIND_TEXT),
+            *configured_model_options(conn, MODEL_KIND_IMAGE),
+        ]
+        if is_prompt_factory_model_option(option)
+    ]
+
+
+def is_prompt_factory_model_option(option: dict) -> bool:
+    model_kind = normalize_model_kind(option.get("modelKind"))
+    if model_kind == MODEL_KIND_TEXT:
+        return bool(str(option.get("modelName") or "").strip())
+    if normalize_provider_type(option.get("providerType")) != PROVIDER_TYPE_AOKAPI_GEMINI:
+        return False
+    endpoint = resolve_provider_image_endpoint(option, option.get("modelName") or "")
+    return is_gemini_image_endpoint(endpoint, option.get("modelName") or "")
+
+
+def selected_prompt_factory_image_model(conn: sqlite3.Connection) -> dict:
+    options = configured_model_options(conn, MODEL_KIND_IMAGE)
+    compatible = [option for option in options if normalize_provider_type(option.get("providerType")) != PROVIDER_TYPE_AOKAPI_GEMINI or is_prompt_factory_model_option(option)]
+    if not compatible:
+        raise AppError(HTTPStatus.BAD_REQUEST, "请先配置可用的图片验证模型")
+    return compatible[0]
+
+
+def selected_prompt_factory_model(conn: sqlite3.Connection, provider_model_id: str = "") -> dict:
+    options = prompt_factory_model_options(conn)
+    if provider_model_id:
+        selected = next((option for option in options if option["providerModelId"] == provider_model_id), None)
+        if selected:
+            return selected
+        raise AppError(HTTPStatus.BAD_REQUEST, "选择的提示词生成模型不可用")
+    if not options:
+        raise AppError(HTTPStatus.BAD_REQUEST, "请先配置可用的文本理解模型，例如 Muskapis gpt-5.5")
+    return options[0]
 
 
 def provider_model_option(conn: sqlite3.Connection, provider_model_id: str, model_kind: str = "") -> dict | None:
@@ -1361,6 +1515,610 @@ def prompt_config_settings(conn: sqlite3.Connection) -> dict:
     return normalize_prompt_config(row["value"] if row else "")
 
 
+def normalize_prompt_asset_status(value) -> str:
+    status = str(value or PROMPT_ASSET_STATUS_DRAFT).strip().lower()
+    return status if status in VALID_PROMPT_ASSET_STATUSES else PROMPT_ASSET_STATUS_DRAFT
+
+
+def normalize_prompt_asset_publish_mode(value) -> str:
+    mode = str(value or "append").strip().lower()
+    return mode if mode in VALID_PROMPT_ASSET_PUBLISH_MODES else "append"
+
+
+def normalize_prompt_asset_kind(value) -> str:
+    kind = str(value or PROMPT_ASSET_KIND_SINGLE).strip().lower()
+    return kind if kind in VALID_PROMPT_ASSET_KINDS else PROMPT_ASSET_KIND_SINGLE
+
+
+def normalize_prompt_asset_image(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+    url = str(value.get("url") or "").strip()
+    if not url:
+        return {}
+    return {
+        "name": trim_text(value.get("name") or "参考图", 120),
+        "size": normalize_image_size(str(value.get("size") or "")),
+        "url": url,
+    }
+
+
+def normalize_prompt_asset_images(value, limit: int = 20) -> list[dict]:
+    if not isinstance(value, list):
+        return []
+    images = []
+    seen = set()
+    for item in value:
+        image = normalize_prompt_asset_image(item)
+        url = image.get("url")
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        images.append(image)
+        if len(images) >= limit:
+            break
+    return images
+
+
+def normalize_suite_prompt_shots(value, references: list[dict] | None = None) -> list[dict]:
+    source = value if isinstance(value, list) else []
+    shots = []
+    for index, item in enumerate(source, start=1):
+        if not isinstance(item, dict):
+            continue
+        raw_name = trim_text(str(item.get("name") or item.get("title") or ""), 120)
+        size = normalize_image_size(str(item.get("size") or item.get("outputSize") or "1024x1024")) or "1024x1024"
+        chinese_prompt = trim_text(
+            str(item.get("chinesePrompt") or item.get("prompt") or item.get("promptZh") or ""),
+            PROMPT_ASSET_TEXT_LIMIT,
+        )
+        english_prompt = trim_text(str(item.get("englishPrompt") or item.get("promptEn") or ""), PROMPT_ASSET_TEXT_LIMIT)
+        description = trim_text(str(item.get("description") or item.get("summary") or ""), 300)
+        name = suite_shot_chinese_name(raw_name, chinese_prompt, description, index)
+        shot_id = prompt_asset_slug(str(item.get("id") or name or f"shot-{index}"))
+        shots.append(
+            {
+                "id": shot_id,
+                "name": name,
+                "size": size,
+                "description": description,
+                "chinesePrompt": chinese_prompt,
+                "englishPrompt": english_prompt,
+                "promptOnlyImageUrl": trim_text(
+                    str(item.get("promptOnlyImageUrl") or item.get("prompt_only_image_url") or ""),
+                    PROMPT_ASSET_IMAGE_URL_LIMIT,
+                ),
+                "referenceImageUrl": trim_text(
+                    str(item.get("referenceImageUrl") or item.get("reference_image_url") or ""),
+                    PROMPT_ASSET_IMAGE_URL_LIMIT,
+                ),
+                "imageError": trim_text(str(item.get("imageError") or item.get("image_error") or ""), 1000),
+            }
+        )
+    if shots:
+        return shots[:20]
+
+    fallback_references = references if isinstance(references, list) else []
+    for index, reference in enumerate(fallback_references[:20], start=1):
+        base_name = trim_text(str(reference.get("name") or f"参考图 {index}"), 120)
+        size = normalize_image_size(str(reference.get("size") or "")) or "1024x1024"
+        shots.append(
+            {
+                "id": prompt_asset_slug(f"shot-{index}-{base_name}"),
+                "name": f"{index:02d} {base_name}",
+                "size": size,
+                "description": "根据对应参考图生成的套图图位",
+                "chinesePrompt": "",
+                "englishPrompt": "",
+                "promptOnlyImageUrl": "",
+                "referenceImageUrl": "",
+                "imageError": "",
+            }
+        )
+    return shots
+
+
+def suite_shot_chinese_name(raw_name: str, chinese_prompt: str, description: str, index: int) -> str:
+    text = " ".join(part for part in (raw_name, chinese_prompt, description) if part)
+    has_chinese = any("\u4e00" <= char <= "\u9fff" for char in raw_name)
+    if has_chinese:
+        cleaned = re.sub(r"^\s*\d{1,2}\s*[.、_-]?\s*", "", raw_name).strip() or "套图图位"
+    else:
+        rules = [
+            (("首屏", "hero", "banner", "横幅", "品牌"), "首屏品牌横幅"),
+            (("卖点", "feature", "infographic", "信息图", "功能", "标注"), "卖点信息图"),
+            (("细节", "detail", "特写", "热点", "材质", "结构"), "细节特写图"),
+            (("生活", "lifestyle", "场景", "使用", "use"), "生活场景图"),
+            (("步骤", "step", "how", "安装", "维护", "流程"), "使用步骤图"),
+            (("尺寸", "size", "包装", "规格", "清单"), "尺寸包装图"),
+            (("对比", "compare", "comparison", "决策"), "对比说明图"),
+            (("配件", "accessor", "accessories", "电池"), "配件展示图"),
+            (("广告", "促销", "promo", "ad", "活动"), "促销广告图"),
+            (("问答", "qa", "信任", "trust"), "问答信任图"),
+        ]
+        lower_text = text.lower()
+        cleaned = next((label for needles, label in rules if any(needle.lower() in lower_text for needle in needles)), "套图图位")
+    return trim_text(f"{index:02d} {cleaned}", 120)
+
+
+def prompt_asset_json(value, fallback) -> str:
+    return json.dumps(value if value is not None else fallback, ensure_ascii=False)
+
+
+def row_prompt_asset(row: sqlite3.Row) -> dict:
+    reference_images = parse_json_field(row["reference_images_json"])
+    if not isinstance(reference_images, list):
+        reference_images = []
+    product_image = parse_json_field(row["product_image_json"])
+    if not isinstance(product_image, dict):
+        product_image = {}
+    suite_shots = parse_json_field(row_value(row, "suite_shots_json", "[]"))
+    if not isinstance(suite_shots, list):
+        suite_shots = []
+    request_json = parse_json_field(row_value(row, "request_json", "{}"))
+    response_json = parse_json_field(row_value(row, "response_json", "{}"))
+    return {
+        "id": row["id"],
+        "assetKind": normalize_prompt_asset_kind(row_value(row, "asset_kind", PROMPT_ASSET_KIND_SINGLE)),
+        "title": row["title"],
+        "status": normalize_prompt_asset_status(row["status"]),
+        "providerModelId": row_value(row, "provider_model_id", ""),
+        "referenceImages": reference_images,
+        "productImage": product_image,
+        "suiteShots": normalize_suite_prompt_shots(suite_shots, reference_images),
+        "referenceAnalysis": row["reference_analysis"],
+        "chinesePrompt": row["chinese_prompt"],
+        "englishPrompt": row["english_prompt"],
+        "imageAUrl": row["image_a_url"],
+        "imageBUrl": row["image_b_url"],
+        "comparison": row["comparison"],
+        "targetPlatformId": row["target_platform_id"],
+        "targetCategoryId": row["target_category_id"],
+        "targetScenarioId": row["target_scenario_id"],
+        "publishMode": normalize_prompt_asset_publish_mode(row["publish_mode"]),
+        "publishedTemplateId": row["published_template_id"],
+        "error": row["error"],
+        "request": request_json if isinstance(request_json, dict) else {},
+        "response": response_json if isinstance(response_json, dict) else {},
+        "createdAt": row["created_at"],
+        "updatedAt": row["updated_at"],
+        "publishedAt": row["published_at"],
+    }
+
+
+def prompt_asset_by_id(conn: sqlite3.Connection, asset_id: str) -> dict | None:
+    row = conn.execute("SELECT * FROM prompt_assets WHERE id=?", (asset_id,)).fetchone()
+    return row_prompt_asset(row) if row else None
+
+
+def delete_prompt_asset(conn: sqlite3.Connection, asset_id: str) -> bool:
+    result = conn.execute("DELETE FROM prompt_assets WHERE id=?", (asset_id,))
+    return result.rowcount > 0
+
+
+def mark_stale_prompt_assets_failed(conn: sqlite3.Connection, timeout_seconds: int = 300) -> int:
+    now_seconds = parse_iso_seconds(now_iso())
+    if not now_seconds:
+        return 0
+    changed = 0
+    rows = conn.execute("SELECT * FROM prompt_assets WHERE status=?", (PROMPT_ASSET_STATUS_GENERATING,)).fetchall()
+    for row in rows:
+        asset = row_prompt_asset(row)
+        progress = asset.get("request", {}).get("progress", {}) if isinstance(asset.get("request"), dict) else {}
+        step = str(progress.get("step") or "")
+        updated_at = str(progress.get("updatedAt") or asset.get("updatedAt") or "")
+        elapsed = now_seconds - parse_iso_seconds(updated_at)
+        if elapsed < timeout_seconds:
+            continue
+        if step == "imageA" and not asset.get("imageAUrl"):
+            message = "Image A 生成超时，远端图片接口长时间未返回。请重试当前素材，或检查图片模型配置。"
+        elif step == "imageB" and not asset.get("imageBUrl"):
+            message = "Image B 生成超时，远端图片接口长时间未返回。请重试当前素材，或检查图片模型配置。"
+        elif step in {"analysis", "prompt", "compare", "prepare"}:
+            message = f"{progress.get('label') or '生成步骤'}超时，远端接口长时间未返回。请重试当前素材。"
+        else:
+            continue
+        update_prompt_asset(conn, asset["id"], {"status": PROMPT_ASSET_STATUS_FAILED, "error": message})
+        changed += 1
+    if changed:
+        conn.commit()
+    return changed
+
+
+def prompt_asset_rows(
+    conn: sqlite3.Connection,
+    status: str = "",
+    limit: int = 50,
+    offset: int = 0,
+    asset_kind: str = "",
+) -> list[dict]:
+    safe_limit = clamp_int(limit, 1, 200)
+    safe_offset = max(0, int(offset or 0))
+    normalized_status = normalize_prompt_asset_status(status) if status else ""
+    normalized_kind = normalize_prompt_asset_kind(asset_kind) if asset_kind else ""
+    clauses = []
+    params = []
+    if normalized_status:
+        clauses.append("status=?")
+        params.append(normalized_status)
+    if normalized_kind:
+        clauses.append("asset_kind=?")
+        params.append(normalized_kind)
+    where_sql = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM prompt_assets{where_sql} ORDER BY updated_at DESC LIMIT ? OFFSET ?",
+        (*params, safe_limit, safe_offset),
+    ).fetchall()
+    return [row_prompt_asset(row) for row in rows]
+
+
+def create_prompt_assets(
+    conn: sqlite3.Connection,
+    product_image,
+    reference_images,
+    provider_model_id: str = "",
+) -> list[dict]:
+    product = normalize_prompt_asset_image(product_image)
+    references = normalize_prompt_asset_images(reference_images)
+    if not references:
+        raise AppError(HTTPStatus.BAD_REQUEST, "请至少上传一张参考图")
+    created = []
+    timestamp = now_iso()
+    for index, reference in enumerate(references, start=1):
+        asset_id = make_id("prompt_asset")
+        title = trim_text(reference.get("name") or f"参考图 {index}", 200)
+        conn.execute(
+            """
+            INSERT INTO prompt_assets
+              (id, asset_kind, title, status, provider_model_id, reference_images_json, product_image_json,
+               created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                asset_id,
+                PROMPT_ASSET_KIND_SINGLE,
+                title,
+                PROMPT_ASSET_STATUS_DRAFT,
+                trim_text(provider_model_id, 120),
+                prompt_asset_json([reference], []),
+                prompt_asset_json(product, {}),
+                timestamp,
+                timestamp,
+            ),
+        )
+        created_asset = prompt_asset_by_id(conn, asset_id)
+        if created_asset:
+            created.append(created_asset)
+    return created
+
+
+def create_suite_prompt_asset(
+    conn: sqlite3.Connection,
+    product_image,
+    reference_images,
+    provider_model_id: str = "",
+    title: str = "",
+) -> dict:
+    product = normalize_prompt_asset_image(product_image)
+    references = normalize_prompt_asset_images(reference_images, limit=20)
+    if not references:
+        raise AppError(HTTPStatus.BAD_REQUEST, "请至少上传一张套图参考图")
+    asset_id = make_id("prompt_asset")
+    timestamp = now_iso()
+    asset_title = trim_text(str(title or "套图提示词"), 200)
+    suite_shots = normalize_suite_prompt_shots([], references)
+    conn.execute(
+        """
+        INSERT INTO prompt_assets
+          (id, asset_kind, title, status, provider_model_id, reference_images_json, product_image_json,
+           suite_shots_json, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            asset_id,
+            PROMPT_ASSET_KIND_SUITE,
+            asset_title,
+            PROMPT_ASSET_STATUS_DRAFT,
+            trim_text(provider_model_id, 120),
+            prompt_asset_json(references, []),
+            prompt_asset_json(product, {}),
+            prompt_asset_json(suite_shots, []),
+            timestamp,
+            timestamp,
+        ),
+    )
+    created = prompt_asset_by_id(conn, asset_id)
+    if not created:
+        raise AppError(HTTPStatus.INTERNAL_SERVER_ERROR, "套图提示词素材创建失败")
+    return created
+
+
+def update_prompt_asset(conn: sqlite3.Connection, asset_id: str, values: dict) -> dict:
+    if not prompt_asset_by_id(conn, asset_id):
+        raise AppError(HTTPStatus.NOT_FOUND, "提示词素材不存在")
+    allowed = {
+        "title": ("title", lambda value: trim_text(value, 200)),
+        "status": ("status", normalize_prompt_asset_status),
+        "providerModelId": ("provider_model_id", lambda value: trim_text(value, 120)),
+        "assetKind": ("asset_kind", normalize_prompt_asset_kind),
+        "suiteShots": (
+            "suite_shots_json",
+            lambda value: trim_text(
+                json.dumps(normalize_suite_prompt_shots(value), ensure_ascii=False),
+                PROMPT_ASSET_JSON_LIMIT,
+            ),
+        ),
+        "referenceAnalysis": ("reference_analysis", lambda value: trim_text(value, PROMPT_ASSET_TEXT_LIMIT)),
+        "chinesePrompt": ("chinese_prompt", lambda value: trim_text(value, PROMPT_ASSET_TEXT_LIMIT)),
+        "englishPrompt": ("english_prompt", lambda value: trim_text(value, PROMPT_ASSET_TEXT_LIMIT)),
+        "imageAUrl": ("image_a_url", lambda value: trim_text(value, PROMPT_ASSET_IMAGE_URL_LIMIT)),
+        "imageBUrl": ("image_b_url", lambda value: trim_text(value, PROMPT_ASSET_IMAGE_URL_LIMIT)),
+        "comparison": ("comparison", lambda value: trim_text(value, PROMPT_ASSET_TEXT_LIMIT)),
+        "targetPlatformId": ("target_platform_id", lambda value: trim_text(value, 120)),
+        "targetCategoryId": ("target_category_id", lambda value: trim_text(value, 120)),
+        "targetScenarioId": ("target_scenario_id", lambda value: trim_text(value, 120)),
+        "publishMode": ("publish_mode", normalize_prompt_asset_publish_mode),
+        "publishedTemplateId": ("published_template_id", lambda value: trim_text(value, 160)),
+        "error": ("error", lambda value: trim_text(value, 4000)),
+        "request": (
+            "request_json",
+            lambda value: trim_text(json.dumps(sanitize_payload(value), ensure_ascii=False), PROMPT_ASSET_JSON_LIMIT),
+        ),
+        "response": (
+            "response_json",
+            lambda value: trim_text(json.dumps(sanitize_payload(value), ensure_ascii=False), PROMPT_ASSET_JSON_LIMIT),
+        ),
+    }
+    assignments = []
+    params = []
+    for key, value in (values or {}).items():
+        if key not in allowed:
+            continue
+        column, normalizer = allowed[key]
+        assignments.append(f"{column}=?")
+        params.append(normalizer(value))
+    if assignments:
+        assignments.append("updated_at=?")
+        params.append(now_iso())
+        params.append(asset_id)
+        conn.execute(f"UPDATE prompt_assets SET {', '.join(assignments)} WHERE id=?", params)
+    asset = prompt_asset_by_id(conn, asset_id)
+    if not asset:
+        raise AppError(HTTPStatus.NOT_FOUND, "提示词素材不存在")
+    return asset
+
+
+def prompt_asset_slug(value: str) -> str:
+    text = str(value or "factory-style").strip().lower()
+    chars = []
+    for char in text:
+        if char.isalnum():
+            chars.append(char)
+        elif chars and chars[-1] != "-":
+            chars.append("-")
+    slug = "".join(chars).strip("-")
+    return trim_text(slug or "factory-style", 80)
+
+
+def find_single_matrix_platform(config: dict, platform_id: str) -> dict | None:
+    for platform in config.get("single", {}).get("matrix", {}).get("platforms", []):
+        if str(platform.get("id") or "") == platform_id:
+            return platform
+    return None
+
+
+def find_single_matrix_category(platform: dict, category_id: str) -> dict | None:
+    for category in platform.get("categories", []):
+        if str(category.get("id") or "") == category_id:
+            return category
+    return None
+
+
+def make_unique_factory_scenario_id(category: dict, title: str) -> str:
+    base = prompt_asset_slug(title)
+    existing = {str(item.get("id") or "") for item in category.get("scenarios", [])}
+    candidate = base
+    index = 2
+    while candidate in existing:
+        candidate = f"{base}-{index}"
+        index += 1
+    return candidate
+
+
+def make_unique_factory_suite_preset_id(config: dict, title: str) -> str:
+    base = f"factory-suite-{prompt_asset_slug(title)}"
+    existing = {str(item.get("id") or "") for item in config.get("suite", {}).get("presets", [])}
+    candidate = base
+    index = 2
+    while candidate in existing:
+        candidate = f"{base}-{index}"
+        index += 1
+    return candidate
+
+
+def find_suite_preset(config: dict, preset_id: str) -> dict | None:
+    for preset in config.get("suite", {}).get("presets", []):
+        if str(preset.get("id") or "") == preset_id:
+            return preset
+    return None
+
+
+def build_suite_preset_from_prompt_asset(asset: dict, preset_id: str, title: str) -> dict:
+    base_prompt = trim_text(
+        with_in_image_copy_language_rule(asset.get("chinesePrompt") or "", language="zh"),
+        PROMPT_TEXT_LIMIT,
+    ).strip()
+    if not base_prompt:
+        raise AppError(HTTPStatus.BAD_REQUEST, "套图提示词素材没有可发布的中文总提示词")
+    references = normalize_prompt_asset_images(asset.get("referenceImages") or [])
+    suite_shots = normalize_suite_prompt_shots(asset.get("suiteShots"), references)
+    if not suite_shots:
+        raise AppError(HTTPStatus.BAD_REQUEST, "套图提示词素材没有可发布的图位")
+    shots = []
+    used_ids = set()
+    for index, shot in enumerate(suite_shots, start=1):
+        shot_id_base = prompt_asset_slug(shot.get("id") or shot.get("name") or f"shot-{index}")
+        shot_id = shot_id_base
+        suffix = 2
+        while shot_id in used_ids:
+            shot_id = f"{shot_id_base}-{suffix}"
+            suffix += 1
+        used_ids.add(shot_id)
+        shot_prompt = trim_text(str(shot.get("chinesePrompt") or ""), PROMPT_ASSET_TEXT_LIMIT).strip()
+        prompt = with_in_image_copy_language_rule(
+            "\n".join(part for part in (base_prompt, shot_prompt) if part),
+            language="zh",
+        )
+        shots.append(
+            {
+                "id": shot_id,
+                "name": trim_text(str(shot.get("name") or f"{index:02d} 套图图位"), 120),
+                "size": normalize_image_size(str(shot.get("size") or "1024x1024")) or "1024x1024",
+                "description": trim_text(str(shot.get("description") or "同款套图图位"), 300),
+                "prompt": trim_text(prompt, PROMPT_TEXT_LIMIT),
+            }
+        )
+    return {
+        "id": preset_id,
+        "title": title,
+        "folder": title,
+        "shots": shots,
+    }
+
+
+def persist_prompt_config(conn: sqlite3.Connection, prompt_config: dict) -> dict:
+    normalized = normalize_prompt_config(prompt_config)
+    conn.execute(
+        """
+        INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+        """,
+        (PROMPT_CONFIG_KEY, prompt_config_json(normalized), now_iso()),
+    )
+    return normalized
+
+
+def publish_prompt_asset(conn: sqlite3.Connection, asset_id: str, payload: dict) -> dict:
+    asset = prompt_asset_by_id(conn, asset_id)
+    if not asset:
+        raise AppError(HTTPStatus.NOT_FOUND, "提示词素材不存在")
+    chinese_prompt = trim_text(
+        with_in_image_copy_language_rule(asset.get("chinesePrompt") or "", language="zh"),
+        PROMPT_TEXT_LIMIT,
+    ).strip()
+    if not chinese_prompt:
+        raise AppError(HTTPStatus.BAD_REQUEST, "提示词素材没有可发布的中文提示词")
+
+    platform_id = trim_text(str(payload.get("platformId") or ""), 120)
+    category_id = trim_text(str(payload.get("categoryId") or ""), 120)
+    mode = normalize_prompt_asset_publish_mode(payload.get("mode"))
+    title = trim_text(str(payload.get("title") or asset.get("title") or "同款电商图"), 200)
+    config = prompt_config_settings(conn)
+    platform = find_single_matrix_platform(config, platform_id)
+    if not platform:
+        raise AppError(HTTPStatus.BAD_REQUEST, "发布平台不存在")
+    category = find_single_matrix_category(platform, category_id)
+    if not category:
+        raise AppError(HTTPStatus.BAD_REQUEST, "发布品类不存在")
+
+    if mode == "overwrite":
+        scenario_id = trim_text(str(payload.get("scenarioId") or ""), 120)
+        scenario = next((item for item in category.get("scenarios", []) if str(item.get("id") or "") == scenario_id), None)
+        if not scenario:
+            raise AppError(HTTPStatus.BAD_REQUEST, "覆盖场景不存在")
+        scenario["title"] = title
+        scenario["prompt"] = chinese_prompt
+        template_id = str(scenario.get("templateId") or f"{platform_id}-{category_id}-{scenario_id}")
+    else:
+        scenario_id = make_unique_factory_scenario_id(category, title)
+        template_id = f"{platform_id}-{category_id}-{scenario_id}"
+        category.setdefault("scenarios", []).append(
+            {
+                "id": scenario_id,
+                "title": title,
+                "prompt": chinese_prompt,
+                "templateId": template_id,
+            }
+        )
+
+    persist_prompt_config(conn, config)
+    timestamp = now_iso()
+    conn.execute(
+        """
+        UPDATE prompt_assets
+        SET status=?, title=?, target_platform_id=?, target_category_id=?, target_scenario_id=?,
+            publish_mode=?, published_template_id=?, error='', updated_at=?, published_at=?
+        WHERE id=?
+        """,
+        (
+            PROMPT_ASSET_STATUS_PUBLISHED,
+            title,
+            platform_id,
+            category_id,
+            scenario_id,
+            mode,
+            template_id,
+            timestamp,
+            timestamp,
+            asset_id,
+        ),
+    )
+    published = prompt_asset_by_id(conn, asset_id)
+    if not published:
+        raise AppError(HTTPStatus.NOT_FOUND, "提示词素材不存在")
+    return published
+
+
+def publish_suite_prompt_asset(conn: sqlite3.Connection, asset_id: str, payload: dict) -> dict:
+    asset = prompt_asset_by_id(conn, asset_id)
+    if not asset:
+        raise AppError(HTTPStatus.NOT_FOUND, "套图提示词素材不存在")
+    if normalize_prompt_asset_kind(asset.get("assetKind")) != PROMPT_ASSET_KIND_SUITE:
+        raise AppError(HTTPStatus.BAD_REQUEST, "这不是套图提示词素材")
+    mode = normalize_prompt_asset_publish_mode(payload.get("mode"))
+    title = trim_text(str(payload.get("title") or asset.get("title") or "同款电商套图"), 200)
+    config = prompt_config_settings(conn)
+    presets = config.setdefault("suite", {}).setdefault("presets", [])
+    if mode == "overwrite":
+        preset_id = trim_text(str(payload.get("presetId") or asset.get("publishedTemplateId") or ""), 160)
+        preset = find_suite_preset(config, preset_id)
+        if not preset:
+            raise AppError(HTTPStatus.BAD_REQUEST, "覆盖套图不存在")
+    else:
+        preset_id = make_unique_factory_suite_preset_id(config, title)
+        preset = None
+
+    next_preset = build_suite_preset_from_prompt_asset(asset, preset_id, title)
+    if preset is not None:
+        preset.clear()
+        preset.update(next_preset)
+    else:
+        presets.append(next_preset)
+
+    persist_prompt_config(conn, config)
+    timestamp = now_iso()
+    conn.execute(
+        """
+        UPDATE prompt_assets
+        SET status=?, title=?, publish_mode=?, published_template_id=?, error='', updated_at=?, published_at=?
+        WHERE id=?
+        """,
+        (
+            PROMPT_ASSET_STATUS_PUBLISHED,
+            title,
+            mode,
+            preset_id,
+            timestamp,
+            timestamp,
+            asset_id,
+        ),
+    )
+    published = prompt_asset_by_id(conn, asset_id)
+    if not published:
+        raise AppError(HTTPStatus.NOT_FOUND, "套图提示词素材不存在")
+    return published
+
+
 def client_prompt_config(config: dict) -> dict:
     safe_config = copy.deepcopy(normalize_prompt_config(config))
     safe_config.get("single", {})["templateCategories"] = [
@@ -1530,6 +2288,9 @@ class Handler(SimpleHTTPRequestHandler):
     def do_PATCH(self) -> None:
         self.route()
 
+    def do_DELETE(self) -> None:
+        self.route()
+
     def route(self) -> None:
         parsed = urlparse(self.path)
         path = parsed.path
@@ -1583,6 +2344,29 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_admin_prompt_config()
             if path == "/api/admin/prompt-config" and method == "PUT":
                 return self.handle_admin_put_prompt_config()
+            if path == "/api/admin/prompt-assets" and method == "GET":
+                return self.handle_admin_prompt_assets(parsed.query)
+            if path == "/api/admin/prompt-assets" and method == "POST":
+                return self.handle_admin_create_prompt_assets()
+            if path.startswith("/api/admin/prompt-assets/") and method == "PATCH":
+                asset_id = unquote(path.removeprefix("/api/admin/prompt-assets/"))
+                return self.handle_admin_update_prompt_asset(asset_id)
+            if path.startswith("/api/admin/prompt-assets/") and method == "DELETE":
+                asset_id = unquote(path.removeprefix("/api/admin/prompt-assets/"))
+                return self.handle_admin_delete_prompt_asset(asset_id)
+            if path.startswith("/api/admin/prompt-assets/") and method == "POST":
+                prompt_asset_path = path.removeprefix("/api/admin/prompt-assets/")
+                if "/suite-shots/" in prompt_asset_path and prompt_asset_path.endswith("/reference-image"):
+                    asset_part, shot_part = prompt_asset_path.split("/suite-shots/", 1)
+                    asset_id = unquote(asset_part.rstrip("/"))
+                    shot_id = unquote(shot_part.removesuffix("/reference-image").strip("/"))
+                    return self.handle_admin_generate_suite_reference_image(asset_id, shot_id)
+                if prompt_asset_path.endswith("/generate"):
+                    asset_id = unquote(prompt_asset_path.removesuffix("/generate").rstrip("/"))
+                    return self.handle_admin_generate_prompt_asset(asset_id)
+                if prompt_asset_path.endswith("/publish"):
+                    asset_id = unquote(prompt_asset_path.removesuffix("/publish").rstrip("/"))
+                    return self.handle_admin_publish_prompt_asset(asset_id)
             if path == "/prompt-config-defaults.json":
                 raise AppError(HTTPStatus.NOT_FOUND, "接口不存在")
             if path.startswith("/api/"):
@@ -2707,14 +3491,95 @@ class Handler(SimpleHTTPRequestHandler):
         body = self.read_json()
         prompt_config = normalize_prompt_config(body.get("promptConfig"))
         with connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
-                ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
-                """,
-                (PROMPT_CONFIG_KEY, prompt_config_json(prompt_config), now_iso()),
-            )
+            prompt_config = persist_prompt_config(conn, prompt_config)
         self.json_response({"ok": True, "promptConfig": prompt_config})
+
+    def handle_admin_prompt_assets(self, query: str) -> None:
+        self.require_admin()
+        params = parse_qs(query)
+        status = params.get("status", [""])[0]
+        asset_kind = params.get("assetKind", [params.get("asset_kind", [""])[0]])[0]
+        limit = clamp_int(params.get("limit", ["50"])[0], 1, 200)
+        try:
+            offset = max(0, int(params.get("offset", ["0"])[0] or 0))
+        except ValueError:
+            offset = 0
+        with connect() as conn:
+            mark_stale_prompt_assets_failed(conn)
+            assets = prompt_asset_rows(conn, status=status, limit=limit, offset=offset, asset_kind=asset_kind)
+            model_options = [
+                {
+                    "providerModelId": option["providerModelId"],
+                    "providerName": option["providerName"],
+                    "modelName": option["modelName"],
+                    "providerType": option["providerType"],
+                    "modelKind": option.get("modelKind", MODEL_KIND_IMAGE),
+                }
+                for option in prompt_factory_model_options(conn)
+            ]
+        self.json_response({"assets": assets, "modelOptions": model_options})
+
+    def handle_admin_create_prompt_assets(self) -> None:
+        self.require_admin()
+        body = self.read_json()
+        with connect() as conn:
+            if normalize_prompt_asset_kind(body.get("assetKind")) == PROMPT_ASSET_KIND_SUITE:
+                assets = [
+                    create_suite_prompt_asset(
+                        conn,
+                        body.get("productImage"),
+                        body.get("referenceImages"),
+                        provider_model_id=str(body.get("providerModelId") or ""),
+                        title=str(body.get("title") or ""),
+                    )
+                ]
+            else:
+                assets = create_prompt_assets(
+                    conn,
+                    body.get("productImage"),
+                    body.get("referenceImages"),
+                    provider_model_id=str(body.get("providerModelId") or ""),
+                )
+        self.json_response({"assets": assets})
+
+    def handle_admin_update_prompt_asset(self, asset_id: str) -> None:
+        self.require_admin()
+        body = self.read_json()
+        with connect() as conn:
+            asset = update_prompt_asset(conn, asset_id, body)
+        self.json_response({"asset": asset})
+
+    def handle_admin_delete_prompt_asset(self, asset_id: str) -> None:
+        self.require_admin()
+        with connect() as conn:
+            deleted = delete_prompt_asset(conn, asset_id)
+        if not deleted:
+            raise AppError(HTTPStatus.NOT_FOUND, "提示词素材不存在")
+        self.json_response({"ok": True})
+
+    def handle_admin_generate_prompt_asset(self, asset_id: str) -> None:
+        self.require_admin()
+        body = self.read_json()
+        with connect() as conn:
+            asset = generate_prompt_asset(conn, asset_id, str(body.get("providerModelId") or ""))
+        self.json_response({"asset": asset})
+
+    def handle_admin_generate_suite_reference_image(self, asset_id: str, shot_id: str) -> None:
+        self.require_admin()
+        with connect() as conn:
+            asset = generate_suite_prompt_asset_reference_image(conn, asset_id, shot_id)
+        self.json_response({"asset": asset})
+
+    def handle_admin_publish_prompt_asset(self, asset_id: str) -> None:
+        self.require_admin()
+        body = self.read_json()
+        with connect() as conn:
+            if str(body.get("factoryScope") or "").strip().lower() == PROMPT_ASSET_KIND_SUITE:
+                asset = publish_suite_prompt_asset(conn, asset_id, body)
+            else:
+                asset = publish_prompt_asset(conn, asset_id, body)
+            prompt_config = prompt_config_settings(conn)
+        self.json_response({"asset": asset, "promptConfig": prompt_config})
 
 
 def clamp_int(value, minimum: int, maximum: int) -> int:
@@ -2835,6 +3700,14 @@ def resolve_openai_image_endpoint(base_url: str, path: str) -> str:
     return f"{value}/{path}"
 
 
+def resolve_openai_chat_endpoint(base_url: str) -> str:
+    value = str(base_url or "").rstrip("/")
+    lower = value.lower()
+    if lower.endswith("/chat/completions"):
+        return value
+    return f"{value}/chat/completions"
+
+
 def build_provider_image_request_body(
     *,
     prompt: str,
@@ -2856,6 +3729,7 @@ def build_provider_image_request_body(
             references=references,
         )
     if references:
+        image_value = [reference["url"] for reference in references if reference.get("url")]
         return (
             {
                 "model": model,
@@ -2863,7 +3737,7 @@ def build_provider_image_request_body(
                 "n": count,
                 "size": size,
                 "response_format": "b64_json",
-                "image": references[0]["url"],
+                "image": image_value if len(image_value) > 1 else image_value[0],
             },
             "OpenAI image edit b64_json",
         )
@@ -2879,6 +3753,403 @@ def build_provider_image_request_body(
     )
 
 
+def build_gemini_text_request_body(prompt: str, references: list[dict]) -> dict:
+    parts = [{"text": prompt}]
+    for reference in references:
+        inline_data = reference_to_inline_data(reference)
+        if inline_data:
+            parts.append({"inlineData": inline_data})
+    return {
+        "contents": [{"role": "user", "parts": parts}],
+        "generationConfig": {"responseModalities": ["TEXT"]},
+    }
+
+
+def build_openai_vision_text_request_body(model: str, prompt: str, references: list[dict]) -> dict:
+    content = [{"type": "text", "text": prompt}]
+    for reference in references:
+        url = str(reference.get("url") or "").strip()
+        if url:
+            content.append({"type": "image_url", "image_url": {"url": url}})
+    return {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": "You are an ecommerce image prompt analyst. Return strict JSON only.",
+            },
+            {"role": "user", "content": content},
+        ],
+        "response_format": {"type": "json_object"},
+    }
+
+
+def call_prompt_factory_text(option: dict, prompt: str, references: list[dict]) -> dict:
+    if normalize_model_kind(option.get("modelKind")) == MODEL_KIND_TEXT:
+        endpoint = resolve_openai_chat_endpoint(normalize_provider_base_url(option.get("baseUrl"), option.get("providerType")))
+        request_body = build_openai_vision_text_request_body(option["modelName"], prompt, references)
+    else:
+        endpoint = resolve_provider_image_endpoint(option, option["modelName"], references=references)
+        request_body = build_gemini_text_request_body(prompt, references)
+    payload = call_upstream_model_with_retry(endpoint, option["apiKey"], request_body)
+    texts = extract_text_results_from_payload(payload)
+    if not texts:
+        raise UpstreamError(502, "模型未返回文本", payload)
+    return parse_json_object_from_model_text("\n".join(texts))
+
+
+def generate_prompt_asset_image(option: dict, prompt: str, references: list[dict], size: str = "1024x1024") -> str:
+    endpoint = resolve_provider_image_endpoint(option, option["modelName"], references=references)
+    request_body, _strategy = build_provider_image_request_body(
+        prompt=prompt,
+        count=1,
+        size=size,
+        model=option["modelName"],
+        endpoint=endpoint,
+        provider_type=option["providerType"],
+        references=references,
+    )
+    payload = call_upstream_model_with_retry(endpoint, option["apiKey"], request_body)
+    images = extract_image_results_from_payload(payload)
+    if not images:
+        raise UpstreamError(502, "接口未返回可识别的图片地址或 b64_json", payload)
+    return images[0]["url"]
+
+
+def update_prompt_asset_progress(
+    conn: sqlite3.Connection,
+    asset_id: str,
+    step: str,
+    label: str,
+    detail: str,
+    *,
+    text_option: dict | None = None,
+    image_option: dict | None = None,
+) -> dict:
+    request = {
+        "progress": {
+            "step": step,
+            "label": label,
+            "detail": detail,
+            "updatedAt": now_iso(),
+        }
+    }
+    if text_option:
+        request["textProviderModelId"] = text_option.get("providerModelId") or ""
+        request["textModel"] = text_option.get("modelName") or ""
+        request["textProviderName"] = text_option.get("providerName") or ""
+    if image_option:
+        request["imageProviderModelId"] = image_option.get("providerModelId") or ""
+        request["imageModel"] = image_option.get("modelName") or ""
+        request["imageProviderName"] = image_option.get("providerName") or ""
+    asset = update_prompt_asset(conn, asset_id, {"request": request})
+    conn.commit()
+    return asset
+
+
+def prompt_asset_reference_images(asset: dict) -> list[dict]:
+    return normalize_prompt_asset_images(asset.get("referenceImages") or [], limit=20)
+
+
+def prompt_asset_product_image(asset: dict) -> dict:
+    return normalize_prompt_asset_image(asset.get("productImage") or {})
+
+
+def suite_shot_prompt(asset: dict, shot: dict) -> str:
+    prompt = "\n".join(
+        part
+        for part in [
+            asset.get("chinesePrompt") or "",
+            f"图位名称：{shot.get('name') or ''}",
+            f"图位说明：{shot.get('description') or ''}" if shot.get("description") else "",
+            shot.get("chinesePrompt") or "",
+        ]
+        if part
+    )
+    return with_in_image_copy_language_rule(prompt, language="zh")
+
+
+def suite_reference_assisted_prompt(asset: dict, shot: dict) -> str:
+    prompt = "\n".join(
+        part
+        for part in [
+            "使用上传的原商品图作为商品身份，必须保持商品主体 1:1 一致。",
+            "使用对应套图参考图作为版式、构图、文字层级、光线和电商风格参考。",
+            suite_shot_prompt(asset, shot),
+        ]
+        if part
+    )
+    return with_in_image_copy_language_rule(prompt, language="zh")
+
+
+def generate_suite_prompt_only_images_for_shots(
+    conn: sqlite3.Connection,
+    asset_id: str,
+    asset: dict,
+    suite_shots: list[dict],
+    product: dict,
+    image_option: dict,
+) -> list[dict]:
+    if not product:
+        return suite_shots
+    generated_shots = []
+    for index, shot in enumerate(suite_shots, start=1):
+        update_prompt_asset_progress(
+            conn,
+            asset_id,
+            "imageB",
+            f"生成第 {index} 张套图验证图",
+            f"正在使用商品原图和第 {index} 个图位 Prompt 生成 Prompt-only 验证图。",
+            image_option=image_option,
+        )
+        next_shot = {**shot, "imageError": ""}
+        try:
+            next_shot["promptOnlyImageUrl"] = generate_prompt_asset_image(
+                image_option,
+                suite_shot_prompt(asset, shot),
+                [product],
+                size=shot.get("size") or "1024x1024",
+            )
+        except Exception as error:
+            next_shot["imageError"] = str(error)
+        generated_shots.append(next_shot)
+        update_prompt_asset(conn, asset_id, {"suiteShots": generated_shots + suite_shots[index:]})
+        conn.commit()
+    return generated_shots
+
+
+def generate_suite_prompt_asset_reference_image(conn: sqlite3.Connection, asset_id: str, shot_id: str) -> dict:
+    asset = prompt_asset_by_id(conn, asset_id)
+    if not asset:
+        raise AppError(HTTPStatus.NOT_FOUND, "套图提示词素材不存在")
+    if normalize_prompt_asset_kind(asset.get("assetKind")) != PROMPT_ASSET_KIND_SUITE:
+        raise AppError(HTTPStatus.BAD_REQUEST, "这不是套图提示词素材")
+    product = prompt_asset_product_image(asset)
+    if not product:
+        raise AppError(HTTPStatus.BAD_REQUEST, "请先上传商品原图")
+    references = prompt_asset_reference_images(asset)
+    suite_shots = normalize_suite_prompt_shots(asset.get("suiteShots"), references)
+    shot_index = next((index for index, shot in enumerate(suite_shots) if str(shot.get("id") or "") == str(shot_id or "")), -1)
+    if shot_index < 0:
+        raise AppError(HTTPStatus.NOT_FOUND, "套图图位不存在")
+    image_option = selected_prompt_factory_image_model(conn)
+    reference = references[shot_index] if shot_index < len(references) else (references[0] if references else {})
+    reference_images = [product, reference] if reference.get("url") else [product]
+    update_prompt_asset_progress(
+        conn,
+        asset_id,
+        "imageA",
+        "生成参考辅助图",
+        f"正在为「{suite_shots[shot_index].get('name') or '套图图位'}」使用商品原图和参考图生成参考辅助版本。",
+        image_option=image_option,
+    )
+    image_url = generate_prompt_asset_image(
+        image_option,
+        suite_reference_assisted_prompt(asset, suite_shots[shot_index]),
+        reference_images,
+        size=suite_shots[shot_index].get("size") or "1024x1024",
+    )
+    suite_shots[shot_index] = {**suite_shots[shot_index], "referenceImageUrl": image_url, "imageError": ""}
+    updated = update_prompt_asset(conn, asset_id, {"suiteShots": suite_shots, "error": ""})
+    conn.commit()
+    return updated
+
+
+def generate_prompt_asset(conn: sqlite3.Connection, asset_id: str, provider_model_id: str = "") -> dict:
+    asset = prompt_asset_by_id(conn, asset_id)
+    if not asset:
+        raise AppError(HTTPStatus.NOT_FOUND, "提示词素材不存在")
+    selected_model_id = provider_model_id or asset.get("providerModelId") or ""
+    text_option = selected_prompt_factory_model(conn, selected_model_id)
+    image_option = text_option if normalize_model_kind(text_option.get("modelKind")) == MODEL_KIND_IMAGE else selected_prompt_factory_image_model(conn)
+    update_prompt_asset_progress(
+        conn,
+        asset_id,
+        "prepare",
+        "准备生成请求",
+        "已选择文本理解模型与验证出图模型，准备上传参考图上下文。",
+        text_option=text_option,
+        image_option=image_option,
+    )
+    update_prompt_asset(
+        conn,
+        asset_id,
+        {"status": PROMPT_ASSET_STATUS_GENERATING, "providerModelId": text_option["providerModelId"], "error": ""},
+    )
+    asset = prompt_asset_by_id(conn, asset_id) or asset
+    asset_kind = normalize_prompt_asset_kind(asset.get("assetKind"))
+    references = prompt_asset_reference_images(asset)
+    product = prompt_asset_product_image(asset)
+    text_references = [image for image in [product, *references] if image.get("url")]
+    try:
+        update_prompt_asset_progress(
+            conn,
+            asset_id,
+            "analysis",
+            "分析参考图风格",
+            "文本理解模型正在读取参考图的构图、卖点模块、文字层级和电商风格。",
+            text_option=text_option,
+            image_option=image_option,
+        )
+        analysis_payload = call_prompt_factory_text(text_option, prompt_factory_analysis_instruction(), text_references)
+        update_prompt_asset_progress(
+            conn,
+            asset_id,
+            "prompt",
+            "生成可复用提示词",
+            "正在把参考图分析转换成中文和英文 Prompt，要求不依赖参考图也能复刻风格。",
+            text_option=text_option,
+            image_option=image_option,
+        )
+        prompt_instruction = (
+            prompt_factory_suite_prompt_instruction(analysis_payload, len(references))
+            if asset_kind == PROMPT_ASSET_KIND_SUITE
+            else prompt_factory_prompt_instruction(analysis_payload)
+        )
+        prompt_payload = call_prompt_factory_text(text_option, prompt_instruction, [product] if product else [])
+        chinese_prompt = trim_text(
+            with_in_image_copy_language_rule(str(prompt_payload.get("chinesePrompt") or ""), language="zh"),
+            PROMPT_ASSET_TEXT_LIMIT,
+        )
+        english_prompt = trim_text(
+            with_in_image_copy_language_rule(str(prompt_payload.get("englishPrompt") or ""), language="en"),
+            PROMPT_ASSET_TEXT_LIMIT,
+        )
+        if not chinese_prompt or not english_prompt:
+            raise AppError(HTTPStatus.BAD_GATEWAY, "模型未返回完整的中英文提示词")
+        suite_shots = normalize_suite_prompt_shots(prompt_payload.get("suiteShots"), references)
+        partial = update_prompt_asset(
+            conn,
+            asset_id,
+            {
+                "referenceAnalysis": trim_text(
+                    str(analysis_payload.get("summary") or json.dumps(analysis_payload, ensure_ascii=False)),
+                    PROMPT_ASSET_TEXT_LIMIT,
+                ),
+                "chinesePrompt": chinese_prompt,
+                "englishPrompt": english_prompt,
+                "suiteShots": suite_shots if asset_kind == PROMPT_ASSET_KIND_SUITE else asset.get("suiteShots", []),
+                "request": {
+                    "providerModelId": text_option["providerModelId"],
+                    "textProviderModelId": text_option["providerModelId"],
+                    "imageProviderModelId": image_option["providerModelId"],
+                    "referenceCount": len(references),
+                    "hasProductImage": bool(product),
+                    "assetKind": asset_kind,
+                },
+            },
+        )
+        if asset_kind == PROMPT_ASSET_KIND_SUITE:
+            generated_suite_shots = generate_suite_prompt_only_images_for_shots(
+                conn,
+                asset_id,
+                partial,
+                suite_shots,
+                product,
+                image_option,
+            )
+            completed_count = sum(1 for shot in generated_suite_shots if shot.get("promptOnlyImageUrl"))
+            comparison = f"已生成 {completed_count}/{len(generated_suite_shots)} 张套图 Prompt-only 验证图"
+            if not product:
+                comparison = "未上传商品原图，已生成套图提示词但未验证出图。"
+            return update_prompt_asset(
+                conn,
+                asset_id,
+                {
+                    "status": PROMPT_ASSET_STATUS_GENERATED,
+                    "imageAUrl": "",
+                    "imageBUrl": "",
+                    "comparison": comparison,
+                    "suiteShots": generated_suite_shots,
+                    "response": {"analysis": analysis_payload, "prompt": prompt_payload},
+                    "error": "",
+                },
+            )
+        image_a_url = ""
+        image_b_url = ""
+        comparison = "未上传商品原图，未验证产品迁移。"
+        if product:
+            update_prompt_asset_progress(
+                conn,
+                asset_id,
+                "imageA",
+                "生成 Image A",
+                "验证出图模型正在使用商品原图和参考图，生成参考辅助版本。",
+                text_option=text_option,
+                image_option=image_option,
+            )
+            image_a_url = generate_prompt_asset_image(image_option, prompt_factory_reference_assisted_prompt(partial), [product, *references])
+            partial = update_prompt_asset(conn, asset_id, {"imageAUrl": image_a_url})
+            conn.commit()
+            update_prompt_asset_progress(
+                conn,
+                asset_id,
+                "imageB",
+                "生成 Image B",
+                "验证出图模型正在只使用商品原图和生成 Prompt，测试提示词是否可下发复用。",
+                text_option=text_option,
+                image_option=image_option,
+            )
+            image_b_url = generate_prompt_asset_image(image_option, chinese_prompt, [product])
+            partial = update_prompt_asset(conn, asset_id, {"imageBUrl": image_b_url})
+            conn.commit()
+            comparison_references = [
+                image
+                for image in [
+                    references[0] if references else {},
+                    {"name": "Image A", "url": image_a_url},
+                    {"name": "Image B", "url": image_b_url},
+                ]
+                if image.get("url")
+            ]
+            update_prompt_asset_progress(
+                conn,
+                asset_id,
+                "compare",
+                "对比验证图",
+                "文本理解模型正在比较 Image A、Image B 与参考风格，输出可审核结论。",
+                text_option=text_option,
+                image_option=image_option,
+            )
+            comparison_payload = call_prompt_factory_text(
+                text_option,
+                prompt_factory_comparison_instruction(),
+                comparison_references,
+            )
+            comparison_source = (
+                json.dumps(comparison_payload, ensure_ascii=False)
+                if any(key in comparison_payload for key in ("similarityScore", "similarity_score", "score", "similarity"))
+                else str(comparison_payload.get("comparison") or json.dumps(comparison_payload, ensure_ascii=False))
+            )
+            comparison = trim_text(
+                comparison_source,
+                PROMPT_ASSET_TEXT_LIMIT,
+            )
+            comparison = normalize_prompt_factory_comparison_text(comparison)
+        return update_prompt_asset(
+            conn,
+            asset_id,
+            {
+                "status": PROMPT_ASSET_STATUS_GENERATED,
+                "imageAUrl": image_a_url,
+                "imageBUrl": image_b_url,
+                "comparison": comparison,
+                "suiteShots": suite_shots if asset_kind == PROMPT_ASSET_KIND_SUITE else asset.get("suiteShots", []),
+                "response": {"analysis": analysis_payload, "prompt": prompt_payload},
+                "error": "",
+            },
+        )
+    except AppError as error:
+        update_prompt_asset(conn, asset_id, {"status": PROMPT_ASSET_STATUS_FAILED, "error": error.message})
+        raise
+    except UpstreamError as error:
+        update_prompt_asset(conn, asset_id, {"status": PROMPT_ASSET_STATUS_FAILED, "error": f"API {error.status}: {error.message}"})
+        raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {error.status}: {error.message}")
+    except Exception as error:
+        update_prompt_asset(conn, asset_id, {"status": PROMPT_ASSET_STATUS_FAILED, "error": str(error)})
+        raise
+
+
 def resolve_generation_prompt(body: dict, prompt_config: dict, references: list[dict]) -> tuple[str, str]:
     template_id = trim_text(str(body.get("templateId") or body.get("template_id") or "").strip(), 120)
     if template_id:
@@ -2892,15 +4163,13 @@ def resolve_generation_prompt(body: dict, prompt_config: dict, references: list[
                 {"index": variant_index},
             )
             prompt = "\n".join(part for part in (prompt, supplemental) if part)
-        return with_strict_product_reference(
-            with_reference_context(prompt, references, prompt_config),
-            prompt_config,
-        ), "template"
+        prompt = with_in_image_copy_language_rule(with_reference_context(prompt, references, prompt_config), language="zh")
+        return with_strict_product_reference(prompt, prompt_config), "template"
 
     prompt = trim_text(str(body.get("prompt") or "").strip(), 8000)
     if not prompt:
         raise AppError(HTTPStatus.BAD_REQUEST, "请选择模板")
-    return prompt, "prompt"
+    return with_in_image_copy_language_rule(prompt, language="zh"), "prompt"
 
 
 def single_template_prompt(prompt_config: dict, template_id: str) -> str:
@@ -2915,6 +4184,126 @@ def prompt_text(template: str, values: dict) -> str:
     for key, value in values.items():
         text = text.replace("{" + str(key) + "}", str(value))
     return text
+
+
+def with_in_image_copy_language_rule(prompt: str, *, language: str = "zh") -> str:
+    text = str(prompt or "").strip()
+    if any(needle in text for needle in IN_IMAGE_COPY_LANGUAGE_NEEDLES):
+        return text
+    rule = IN_IMAGE_COPY_LANGUAGE_RULE_EN if language == "en" else IN_IMAGE_COPY_LANGUAGE_RULE_ZH
+    return "\n\n".join(part for part in (text, rule) if part)
+
+
+def prompt_factory_analysis_instruction() -> str:
+    return """
+Analyze the ecommerce reference image and optional product image. Return strict JSON only with keys:
+summary, imageType, canvasRatio, productPlacement, backgroundLighting, textHierarchy,
+englishCopySuggestions, riskPoints. Focus on layout, labels, icons, callouts, typography,
+scene style, and seller realism. All visible in-image copy must be in English. Translate any visible Chinese copy into concise English.
+""".strip()
+
+
+def prompt_factory_prompt_instruction(analysis: dict) -> str:
+    return f"""
+Create reusable prompt-only ecommerce image prompts from this reference analysis. Return strict JSON only:
+{{"chinesePrompt":"...", "englishPrompt":"..."}}
+
+Rules:
+- The prompts must work with only one uploaded original product image and text prompt.
+- Do not mention a separate reference image.
+- Preserve exact product identity: shape, color, proportions, material, screen, buttons, ports, openings, logo, accessories, and visible construction.
+- The Chinese prompt must include this exact built-in rule: {IN_IMAGE_COPY_LANGUAGE_RULE_ZH}
+- The English prompt must include this exact built-in rule: {IN_IMAGE_COPY_LANGUAGE_RULE_EN}
+- Avoid fake certifications, platform logos, rankings, discount badges, unsupported percentages, and unverifiable medical or technical claims.
+
+Reference analysis JSON:
+{json.dumps(analysis, ensure_ascii=False)}
+""".strip()
+
+
+def prompt_factory_suite_prompt_instruction(analysis: dict, reference_count: int) -> str:
+    return f"""
+Create reusable prompt-only ecommerce suite prompts from this multi-image reference analysis. Return strict JSON only:
+{{"chinesePrompt":"overall suite style prompt", "englishPrompt":"overall suite style prompt in English", "suiteShots":[{{"name":"01 ...", "size":"1024x1024", "description":"...", "chinesePrompt":"shot-level prompt", "englishPrompt":"shot-level prompt in English"}}]}}
+
+Rules:
+- Create {max(1, reference_count)} to {max(1, reference_count)} suiteShots, one for each reference image/order when possible.
+- The overall prompts must describe the unified ecommerce suite style, product consistency, layout rhythm, lighting, text hierarchy, and seller realism.
+- Each suiteShots item must describe one C-side suite image slot that can work with only one uploaded original product image and text prompt.
+- Do not mention a separate reference image in final prompts.
+- Preserve exact product identity across the whole suite: shape, color, proportions, material, screen, buttons, ports, openings, logo, accessories, and visible construction.
+- The Chinese prompt and each Chinese shot prompt must include or inherit this rule: {IN_IMAGE_COPY_LANGUAGE_RULE_ZH}
+- The English prompt and each English shot prompt must include or inherit this rule: {IN_IMAGE_COPY_LANGUAGE_RULE_EN}
+- Avoid fake certifications, platform logos, rankings, discount badges, unsupported percentages, and unverifiable medical or technical claims.
+
+Reference analysis JSON:
+{json.dumps(analysis, ensure_ascii=False)}
+""".strip()
+
+
+def prompt_factory_reference_assisted_prompt(asset: dict) -> str:
+    prompt = "\n".join(
+        part
+        for part in [
+            "Use the uploaded original product image as the product identity to preserve.",
+            "Use the uploaded ecommerce reference image as layout, composition, text hierarchy, lighting, and seller-style guidance.",
+            asset.get("chinesePrompt")
+            or asset.get("englishPrompt")
+            or "Create a realistic ecommerce product image matching the reference style.",
+        ]
+        if part
+    )
+    return with_in_image_copy_language_rule(prompt, language="zh")
+
+
+def prompt_factory_comparison_instruction() -> str:
+    return """
+Compare the reference ecommerce image, Image A, and Image B. Return strict JSON only with keys similarityScore and comparison.
+similarityScore must be an integer from 0 to 100 that scores how well Image B can reproduce the reference ecommerce style while preserving product identity.
+In comparison, mention only the most important match/drift and one concrete next adjustment.
+Write the comparison in Simplified Chinese for a B-side admin reviewer. Do not answer in English.
+""".strip()
+
+
+def prompt_factory_similarity_score_text(value: str) -> str:
+    text = trim_text(str(value or ""), PROMPT_ASSET_TEXT_LIMIT).strip()
+    if not text:
+        return "相似度待复核"
+    payload = None
+    if text.startswith("{"):
+        try:
+            payload = json.loads(text)
+        except json.JSONDecodeError:
+            payload = None
+    if isinstance(payload, dict):
+        for key in ("similarityScore", "similarity_score", "score", "similarity"):
+            raw_score = payload.get(key)
+            if raw_score is None:
+                continue
+            try:
+                score = int(round(float(raw_score)))
+            except (TypeError, ValueError):
+                continue
+            score = max(0, min(100, score))
+            return f"相似度 {score}分"
+    match = re.search(r"(?:相似度|similarity|score)\D{0,12}(\d{1,3})", text, re.IGNORECASE)
+    if match:
+        score = max(0, min(100, int(match.group(1))))
+        return f"相似度 {score}分"
+    return text if text.startswith("相似度") and len(text) <= 24 else "相似度待复核"
+
+
+def normalize_prompt_factory_comparison_text(value: str) -> str:
+    text = trim_text(str(value or ""), PROMPT_ASSET_TEXT_LIMIT)
+    if not text:
+        return "对比结论为空，请重试当前素材。"
+    score_text = prompt_factory_similarity_score_text(text)
+    if score_text.startswith("相似度"):
+        return score_text
+    chinese_chars = sum(1 for char in text if "\u4e00" <= char <= "\u9fff")
+    if chinese_chars >= 8:
+        return text
+    return trim_text(f"对比结论：模型返回了英文结论，请人工复核。原始结论：{text}", PROMPT_ASSET_TEXT_LIMIT)
 
 
 def with_reference_context(prompt: str, references: list[dict], prompt_config: dict) -> str:
@@ -3415,6 +4804,52 @@ def extract_image_results_from_payload(payload) -> list[dict]:
             text = content or choice.get("text") or ""
             images.extend({"url": url} for url in extract_data_urls_from_text(text))
     return [image for image in images if image.get("url")]
+
+
+def extract_text_results_from_payload(payload) -> list[str]:
+    texts: list[str] = []
+    if isinstance(payload, dict):
+        for candidate in payload.get("candidates") or []:
+            content = candidate.get("content") if isinstance(candidate, dict) else {}
+            for part in (content or {}).get("parts") or []:
+                if isinstance(part, dict) and part.get("text"):
+                    texts.append(str(part.get("text") or ""))
+        for choice in payload.get("choices") or []:
+            if not isinstance(choice, dict):
+                continue
+            content = choice.get("message", {}).get("content") if isinstance(choice.get("message"), dict) else ""
+            text = content or choice.get("text") or ""
+            if text:
+                texts.append(str(text))
+        if payload.get("text"):
+            texts.append(str(payload.get("text")))
+    elif isinstance(payload, str):
+        texts.append(payload)
+    return [text for text in texts if text.strip()]
+
+
+def parse_json_object_from_model_text(text: str) -> dict:
+    value = str(text or "").strip()
+    candidates = [value]
+    if "```" in value:
+        parts = value.split("```")
+        for part in parts:
+            cleaned = part.strip()
+            if cleaned.startswith("json"):
+                cleaned = cleaned[4:].strip()
+            candidates.append(cleaned)
+    start = value.find("{")
+    end = value.rfind("}")
+    if start >= 0 and end > start:
+        candidates.append(value[start : end + 1])
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise AppError(HTTPStatus.BAD_GATEWAY, "模型返回的 JSON 无法解析")
 
 
 def extract_data_urls_from_text(text: str) -> list[str]:

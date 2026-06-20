@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>B端管理台 - AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260611-provider-kind-v3" />
+    <link rel="stylesheet" href="./styles.css?v=20260620-suite-factory" />
   </head>
   <body class="admin-body">
     <main class="admin-shell">
@@ -30,6 +30,8 @@
           <button class="admin-nav-item" type="button" data-admin-view="feedback">图片反馈</button>
           <button class="admin-nav-item" type="button" data-admin-view="users">注册用户</button>
           <button class="admin-nav-item" type="button" data-admin-view="logs">生成记录</button>
+          <button class="admin-nav-item" type="button" data-admin-view="factory">图片提示词工厂</button>
+          <button class="admin-nav-item" type="button" data-admin-view="suite-factory">套图提示词工厂</button>
           <button class="admin-nav-item" type="button" data-admin-view="prompts">提示词配置</button>
         </aside>
 
@@ -150,7 +152,7 @@
           <section class="admin-view" data-admin-view-panel="prompts">
             <section class="panel admin-prompt-panel">
               <div class="panel-header">
-                <h3>提示词配置</h3>
+                <h3 id="promptPanelTitle">提示词配置</h3>
                 <button class="primary-button" id="savePromptConfigBtn" type="button">保存提示词配置</button>
               </div>
               <div class="admin-prompt-layout">
@@ -184,7 +186,7 @@
               <span>供应商类型</span>
               <select id="providerTypeInput">
                 <option value="muskapis_image">Muskapis Image</option>
-                <option value="openai_image">OpenAI Image Compatible</option>
+                <option value="openai_image">OpenAI Compatible</option>
                 <option value="aokapi_gemini">AOKAPI / Gemini</option>
               </select>
             </label>
@@ -207,6 +209,7 @@
               <select id="providerModelKindInput">
                 <option value="image">图片模型</option>
                 <option value="video">视频模型</option>
+                <option value="text">文本理解模型</option>
               </select>
             </label>
           </div>
@@ -265,7 +268,24 @@
       </div>
     </div>
 
+    <div class="modal-backdrop factory-image-preview-modal" id="factoryImagePreviewModal" aria-hidden="true">
+      <div class="modal factory-image-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="factoryImagePreviewTitle">
+        <div class="modal-header">
+          <div>
+            <p class="eyebrow">VALIDATION IMAGE</p>
+            <h3 id="factoryImagePreviewTitle">验证图预览</h3>
+          </div>
+          <button class="icon-button" type="button" id="closeFactoryImagePreviewBtn" aria-label="关闭" title="关闭">
+            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
+          </button>
+        </div>
+        <div class="modal-body">
+          <img id="factoryImagePreviewImg" alt="验证图预览" />
+        </div>
+      </div>
+    </div>
+
     <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./admin.js?v=20260611-provider-kind-v3" defer></script>
+    <script src="./admin.js?v=20260620-factory-image-preview-download" defer></script>
   </body>
 </html>
