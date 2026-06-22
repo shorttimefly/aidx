@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>登录 - AI智能图片编辑器</title>
+    <link rel="stylesheet" href="./styles.css?v=20260610-login" />
+  </head>
+  <body class="admin-body">
+    <main class="admin-shell admin-login-shell">
+      <header class="admin-header">
+        <div>
+          <p class="eyebrow">AI IMAGE EDITOR</p>
+          <h1>登录或注册</h1>
+        </div>
+      </header>
+
+      <section class="panel admin-login-panel">
+        <div class="panel-header">
+          <h3>登录</h3>
+        </div>
+        <div class="admin-login-grid">
+          <div class="auth-tabs" role="tablist" aria-label="账号操作">
+            <button class="auth-tab active" id="authLoginTab" type="button" role="tab" aria-selected="true" data-auth-mode="login">登录</button>
+            <button class="auth-tab" id="authRegisterTab" type="button" role="tab" aria-selected="false" data-auth-mode="register">注册</button>
+          </div>
+          <label class="field">
+            <span>邮箱</span>
+            <input id="loginEmailInput" type="email" autocomplete="email" placeholder="you@example.com" />
+          </label>
+          <label class="field">
+            <span>密码</span>
+            <input id="loginPasswordInput" type="password" autocomplete="current-password" placeholder="至少 8 位" />
+          </label>
+          <p class="form-message" id="loginMessage"></p>
+          <button class="primary-button" id="loginSubmitBtn" type="button">登录</button>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+    <script src="./login.js?v=20260623-login" defer></script>
+  </body>
+</html>

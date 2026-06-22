@@ -1171,8 +1171,7 @@ function collectUserSource() {
 
 async function bootstrapAuth() {
   if (!state.auth.token) {
-    renderAuthState();
-    openAuthModal({ locked: true });
+    window.location.replace("./login.html");
     return;
   }
   try {
@@ -1180,11 +1179,10 @@ async function bootstrapAuth() {
     state.auth.user = payload.user;
     await loadAccountSettings();
     await syncRecoverableGeneratedAssets();
-    closeAuthModal();
   } catch (error) {
     clearAuthSession();
-    showToast(error.message || "请重新登录", true);
-    openAuthModal({ locked: true });
+    window.location.replace("./login.html");
+    return;
   } finally {
     renderAuthState();
   }
@@ -1210,7 +1208,8 @@ async function apiFetch(path, options = {}) {
     if (response.status === 401 || response.status === 403) {
       clearAuthSession();
       renderAuthState();
-      openAuthModal({ locked: true });
+      window.location.replace("./login.html");
+      throw new Error("请重新登录");
     }
     const message = payload?.error || payload?.message || response.statusText || "请求失败";
     if (response.status === 404 && message === "接口不存在" && path === "/image-feedback") {
