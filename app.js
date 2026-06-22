@@ -1,6 +1,14 @@
 "use strict";
 
 const APP_BASE_PATH = detectAppBasePath();
+(function() {
+  var path = window.location.pathname || "";
+  if (path.endsWith("/login.html") || path.endsWith("/admin-login.html") || path.endsWith("/admin.html")) return;
+  var token = localStorage.getItem("imageStudio.authToken");
+  if (!token) {
+    window.location.replace((APP_BASE_PATH || ".") + "/login.html");
+  }
+})();
 const DB_NAME = "pulse-ox-image-studio";
 const DB_VERSION = 1;
 const STORES = {
