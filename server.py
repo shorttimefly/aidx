@@ -35,7 +35,7 @@ DB_PATH = Path(os.environ.get("IMAGE_STUDIO_DB", str(STORAGE_DIR / "image_studio
 SESSION_DAYS = int(os.environ.get("SESSION_DAYS", "14"))
 ADMIN_EMAIL = os.environ.get("ADMIN_EMAIL", "admin@example.com").strip().lower()
 ADMIN_PASSWORD = os.environ.get("ADMIN_PASSWORD", "change-me")
-DEFAULT_CREDITS = max(1, int(os.environ.get("DEFAULT_CREDITS", "10")))
+DEFAULT_CREDITS = max(0, int(os.environ.get("DEFAULT_CREDITS", "0")))
 REDEEM_PEPPER = os.environ.get("REDEEM_PEPPER", "")
 GENERATION_COST_PER_IMAGE = 1
 OLD_DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/"
@@ -2668,8 +2668,11 @@ class Handler(SimpleHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
-        self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.end_headers()
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError, OSError):
+            pass
 
     def bearer_token(self) -> str:
         auth = self.headers.get("Authorization", "")
