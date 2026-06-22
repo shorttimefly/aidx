@@ -1131,9 +1131,8 @@ function applySuiteAccessState() {
   els.suiteView?.setAttribute("aria-disabled", "false");
   if (els.generateSuiteBtn?.getAttribute("aria-busy") !== "true") {
     els.generateSuiteBtn.disabled = false;
-    setButtonLabel(els.generateSuiteBtn, admin ? SUITE_ENABLED_LABEL : SUITE_DISABLED_LABEL);
+    setButtonLabel(els.generateSuiteBtn, SUITE_ENABLED_LABEL);
   }
-  if (!admin && document.body.dataset.view === "suite") switchView("generate");
 }
 
 function openAdminEntry() {
