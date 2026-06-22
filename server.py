@@ -2751,8 +2751,8 @@ class Handler(SimpleHTTPRequestHandler):
                 "source": "user",
             }
 
-    def create_session(self, user_id: str | None, role: str) -> str:
-        token = secrets.token_urlsafe(32)
+    def create_session(self, user_id: str | None, role: str, token: str | None = None) -> str:
+        token = token or secrets.token_urlsafe(32)
         expires_at = int(time.time()) + SESSION_DAYS * 86400
         with connect() as conn:
             conn.execute(
@@ -2838,6 +2838,9 @@ class Handler(SimpleHTTPRequestHandler):
                 raise AppError(HTTPStatus.FORBIDDEN, "账号已被禁用")
             conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
         token = self.create_session(user["id"], "user")
+        # SSO: if user has admin role, also create admin session with same token
+        if normalize_user_role(row_value(user, "role", USER_ROLE)) == ADMIN_ROLE:
+            self.create_session(user["id"], ADMIN_ROLE, token=token)
         with connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
         self.json_response({"token": token, "user": row_user(user)})
@@ -3434,6 +3437,7 @@ class Handler(SimpleHTTPRequestHandler):
                 raise AppError(HTTPStatus.FORBIDDEN, "该账号没有 B 端管理员权限")
             conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
         token = self.create_session(user["id"], ADMIN_ROLE)
+        self.create_session(user["id"], "user", token=token)
         self.json_response(
             {
                 "token": token,

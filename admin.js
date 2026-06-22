@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_BASE_PATH = detectAppBasePath();
-const ADMIN_TOKEN_KEY = "imageStudio.adminToken";
+const ADMIN_TOKEN_KEY = "imageStudio.authToken";
 const ADMIN_ENTRY_TOKEN_PARAM = "adminToken";
 const PROMPT_GROUPS = [
   { id: "single", label: "单图模板" },

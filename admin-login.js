@@ -1,7 +1,7 @@
 "use strict";
 
 const APP_BASE_PATH = detectAppBasePath();
-const ADMIN_TOKEN_KEY = "imageStudio.adminToken";
+const ADMIN_TOKEN_KEY = "imageStudio.authToken";
 
 const state = {
   token: localStorage.getItem(ADMIN_TOKEN_KEY) || ""
