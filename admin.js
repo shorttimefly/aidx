@@ -264,12 +264,16 @@ async function adminFetch(path, options = {}) {
   if (!response.ok) {
     if (response.status === 403) {
       clearAdmin();
-      redirectToAdminLogin("forbidden");
+      if (!window.location.pathname.endsWith("/admin-login.html")) {
+        redirectToAdminLogin("forbidden");
+      }
       throw new Error("你不是管理员");
     }
     if (response.status === 401) {
       clearAdmin();
-      redirectToAdminLogin("expired");
+      if (!window.location.pathname.endsWith("/admin-login.html")) {
+        redirectToAdminLogin("expired");
+      }
       throw new Error("登录已过期，请重新登录");
     }
     const message = payload?.error || payload?.message || response.statusText || "请求失败";
