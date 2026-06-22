@@ -1236,11 +1236,10 @@ function portMismatchMessage() {
 
 async function handleAuth() {
   const mode = state.activeAuthMode;
-  const authType = els.authTypeInput.value === "email" ? "email" : "username";
-  const name = els.authNameInput.value.trim();
+  const email = els.authNameInput.value.trim();
   const password = els.authPasswordInput.value;
-  if (!name || !password) {
-    showToast(authType === "email" ? "请输入邮箱和密码" : "请输入用户名和密码", true);
+  if (!email || !password) {
+    showToast("请输入邮箱和密码", true);
     return;
   }
   if (mode === "register" && password.length < 8) {
@@ -1250,7 +1249,7 @@ async function handleAuth() {
   const button = els.authSubmitBtn;
   setBusy(true, button, mode === "register" ? "注册中" : "登录中");
   try {
-    const requestBody = authType === "email" ? { authType, email: name, password } : { authType, name, password };
+    const requestBody = { email, password };
     if (mode === "register") requestBody.source = collectUserSource();
     const payload = await apiFetch(mode === "register" ? "/auth/register" : "/auth/login", {
       method: "POST",
@@ -1361,14 +1360,6 @@ function accountConfiguredText(loggedIn, keyConfigured, modelName = "") {
   return accountModelName(modelName) || "未配置";
 }
 
-function updateAuthTypeUi() {
-  const authType = els.authTypeInput.value === "email" ? "email" : "username";
-  els.authNameLabel.textContent = authType === "email" ? "邮箱" : "用户名";
-  els.authNameInput.type = authType === "email" ? "email" : "text";
-  els.authNameInput.autocomplete = authType === "email" ? "email" : "username";
-  els.authNameInput.placeholder = authType === "email" ? "you@example.com" : "例如：AIECO Studio";
-}
-
 function switchAuthMode(mode) {
   state.activeAuthMode = mode === "register" ? "register" : "login";
   els.authModeTabs.forEach((button) => {
@@ -1381,7 +1372,6 @@ function switchAuthMode(mode) {
 
 function openAuthModal({ locked = false } = {}) {
   switchAuthMode("login");
-  updateAuthTypeUi();
   els.authModal.dataset.locked = locked ? "true" : "false";
   els.authModal.classList.add("active");
   els.authModal.setAttribute("aria-hidden", "false");

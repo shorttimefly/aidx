@@ -73,7 +73,7 @@ async function handleAdminLogin() {
   try {
     const payload = await adminFetch("/login", {
       method: "POST",
-      body: JSON.stringify({ name: account, password }),
+      body: JSON.stringify({ email: account, password }),
       skipAuth: true
     });
     state.token = payload.token || "";

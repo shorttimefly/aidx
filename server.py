@@ -2480,48 +2480,14 @@ def normalize_user_role(value) -> str:
     return role if role in VALID_USER_ROLES else USER_ROLE
 
 
-def auth_type(body: dict) -> str:
-    value = str(body.get("authType") or body.get("auth_type") or "").strip().lower()
-    if value in {"email", "username"}:
-        return value
-    identifier = str(body.get("email") or body.get("username") or body.get("name") or "").strip()
-    return "email" if "@" in identifier else "username"
-
-
-def auth_identifier(body: dict) -> str:
-    value = body.get("username") or body.get("name") or body.get("email") or ""
-    return trim_text(str(value).strip(), 120)
-
-
 def auth_email(body: dict) -> str:
-    return trim_text(str(body.get("email") or body.get("name") or body.get("username") or "").strip().lower(), 120)
-
-
-def find_user_by_name(conn: sqlite3.Connection, name: str):
-    if not name:
-        return None
-    return conn.execute("SELECT * FROM users WHERE lower(name)=lower(?) LIMIT 1", (name,)).fetchone()
+    return trim_text(str(body.get("email") or "").strip().lower(), 120)
 
 
 def find_user_by_email(conn: sqlite3.Connection, email: str):
     if not email:
         return None
     return conn.execute("SELECT * FROM users WHERE email<>'' AND lower(email)=lower(?) LIMIT 1", (email,)).fetchone()
-
-
-def find_user_by_auth_identifier(conn: sqlite3.Connection, identifier: str):
-    if not identifier:
-        return None
-    return conn.execute(
-        """
-        SELECT * FROM users
-        WHERE lower(name)=lower(?)
-           OR (email<>'' AND lower(email)=lower(?))
-        ORDER BY CASE WHEN lower(name)=lower(?) THEN 0 ELSE 1 END
-        LIMIT 1
-        """,
-        (identifier, identifier, identifier),
-    ).fetchone()
 
 
 class AppError(Exception):
@@ -2763,17 +2729,11 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_register(self) -> None:
         body = self.read_json()
-        selected_auth_type = auth_type(body)
-        email = auth_email(body) if selected_auth_type == "email" else ""
-        name = email.split("@", 1)[0] if selected_auth_type == "email" else auth_identifier(body)
+        email = auth_email(body)
+        if not email or "@" not in email:
+            raise AppError(HTTPStatus.BAD_REQUEST, "请输入有效邮箱")
+        name = email.split("@", 1)[0]
         password = str(body.get("password") or "")
-        if selected_auth_type == "email":
-            if "@" not in email:
-                raise AppError(HTTPStatus.BAD_REQUEST, "请输入有效邮箱")
-        elif not name:
-            raise AppError(HTTPStatus.BAD_REQUEST, "请输入用户名")
-        elif "@" in name:
-            raise AppError(HTTPStatus.BAD_REQUEST, "这是邮箱格式，请选择邮箱登录/注册")
         if len(password) < 8:
             raise AppError(HTTPStatus.BAD_REQUEST, "密码至少 8 位")
         source = normalize_source(body.get("source"))
@@ -2781,10 +2741,8 @@ class Handler(SimpleHTTPRequestHandler):
         user_id = make_id("user")
         try:
             with connect() as conn:
-                if selected_auth_type == "email" and find_user_by_email(conn, email):
+                if find_user_by_email(conn, email):
                     raise AppError(HTTPStatus.CONFLICT, "邮箱已注册")
-                if selected_auth_type == "username" and find_user_by_name(conn, name):
-                    raise AppError(HTTPStatus.CONFLICT, "用户名已注册")
                 conn.execute(
                     """
                     INSERT INTO users
@@ -2819,7 +2777,7 @@ class Handler(SimpleHTTPRequestHandler):
                     (user_id, settings["defaultEndpoint"], settings["defaultModel"], now_iso()),
                 )
         except sqlite3.IntegrityError:
-            raise AppError(HTTPStatus.CONFLICT, "邮箱已注册" if selected_auth_type == "email" else "用户名已注册")
+            raise AppError(HTTPStatus.CONFLICT, "邮箱已注册")
         token = self.create_session(user_id, "user")
         with connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
@@ -2827,13 +2785,14 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_login(self) -> None:
         body = self.read_json()
-        selected_auth_type = auth_type(body)
-        identifier = auth_email(body) if selected_auth_type == "email" else auth_identifier(body)
+        email = auth_email(body)
         password = str(body.get("password") or "")
+        if not email or "@" not in email:
+            raise AppError(HTTPStatus.BAD_REQUEST, "请输入有效邮箱")
         with connect() as conn:
-            user = find_user_by_email(conn, identifier) if selected_auth_type == "email" else find_user_by_name(conn, identifier)
+            user = find_user_by_email(conn, email)
             if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
-                raise AppError(HTTPStatus.UNAUTHORIZED, "邮箱或密码错误" if selected_auth_type == "email" else "用户名或密码错误")
+                raise AppError(HTTPStatus.UNAUTHORIZED, "邮箱或密码错误")
             if user["disabled"]:
                 raise AppError(HTTPStatus.FORBIDDEN, "账号已被禁用")
             conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
@@ -3417,16 +3376,16 @@ class Handler(SimpleHTTPRequestHandler):
 
     def handle_admin_login(self) -> None:
         body = self.read_json()
-        selected_auth_type = auth_type(body)
-        identifier = (auth_email(body) if selected_auth_type == "email" else auth_identifier(body)).lower()
+        email = str(body.get("email") or body.get("name") or "").strip().lower()
         password = str(body.get("password") or "")
-        if (selected_auth_type == "email" or "@" in identifier) and identifier == ADMIN_EMAIL and password == ADMIN_PASSWORD:
+        # built-in admin
+        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
             token = self.create_session(None, ADMIN_ROLE)
             self.json_response({"token": token, "admin": {"email": ADMIN_EMAIL, "role": ADMIN_ROLE, "source": "builtin"}})
             return
 
         with connect() as conn:
-            user = find_user_by_email(conn, identifier) if selected_auth_type == "email" else find_user_by_name(conn, identifier)
+            user = find_user_by_email(conn, email)
             if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
                 raise AppError(HTTPStatus.UNAUTHORIZED, "B 端账号或密码错误")
             if user["disabled"]:
