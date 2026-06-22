@@ -2686,12 +2686,14 @@ class Handler(SimpleHTTPRequestHandler):
         token = self.bearer_token()
         if not token:
             raise AppError(HTTPStatus.UNAUTHORIZED, "请先登录 B 端")
+        print(f"[AUTH] require_admin token={token[:16]}...", flush=True)
         with connect() as conn:
             session = conn.execute(
                 "SELECT * FROM sessions WHERE token=? AND role=? AND expires_at>?",
                 (token, ADMIN_ROLE, int(time.time())),
             ).fetchone()
             if not session:
+                print(f"[AUTH] require_admin session NOT FOUND", flush=True)
                 raise AppError(HTTPStatus.UNAUTHORIZED, "B 端登录已失效")
             user_id = row_value(session, "user_id", "")
             if not user_id:
@@ -3378,9 +3380,11 @@ class Handler(SimpleHTTPRequestHandler):
         body = self.read_json()
         email = str(body.get("email") or body.get("name") or "").strip().lower()
         password = str(body.get("password") or "")
+        print(f"[AUTH] admin_login email={email} pwd_len={len(password)}", flush=True)
         # built-in admin
         if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
             token = self.create_session(None, ADMIN_ROLE)
+            print(f"[AUTH] admin_login builtin token={token[:16]}...", flush=True)
             self.json_response({"token": token, "admin": {"email": ADMIN_EMAIL, "role": ADMIN_ROLE, "source": "builtin"}})
             return
 
@@ -3394,6 +3398,7 @@ class Handler(SimpleHTTPRequestHandler):
                 raise AppError(HTTPStatus.FORBIDDEN, "该账号没有 B 端管理员权限")
             conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
         token = self.create_session(user["id"], ADMIN_ROLE)
+        print(f"[AUTH] admin_login db user={user['email']} token={token[:16]}...", flush=True)
         self.json_response(
             {
                 "token": token,

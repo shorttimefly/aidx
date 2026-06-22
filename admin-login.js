@@ -23,15 +23,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
   bindEvents();
   showRouteMessage();
-
-  if (!state.token) return;
-
-  try {
-    await adminFetch("/me");
-    redirectToAdmin();
-  } catch {
-    clearAdmin();
-  }
+  // No auto-redirect — user must explicitly log in
 });
 
 function cacheElements() {
