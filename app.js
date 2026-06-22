@@ -1541,7 +1541,8 @@ function libraryItemFromGeneratedAsset(asset) {
     model: asset.model || state.auth.modelSettings.model || DEFAULT_MODEL,
     size: asset.size || "",
     request: asset.request || null,
-    refCount: asset.refCount || 0
+    refCount: asset.refCount || 0,
+    refThumbs: asset.refThumbs || []
   };
 }
 
@@ -3944,7 +3945,15 @@ function renderAssetGrid() {
               <span>${formatTime(asset.savedAt || asset.createdAt)}</span>
             </div>
             <div class="prompt-preview">${escapeHtml(asset.prompt || "")}</div>
-            <div class="card-meta-row">${escapeHtml(asset.model || "")} · ${escapeHtml(asset.size || "")}${asset.refCount ? ` · ${asset.refCount}张参考图` : ""}</div>
+            <div class="card-meta-row">
+              ${escapeHtml(asset.model || "")} · ${escapeHtml(asset.size || "")}${asset.refCount ? ` · ` : ""}
+              ${(asset.refThumbs || []).length ? asset.refThumbs.map((thumb, i) => `
+                <span class="ref-thumb-badge" data-thumb="${escapeAttr(thumb)}">
+                  🖼${i + 1}
+                  <span class="ref-thumb-pop"><img src="${escapeAttr(thumb)}" alt="参考图${i + 1}" width="160" height="160" /></span>
+                </span>
+              `).join(" ") : asset.refCount ? `${asset.refCount}张参考图` : ""}
+            </div>
             <div class="card-actions three">
               <button class="small-button" type="button" data-action="edit" data-id="${escapeAttr(asset.id)}">编辑</button>
               <button class="small-button" type="button" data-action="download" data-id="${escapeAttr(asset.id)}">下载</button>
