@@ -3587,7 +3587,7 @@ function renderImageCard(item) {
   return `
     <article class="image-card" data-id="${escapeHtml(item.id)}">
       <div class="image-frame">
-        <img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.name)}" />
+        <img src="${escapeAttr(item.url)}" alt="${escapeAttr(item.name)}" loading="lazy" />
       </div>
       <div class="image-meta">
         <div class="image-title-row">
@@ -3934,7 +3934,7 @@ function renderAssetGrid() {
       (asset) => `
         <article class="asset-card ${state.selectedAssetId === asset.id ? "selected" : ""}" data-id="${escapeAttr(asset.id)}">
           <div class="image-frame">
-            <img src="${escapeAttr(asset.url)}" alt="${escapeAttr(asset.name)}" />
+            <img src="${escapeAttr(asset.url)}" alt="${escapeAttr(asset.name)}" loading="lazy" />
             <button class="asset-check" type="button" data-action="select" data-id="${escapeAttr(asset.id)}" aria-label="选择 ${escapeAttr(asset.name)}">
               <svg viewBox="0 0 24 24"><path d="m5 12 4 4L19 7" /></svg>
             </button>
