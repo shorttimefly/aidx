@@ -806,6 +806,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await ensureDefaultFolder();
   await refreshLibrary();
   await bootstrapAuth();
+  renderAuthState();
   updateConnectionState();
   setDefaultAutoSaveName();
 });
@@ -1327,7 +1328,7 @@ function renderAuthState() {
   renderAccountKeyStatus();
   applySuiteAccessState();
   els.logoutBtn.style.display = user ? "inline-flex" : "none";
-  els.openAuthBtn.textContent = user ? "切换账号" : "登录 / 注册";
+  els.openAuthBtn.textContent = user ? "切换账号" : "登录";
 }
 
 function renderAccountKeyStatus() {
