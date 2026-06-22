@@ -2660,7 +2660,7 @@ class Handler(SimpleHTTPRequestHandler):
                 raise AppError(HTTPStatus.UNAUTHORIZED, "登录已失效")
             user_id = row_value(session, "user_id", "")
             if not user_id:
-                # built-in admin — resolve to any user with admin role or return virtual user
+                print("[AUTH] require_user WARN: legacy null user_id session", flush=True)
                 user = conn.execute(
                     "SELECT * FROM users WHERE role='admin' AND disabled=0 AND email<>'' LIMIT 1"
                 ).fetchone()
@@ -2680,6 +2680,7 @@ class Handler(SimpleHTTPRequestHandler):
                 conn.execute("DELETE FROM sessions WHERE user_id=? AND role=?", (user["id"], ADMIN_ROLE))
                 conn.commit()
                 raise AppError(HTTPStatus.FORBIDDEN, "管理员权限已撤销")
+            print(f"[AUTH] require_user OK uid={user_id[:12]}... role={session['role']}", flush=True)
             return user
 
     def require_admin(self) -> dict:
@@ -2697,7 +2698,8 @@ class Handler(SimpleHTTPRequestHandler):
                 raise AppError(HTTPStatus.UNAUTHORIZED, "B 端登录已失效")
             user_id = row_value(session, "user_id", "")
             if not user_id:
-                return {"email": ADMIN_EMAIL, "role": ADMIN_ROLE, "source": "builtin"}
+                print("[AUTH] require_admin user_id=NULL rejected", flush=True)
+                raise AppError(HTTPStatus.UNAUTHORIZED, "B 端登录已失效")
             user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
             if not user:
                 conn.execute("DELETE FROM sessions WHERE token=?", (token,))
@@ -2781,6 +2783,7 @@ class Handler(SimpleHTTPRequestHandler):
         except sqlite3.IntegrityError:
             raise AppError(HTTPStatus.CONFLICT, "邮箱已注册")
         token = self.create_session(user_id, "user")
+        print(f"[AUTH] register OK email={email} uid={user_id[:12]}...", flush=True)
         with connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         self.json_response({"token": token, "user": row_user(user)})
@@ -2800,6 +2803,7 @@ class Handler(SimpleHTTPRequestHandler):
             conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
         role = ADMIN_ROLE if normalize_user_role(row_value(user, "role", USER_ROLE)) == ADMIN_ROLE else "user"
         token = self.create_session(user["id"], role)
+        print(f"[AUTH] login OK email={user['email']} uid={user['id'][:12]}... role={role} token={token[:8]}...", flush=True)
         with connect() as conn:
             user = conn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
         self.json_response({"token": token, "user": row_user(user)})
@@ -2975,12 +2979,14 @@ class Handler(SimpleHTTPRequestHandler):
             with connect() as cconn:
                 credit_result = consume_credits(cconn, user["id"], credit_cost)
                 if not credit_result["ok"]:
+                    print(f"[CREDIT] DENY uid={user['id'][:12]}... need={credit_cost} have={credit_result['remaining']}", flush=True)
                     raise AppError(
                         HTTPStatus.TOO_MANY_REQUESTS,
                         "积分不足",
                         payload={"required": credit_cost, "remaining": credit_result["remaining"]},
                     )
                 credits_remaining = credit_result["remaining"]
+                print(f"[CREDIT] OK uid={user['id'][:12]}... cost={credit_cost} remaining={credits_remaining}", flush=True)
                 cconn.commit()
             last_error = None
             for attempt_index, option in enumerate(provider_models_to_try, start=1):
@@ -3327,6 +3333,7 @@ class Handler(SimpleHTTPRequestHandler):
             raise AppError(HTTPStatus.TOO_MANY_REQUESTS, "操作过于频繁，请稍后再试")
 
         code_hash = hash_redeem_code(code)
+        print(f"[REDEEM] user={user['id'][:12]}... code_hash={code_hash[:8]}...", flush=True)
         now = now_iso()
 
         with connect() as conn:
@@ -3334,8 +3341,10 @@ class Handler(SimpleHTTPRequestHandler):
                 "SELECT * FROM redeem_codes WHERE code_hash=? LIMIT 1", (code_hash,)
             ).fetchone()
             if not row:
+                print(f"[REDEEM] FAIL not_found code_hash={code_hash[:8]}...", flush=True)
                 raise AppError(HTTPStatus.BAD_REQUEST, "兑换码无效或已被使用")
             if row["status"] != "active":
+                print(f"[REDEEM] FAIL status={row['status']}", flush=True)
                 if row["expires_at"] and row["expires_at"] < now:
                     raise AppError(HTTPStatus.BAD_REQUEST, "兑换码已过期")
                 raise AppError(HTTPStatus.BAD_REQUEST, "兑换码无效或已被使用")
@@ -3370,6 +3379,7 @@ class Handler(SimpleHTTPRequestHandler):
 
             conn.commit()
 
+        print(f"[REDEEM] OK added={row['credits']} remaining={result['creditsRemaining']}", flush=True)
         self.json_response({
             "creditsAdded": row["credits"],
             "creditsRemaining": result["creditsRemaining"],
@@ -3380,25 +3390,39 @@ class Handler(SimpleHTTPRequestHandler):
         body = self.read_json()
         email = str(body.get("email") or body.get("name") or "").strip().lower()
         password = str(body.get("password") or "")
-        print(f"[AUTH] admin_login email={email} pwd_len={len(password)}", flush=True)
-        # built-in admin
-        if email == ADMIN_EMAIL and password == ADMIN_PASSWORD:
-            token = self.create_session(None, ADMIN_ROLE)
-            print(f"[AUTH] admin_login builtin token={token[:16]}...", flush=True)
-            self.json_response({"token": token, "admin": {"email": ADMIN_EMAIL, "role": ADMIN_ROLE, "source": "builtin"}})
-            return
+        print(f"[AUTH] admin_login email={email}", flush=True)
 
         with connect() as conn:
-            user = find_user_by_email(conn, email)
-            if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
-                raise AppError(HTTPStatus.UNAUTHORIZED, "B 端账号或密码错误")
+            # ensure built-in admin exists in DB
+            if email == ADMIN_EMAIL:
+                user = find_user_by_email(conn, email)
+                if not user:
+                    salt, pwhash = hash_password(ADMIN_PASSWORD)
+                    user_id = make_id("user")
+                    conn.execute(
+                        "INSERT INTO users (id, email, name, password_salt, password_hash, disabled, role, source, "
+                        "referrer, utm_source, utm_medium, utm_campaign, source_path, credits, credits_used, created_at, last_login_at) "
+                        "VALUES (?, ?, ?, ?, ?, 0, 'admin', 'direct', '', 'direct', '', '', '/', 10, 0, ?, ?)",
+                        (user_id, ADMIN_EMAIL, "admin", salt, pwhash, now_iso(), now_iso()),
+                    )
+                    user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
+                elif normalize_user_role(row_value(user, "role", USER_ROLE)) != ADMIN_ROLE:
+                    conn.execute("UPDATE users SET role='admin' WHERE id=?", (user["id"],))
+                if not verify_password(password, user["password_salt"], user["password_hash"]):
+                    raise AppError(HTTPStatus.UNAUTHORIZED, "B 端账号或密码错误")
+            else:
+                user = find_user_by_email(conn, email)
+                if not user or not verify_password(password, user["password_salt"], user["password_hash"]):
+                    raise AppError(HTTPStatus.UNAUTHORIZED, "B 端账号或密码错误")
+
             if user["disabled"]:
                 raise AppError(HTTPStatus.FORBIDDEN, "管理员账号已被禁用")
             if normalize_user_role(row_value(user, "role", USER_ROLE)) != ADMIN_ROLE:
                 raise AppError(HTTPStatus.FORBIDDEN, "该账号没有 B 端管理员权限")
             conn.execute("UPDATE users SET last_login_at=? WHERE id=?", (now_iso(), user["id"]))
+
         token = self.create_session(user["id"], ADMIN_ROLE)
-        print(f"[AUTH] admin_login db user={user['email']} token={token[:16]}...", flush=True)
+        print(f"[AUTH] admin_login OK uid={user['id'][:12]}... role=admin token={token[:8]}...", flush=True)
         self.json_response(
             {
                 "token": token,
