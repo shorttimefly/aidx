@@ -8,17 +8,13 @@ const PROMPT_GROUPS = [
   { id: "suite", label: "套图生成" },
   { id: "refinement", label: "二次编辑" },
   { id: "reference", label: "参考图规则" },
-  { id: "probe", label: "入参探测" },
-  { id: "factory", label: "图片提示词工厂" },
-  { id: "suiteFactory", label: "套图提示词工厂" }
+  { id: "probe", label: "入参探测" }
 ];
 const FACTORY_GENERATION_STEPS = [
   { id: "prepare", label: "准备请求", detail: "选择文本理解模型和验证出图模型" },
   { id: "analysis", label: "分析参考图风格", detail: "读取参考图构图、文字层级和电商模块" },
   { id: "prompt", label: "生成提示词", detail: "输出中文和英文可复用 Prompt" },
-  { id: "imageA", label: "生成 Image A", detail: "用商品图和参考图生成参考辅助版本" },
-  { id: "imageB", label: "生成 Image B", detail: "只用商品图和 Prompt 验证复用效果" },
-  { id: "compare", label: "对比验证图", detail: "比较两张验证图并写出审核结论" }
+  { id: "imageB", label: "生成 Prompt + 原图图片", detail: "只用商品原图和 Prompt 验证复用效果" }
 ];
 
 const state = {
@@ -53,6 +49,7 @@ const state = {
   factoryStatusFilter: "",
   suiteFactoryStatusFilter: "",
   activePromptGroup: "single",
+  promptTreeSelection: {},
   selectedKeyUserId: "",
   selectedKeyMode: "image",
   selectedProviderIndex: -1,
@@ -176,6 +173,7 @@ function bindEvents() {
     const field = event.target.closest("[data-prompt-path]");
     if (field) setPromptConfigValue(field.dataset.promptPath, field.value);
   });
+  els.promptConfigEditor.addEventListener("click", handlePromptConfigTreeClick);
   bindPromptFactoryEvents();
   els.closeAdminKeyModalBtn.addEventListener("click", closeUserKeyModal);
   els.cancelUserKeyBtn.addEventListener("click", closeUserKeyModal);
@@ -231,6 +229,9 @@ function switchAdminView(viewName) {
   state.activeAdminView = viewName || "model";
   if (state.activeAdminView === "factory") state.activePromptGroup = "factory";
   if (state.activeAdminView === "suite-factory") state.activePromptGroup = "suiteFactory";
+  if (state.activeAdminView === "prompts" && !PROMPT_GROUPS.some((group) => group.id === state.activePromptGroup)) {
+    state.activePromptGroup = "single";
+  }
   els.adminNavItems.forEach((button) => {
     const active = button.dataset.adminView === state.activeAdminView;
     button.classList.toggle("active", active);
@@ -241,7 +242,7 @@ function switchAdminView(viewName) {
     view.classList.toggle("active", view.dataset.adminViewPanel === activePanel);
   });
   renderPromptWorkspaceMode();
-  if (state.activeAdminView === "factory" || state.activeAdminView === "suite-factory") renderPromptConfigEditor();
+  if (["factory", "suite-factory", "prompts"].includes(state.activeAdminView)) renderPromptConfigEditor();
 }
 
 async function adminFetch(path, options = {}) {
@@ -431,9 +432,10 @@ async function savePromptAsset(assetId, scope = "single") {
   if (!detail) return;
   const body = {
     title: detail.querySelector("[data-factory-field='title']")?.value || "",
+    referenceAnalysis: detail.querySelector("[data-factory-field='referenceAnalysis']")?.value || "",
     chinesePrompt: detail.querySelector("[data-factory-field='chinesePrompt']")?.value || "",
     englishPrompt: detail.querySelector("[data-factory-field='englishPrompt']")?.value || "",
-    comparison: detail.querySelector("[data-factory-field='comparison']")?.value || "",
+    comparison: detail.querySelector("[data-factory-field='comparison']")?.value ?? promptFactoryActiveAssetFromDetail(detail)?.comparison ?? "",
     targetPlatformId: detail.querySelector("[data-factory-field='targetPlatformId']")?.value || "",
     targetCategoryId: detail.querySelector("[data-factory-field='targetCategoryId']")?.value || "",
     targetScenarioId: detail.querySelector("[data-factory-field='targetScenarioId']")?.value || "",
@@ -459,10 +461,10 @@ async function generatePromptAsset(assetId, button = null, scope = "single") {
       method: "POST",
       body: JSON.stringify({ providerModelId: modelSelect?.value || "" })
     });
-    finishFactoryGenerationJob(assetId, "success", "生成完成，已拿到提示词、验证图和对比结论。", scope);
+    finishFactoryGenerationJob(assetId, "success", suiteMode ? "生成完成，已拿到套图提示词和 Prompt + 原图图片。" : "生成完成，已拿到提示词和 Prompt + 原图图片。", scope);
     replacePromptAsset(payload.asset, scope);
     renderPromptConfigEditor();
-    showToast(suiteMode ? "套图提示词与验证图已生成" : "提示词与验证图已生成");
+    showToast(suiteMode ? "套图提示词与 Prompt + 原图图片已生成" : "提示词与 Prompt + 原图图片已生成");
   } catch (error) {
     finishFactoryGenerationJob(assetId, "failed", error.message || "生成失败", scope);
     if (suiteMode) await loadSuitePromptAssets();
@@ -546,14 +548,21 @@ function replacePromptAsset(asset, scope = "single") {
 }
 
 function collectSuiteFactoryShots(detail) {
-  return Array.from(detail.querySelectorAll("[data-suite-shot-index]")).map((row, index) => ({
-    id: row.querySelector("[data-suite-shot-field='id']")?.value || `shot-${index + 1}`,
-    name: row.querySelector("[data-suite-shot-field='name']")?.value || `0${index + 1} 套图图位`,
-    size: row.querySelector("[data-suite-shot-field='size']")?.value || "1024x1024",
-    description: row.querySelector("[data-suite-shot-field='description']")?.value || "",
-    chinesePrompt: row.querySelector("[data-suite-shot-field='chinesePrompt']")?.value || "",
-    englishPrompt: row.querySelector("[data-suite-shot-field='englishPrompt']")?.value || ""
-  }));
+  const active = promptFactoryActiveAssetFromDetail(detail);
+  return Array.from(detail.querySelectorAll("[data-suite-shot-index]")).map((row, index) => {
+    const existing = Array.isArray(active?.suiteShots) ? active.suiteShots[index] || {} : {};
+    return {
+      id: row.querySelector("[data-suite-shot-field='id']")?.value || `shot-${index + 1}`,
+      name: row.querySelector("[data-suite-shot-field='name']")?.value || `0${index + 1} 套图图位`,
+      size: row.querySelector("[data-suite-shot-field='size']")?.value || "1024x1024",
+      description: row.querySelector("[data-suite-shot-field='description']")?.value || "",
+      chinesePrompt: row.querySelector("[data-suite-shot-field='chinesePrompt']")?.value || "",
+      englishPrompt: row.querySelector("[data-suite-shot-field='englishPrompt']")?.value || "",
+      promptOnlyImageUrl: existing.promptOnlyImageUrl || "",
+      referenceImageUrl: existing.referenceImageUrl || "",
+      imageError: existing.imageError || ""
+    };
+  });
 }
 
 function selectedFactoryModelLabel(providerModelId) {
@@ -568,6 +577,17 @@ function factoryJobStore(scope = "single") {
 
 function factoryAssetList(scope = "single") {
   return scope === "suite" ? state.suitePromptAssets : state.promptAssets;
+}
+
+function promptFactoryActiveAsset(scope = "single") {
+  const suiteMode = scope === "suite";
+  const activeId = suiteMode ? state.activeSuitePromptAssetId : state.activePromptAssetId;
+  return factoryAssetList(scope).find((asset) => asset.id === activeId) || null;
+}
+
+function promptFactoryActiveAssetFromDetail(detail) {
+  if (!detail) return null;
+  return promptFactoryActiveAsset(detail.id === "suitePromptFactoryAssetDetail" ? "suite" : "single");
 }
 
 function factoryScopeForAsset(asset) {
@@ -1102,51 +1122,376 @@ function renderPromptWorkspaceMode() {
 }
 
 function renderPromptConfigEditor() {
-  renderPromptWorkspaceMode();
-  if (!state.promptConfig) {
-    els.promptConfigEditor.innerHTML = `<div class="empty-copy"><strong>正在加载提示词配置</strong><span>请稍候。</span></div>`;
+  preservePromptFactoryEditorState(() => {
+    renderPromptWorkspaceMode();
+    if (!state.promptConfig) {
+      els.promptConfigEditor.innerHTML = `<div class="empty-copy"><strong>正在加载提示词配置</strong><span>请稍候。</span></div>`;
+      return;
+    }
+    const group = state.activePromptGroup;
+    const renderers = {
+      single: renderSinglePromptConfig,
+      suite: renderSuitePromptConfig,
+      refinement: renderRefinementPromptConfig,
+      reference: renderReferencePromptConfig,
+      probe: renderProbePromptConfig,
+      factory: renderPromptFactoryConfig,
+      suiteFactory: renderSuitePromptFactoryConfig
+    };
+    els.promptConfigEditor.innerHTML = (renderers[group] || renderers.single)(state.promptConfig);
+  });
+}
+
+function preservePromptFactoryEditorState(renderFn) {
+  const snapshot = capturePromptFactoryEditorState();
+  renderFn();
+  restorePromptFactoryEditorState(snapshot);
+}
+
+function capturePromptFactoryEditorState() {
+  if (!els.promptConfigEditor) return null;
+  const active = els.promptConfigEditor.contains(document.activeElement) ? document.activeElement : null;
+  const fields = Array.from(els.promptConfigEditor.querySelectorAll("input, textarea, select"))
+    .map((field) => ({ key: promptFactoryEditorFieldKey(field), scrollTop: field.scrollTop || 0 }))
+    .filter((entry) => entry.key);
+  return {
+    editorScrollTop: els.promptConfigEditor.scrollTop || 0,
+    activeKey: promptFactoryEditorFieldKey(active),
+    activeScrollTop: active?.scrollTop || 0,
+    selectionStart: typeof active?.selectionStart === "number" ? active.selectionStart : null,
+    selectionEnd: typeof active?.selectionEnd === "number" ? active.selectionEnd : null,
+    fields
+  };
+}
+
+function restorePromptFactoryEditorState(snapshot) {
+  if (!snapshot || !els.promptConfigEditor) return;
+  const restore = () => {
+    els.promptConfigEditor.scrollTop = snapshot.editorScrollTop || 0;
+    snapshot.fields.forEach((entry) => {
+      const field = findPromptFactoryEditorField(entry.key);
+      if (field) field.scrollTop = entry.scrollTop || 0;
+    });
+    const active = findPromptFactoryEditorField(snapshot.activeKey);
+    if (!active) return;
+    active.focus({ preventScroll: true });
+    if (typeof active.setSelectionRange === "function" && snapshot.selectionStart !== null && snapshot.selectionEnd !== null) {
+      active.setSelectionRange(snapshot.selectionStart, snapshot.selectionEnd);
+    }
+    active.scrollTop = snapshot.activeScrollTop || 0;
+  };
+  restore();
+  window.requestAnimationFrame?.(restore);
+}
+
+function promptFactoryEditorFieldKey(field) {
+  if (!field || !field.dataset) return "";
+  if (field.dataset.promptPath) return `prompt:${field.dataset.promptPath}`;
+  if (field.dataset.factoryField) {
+    const detail = field.closest("#suitePromptFactoryAssetDetail, #promptFactoryAssetDetail");
+    return `factory:${detail?.id || ""}:${field.dataset.factoryField}`;
+  }
+  if (field.dataset.suiteShotField) {
+    const shot = field.closest("[data-suite-shot-index]");
+    return `suite-shot:${shot?.dataset.suiteShotIndex || ""}:${field.dataset.suiteShotField}`;
+  }
+  return field.id ? `id:${field.id}` : "";
+}
+
+function findPromptFactoryEditorField(key) {
+  if (!key || !els.promptConfigEditor) return null;
+  return Array.from(els.promptConfigEditor.querySelectorAll("input, textarea, select"))
+    .find((field) => promptFactoryEditorFieldKey(field) === key) || null;
+}
+
+function renderPromptConfigTreeManager(scope, config) {
+  ensurePromptTreeSelection(scope, config);
+  const selection = state.promptTreeSelection[scope] || "";
+  return `
+    <section class="prompt-tree-manager" data-prompt-tree-scope="${escapeAttr(scope)}">
+      <aside class="prompt-tree-sidebar" aria-label="${scope === "suite" ? "套图生成" : "单图模板"}左侧树">
+        <div class="prompt-tree-sidebar-head">
+          <strong>左侧树</strong>
+          <small>${scope === "suite" ? "套图类型 > 图位" : "平台 > 品类 > 场景/模板"}</small>
+        </div>
+        <button class="ghost-button prompt-tree-root-add" type="button" data-prompt-tree-action="add-root" data-prompt-tree-scope="${escapeAttr(scope)}">
+          新增${scope === "suite" ? "套图类型" : "平台"}
+        </button>
+        <div class="prompt-tree-list">
+          ${scope === "suite" ? renderSuitePromptTree(config, selection) : renderSinglePromptTree(config, selection)}
+        </div>
+      </aside>
+      <div class="prompt-tree-detail">
+        <div class="prompt-tree-sidebar-head">
+          <strong>右侧详情</strong>
+          <small>新增同级 / 新增子级 / 删除节点均会修改当前提示词配置，保存后生效。</small>
+        </div>
+        ${renderPromptTreeDetail(scope, config, selection)}
+      </div>
+    </section>
+  `;
+}
+
+function renderSinglePromptTree(config, selection) {
+  const platforms = config.single?.matrix?.platforms || [];
+  if (!platforms.length) return `<div class="empty-state compact-empty">暂无平台，点击新增平台创建。</div>`;
+  return platforms.map((platform, platformIndex) => `
+    ${renderPromptTreeNode({ scope: "single", type: "platform", key: promptTreeSelectionKey("single", "platform", [platformIndex]), label: platform.label || platform.id || "未命名平台", meta: platform.id, selection, depth: 0 })}
+    ${(platform.categories || []).map((category, categoryIndex) => `
+      ${renderPromptTreeNode({ scope: "single", type: "category", key: promptTreeSelectionKey("single", "category", [platformIndex, categoryIndex]), label: category.label || category.id || "未命名品类", meta: category.id, selection, depth: 1 })}
+      ${(category.scenarios || []).map((scenario, scenarioIndex) => renderPromptTreeNode({ scope: "single", type: "scenario", key: promptTreeSelectionKey("single", "scenario", [platformIndex, categoryIndex, scenarioIndex]), label: scenario.title || scenario.id || "未命名场景", meta: scenario.id, selection, depth: 2 })).join("")}
+    `).join("")}
+  `).join("");
+}
+
+function renderSuitePromptTree(config, selection) {
+  const presets = config.suite?.presets || [];
+  if (!presets.length) return `<div class="empty-state compact-empty">暂无套图类型，点击新增套图类型创建。</div>`;
+  return presets.map((preset, presetIndex) => `
+    ${renderPromptTreeNode({ scope: "suite", type: "preset", key: promptTreeSelectionKey("suite", "preset", [presetIndex]), label: preset.title || preset.id || "未命名套图", meta: preset.id, selection, depth: 0 })}
+    ${(preset.shots || []).map((shot, shotIndex) => renderPromptTreeNode({ scope: "suite", type: "shot", key: promptTreeSelectionKey("suite", "shot", [presetIndex, shotIndex]), label: shot.name || shot.id || "未命名图位", meta: shot.size || shot.id, selection, depth: 1 })).join("")}
+  `).join("");
+}
+
+function renderPromptTreeNode({ scope, type, key, label, meta, selection, depth }) {
+  const canAddChild = ["platform", "category", "preset"].includes(type);
+  return `
+    <button class="prompt-tree-node ${selection === key ? "active" : ""}" type="button" data-prompt-tree-action="select" data-prompt-tree-scope="${escapeAttr(scope)}" data-prompt-tree-key="${escapeAttr(key)}" style="--tree-depth:${Number(depth) || 0}">
+      <span><strong>${escapeHtml(label)}</strong><small>${escapeHtml(meta || type)}</small></span>
+      <span class="prompt-tree-actions">
+        <i data-prompt-tree-action="add-sibling" data-prompt-tree-scope="${escapeAttr(scope)}" data-prompt-tree-key="${escapeAttr(key)}" title="新增同级">+</i>
+        ${canAddChild ? `<i data-prompt-tree-action="add-child" data-prompt-tree-scope="${escapeAttr(scope)}" data-prompt-tree-key="${escapeAttr(key)}" title="新增子级">＋</i>` : ""}
+        <i data-prompt-tree-action="delete" data-prompt-tree-scope="${escapeAttr(scope)}" data-prompt-tree-key="${escapeAttr(key)}" title="删除节点">×</i>
+      </span>
+    </button>
+  `;
+}
+
+function renderPromptTreeDetail(scope, config, key) {
+  const target = promptTreeTarget(scope, config, key);
+  if (!target) return `<div class="empty-state"><strong>选择节点</strong><span>从左侧树选择一个节点后，在这里快速增删改查。</span></div>`;
+  const path = target.path;
+  const item = target.item;
+  if (scope === "single" && target.type === "platform") {
+    return promptTreeDetailCard("平台", [
+      promptField(`${path}.label`, "平台名称", item.label, { type: "input" }),
+      promptField(`${path}.id`, "平台 ID", item.id, { type: "input" })
+    ].join(""));
+  }
+  if (scope === "single" && target.type === "category") {
+    return promptTreeDetailCard("品类", [
+      promptField(`${path}.label`, "品类名称", item.label, { type: "input" }),
+      promptField(`${path}.id`, "品类 ID", item.id, { type: "input" })
+    ].join(""));
+  }
+  if (scope === "single" && target.type === "scenario") {
+    return promptTreeDetailCard("场景/模板", [
+      `<div class="admin-prompt-grid two">${promptField(`${path}.title`, "场景标题", item.title, { type: "input" })}${promptField(`${path}.id`, "场景 ID", item.id, { type: "input" })}</div>`,
+      promptField(`${path}.templateId`, "模板 ID", item.templateId, { type: "input" }),
+      promptField(`${path}.prompt`, "场景提示词", item.prompt, { rows: 8 })
+    ].join(""));
+  }
+  if (scope === "suite" && target.type === "preset") {
+    return promptTreeDetailCard("套图类型", [
+      `<div class="admin-prompt-grid two">${promptField(`${path}.title`, "套图标题", item.title, { type: "input" })}${promptField(`${path}.id`, "套图 ID", item.id, { type: "input" })}</div>`
+    ].join(""));
+  }
+  if (scope === "suite" && target.type === "shot") {
+    return promptTreeDetailCard("图位", [
+      `<div class="admin-prompt-grid two">${promptField(`${path}.name`, "图位名称", item.name, { type: "input" })}${promptField(`${path}.size`, "推荐尺寸", item.size, { type: "input" })}</div>`,
+      promptField(`${path}.id`, "图位 ID", item.id, { type: "input" }),
+      promptField(`${path}.description`, "图位说明", item.description, { type: "input" }),
+      promptField(`${path}.prompt`, "图位提示词", item.prompt, { rows: 8 })
+    ].join(""));
+  }
+  return "";
+}
+
+function promptTreeDetailCard(title, body) {
+  return `<article class="admin-prompt-card"><div class="admin-prompt-card-head"><strong>${escapeHtml(title)}</strong><span>直接删除 / 快速编辑</span></div>${body}</article>`;
+}
+
+function promptTreeSelectionKey(scope, type, indexes) {
+  return `${scope}:${type}:${indexes.join(".")}`;
+}
+
+function parsePromptTreeKey(key) {
+  const [scope, type, rawIndexes = ""] = String(key || "").split(":");
+  return { scope, type, indexes: rawIndexes ? rawIndexes.split(".").map((item) => Number(item)) : [] };
+}
+
+function ensurePromptTreeSelection(scope, config) {
+  const current = state.promptTreeSelection[scope];
+  if (promptTreeTarget(scope, config, current)) return;
+  if (scope === "suite") {
+    const presets = config.suite?.presets || [];
+    state.promptTreeSelection[scope] = presets[0] ? promptTreeSelectionKey("suite", "preset", [0]) : "";
     return;
   }
-  const group = state.activePromptGroup;
-  const renderers = {
-    single: renderSinglePromptConfig,
-    suite: renderSuitePromptConfig,
-    refinement: renderRefinementPromptConfig,
-    reference: renderReferencePromptConfig,
-    probe: renderProbePromptConfig,
-    factory: renderPromptFactoryConfig,
-    suiteFactory: renderSuitePromptFactoryConfig
-  };
-  els.promptConfigEditor.innerHTML = (renderers[group] || renderers.single)(state.promptConfig);
+  const platforms = config.single?.matrix?.platforms || [];
+  state.promptTreeSelection[scope] = platforms[0] ? promptTreeSelectionKey("single", "platform", [0]) : "";
+}
+
+function promptTreeTarget(scope, config, key) {
+  const parsed = parsePromptTreeKey(key);
+  if (!key || parsed.scope !== scope) return null;
+  if (scope === "single") {
+    const platforms = config.single?.matrix?.platforms || [];
+    const [platformIndex, categoryIndex, scenarioIndex] = parsed.indexes;
+    const platform = platforms[platformIndex];
+    if (parsed.type === "platform" && platform) return { type: parsed.type, item: platform, path: `single.matrix.platforms.${platformIndex}` };
+    const category = platform?.categories?.[categoryIndex];
+    if (parsed.type === "category" && category) return { type: parsed.type, item: category, path: `single.matrix.platforms.${platformIndex}.categories.${categoryIndex}` };
+    const scenario = category?.scenarios?.[scenarioIndex];
+    if (parsed.type === "scenario" && scenario) return { type: parsed.type, item: scenario, path: `single.matrix.platforms.${platformIndex}.categories.${categoryIndex}.scenarios.${scenarioIndex}` };
+  }
+  if (scope === "suite") {
+    const presets = config.suite?.presets || [];
+    const [presetIndex, shotIndex] = parsed.indexes;
+    const preset = presets[presetIndex];
+    if (parsed.type === "preset" && preset) return { type: parsed.type, item: preset, path: `suite.presets.${presetIndex}` };
+    const shot = preset?.shots?.[shotIndex];
+    if (parsed.type === "shot" && shot) return { type: parsed.type, item: shot, path: `suite.presets.${presetIndex}.shots.${shotIndex}` };
+  }
+  return null;
+}
+
+function handlePromptConfigTreeClick(event) {
+  const actionTarget = event.target.closest("[data-prompt-tree-action]");
+  if (!actionTarget || !els.promptConfigEditor.contains(actionTarget)) return;
+  const action = actionTarget.dataset.promptTreeAction;
+  const scope = actionTarget.dataset.promptTreeScope;
+  const key = actionTarget.dataset.promptTreeKey;
+  if (!scope || !["single", "suite"].includes(scope)) return;
+  event.preventDefault();
+  event.stopPropagation();
+  if (action === "add-root") {
+    addPromptTreeRootNode(scope);
+    renderPromptConfigEditor();
+    return;
+  }
+  if (!key) return;
+  if (action === "select") {
+    state.promptTreeSelection[scope] = key;
+    renderPromptConfigEditor();
+    return;
+  }
+  if (action === "add-child" || action === "add-sibling") {
+    addPromptTreeNode(scope, key, action === "add-child" ? "child" : "sibling");
+    renderPromptConfigEditor();
+    return;
+  }
+  if (action === "delete") {
+    deletePromptTreeNode(scope, key);
+    renderPromptConfigEditor();
+  }
+}
+
+function addPromptTreeNode(scope, key, mode = "child") {
+  if (!state.promptConfig) return;
+  const parsed = parsePromptTreeKey(key);
+  const stamp = Date.now().toString(36).slice(-5);
+  if (scope === "single") {
+    const platforms = state.promptConfig.single.matrix.platforms;
+    if (mode === "child" && parsed.type === "platform") {
+      const platform = platforms[parsed.indexes[0]];
+      platform.categories = platform.categories || [];
+      platform.categories.push({ id: `category-${stamp}`, label: "新建品类", scenarios: [] });
+      state.promptTreeSelection.single = promptTreeSelectionKey("single", "category", [parsed.indexes[0], platform.categories.length - 1]);
+      return;
+    }
+    if (mode === "child" && parsed.type === "category") {
+      const category = platforms[parsed.indexes[0]]?.categories?.[parsed.indexes[1]];
+      category.scenarios = category.scenarios || [];
+      category.scenarios.push(newSingleScenario(stamp));
+      state.promptTreeSelection.single = promptTreeSelectionKey("single", "scenario", [parsed.indexes[0], parsed.indexes[1], category.scenarios.length - 1]);
+      return;
+    }
+    if (mode === "sibling" && parsed.type === "platform") {
+      platforms.splice(parsed.indexes[0] + 1, 0, { id: `platform-${stamp}`, label: "新建平台", categories: [] });
+      state.promptTreeSelection.single = promptTreeSelectionKey("single", "platform", [parsed.indexes[0] + 1]);
+      return;
+    }
+    if (mode === "sibling" && parsed.type === "category") {
+      const categories = platforms[parsed.indexes[0]]?.categories || [];
+      categories.splice(parsed.indexes[1] + 1, 0, { id: `category-${stamp}`, label: "新建品类", scenarios: [] });
+      state.promptTreeSelection.single = promptTreeSelectionKey("single", "category", [parsed.indexes[0], parsed.indexes[1] + 1]);
+      return;
+    }
+    if (mode === "sibling" && parsed.type === "scenario") {
+      const scenarios = platforms[parsed.indexes[0]]?.categories?.[parsed.indexes[1]]?.scenarios || [];
+      scenarios.splice(parsed.indexes[2] + 1, 0, newSingleScenario(stamp));
+      state.promptTreeSelection.single = promptTreeSelectionKey("single", "scenario", [parsed.indexes[0], parsed.indexes[1], parsed.indexes[2] + 1]);
+    }
+  }
+  if (scope === "suite") {
+    const presets = state.promptConfig.suite.presets;
+    if (mode === "child" && parsed.type === "preset") {
+      const preset = presets[parsed.indexes[0]];
+      preset.shots = preset.shots || [];
+      preset.shots.push(newSuiteShot(stamp));
+      state.promptTreeSelection.suite = promptTreeSelectionKey("suite", "shot", [parsed.indexes[0], preset.shots.length - 1]);
+      return;
+    }
+    if (mode === "sibling" && parsed.type === "preset") {
+      presets.splice(parsed.indexes[0] + 1, 0, { id: `suite-${stamp}`, title: "新建套图", shots: [] });
+      state.promptTreeSelection.suite = promptTreeSelectionKey("suite", "preset", [parsed.indexes[0] + 1]);
+      return;
+    }
+    if (mode === "sibling" && parsed.type === "shot") {
+      const shots = presets[parsed.indexes[0]]?.shots || [];
+      shots.splice(parsed.indexes[1] + 1, 0, newSuiteShot(stamp));
+      state.promptTreeSelection.suite = promptTreeSelectionKey("suite", "shot", [parsed.indexes[0], parsed.indexes[1] + 1]);
+    }
+  }
+}
+
+function addPromptTreeRootNode(scope) {
+  if (!state.promptConfig) return;
+  const stamp = Date.now().toString(36).slice(-5);
+  if (scope === "single") {
+    const platforms = state.promptConfig.single.matrix.platforms;
+    platforms.push({ id: `platform-${stamp}`, label: "新建平台", categories: [] });
+    state.promptTreeSelection.single = promptTreeSelectionKey("single", "platform", [platforms.length - 1]);
+    return;
+  }
+  if (scope === "suite") {
+    const presets = state.promptConfig.suite.presets;
+    presets.push({ id: `suite-${stamp}`, title: "新建套图", shots: [] });
+    state.promptTreeSelection.suite = promptTreeSelectionKey("suite", "preset", [presets.length - 1]);
+  }
+}
+
+function deletePromptTreeNode(scope, key) {
+  if (!state.promptConfig || !window.confirm("直接删除这个节点？保存后 C 端将不再显示，历史生成记录不会删除。")) return;
+  const parsed = parsePromptTreeKey(key);
+  if (scope === "single") {
+    const platforms = state.promptConfig.single.matrix.platforms;
+    if (parsed.type === "platform") platforms.splice(parsed.indexes[0], 1);
+    if (parsed.type === "category") platforms[parsed.indexes[0]]?.categories?.splice(parsed.indexes[1], 1);
+    if (parsed.type === "scenario") platforms[parsed.indexes[0]]?.categories?.[parsed.indexes[1]]?.scenarios?.splice(parsed.indexes[2], 1);
+    state.promptTreeSelection.single = "";
+  }
+  if (scope === "suite") {
+    const presets = state.promptConfig.suite.presets;
+    if (parsed.type === "preset") presets.splice(parsed.indexes[0], 1);
+    if (parsed.type === "shot") presets[parsed.indexes[0]]?.shots?.splice(parsed.indexes[1], 1);
+    state.promptTreeSelection.suite = "";
+  }
+}
+
+function newSingleScenario(stamp) {
+  const id = `scenario-${stamp}`;
+  return { id, title: "新建场景", templateId: `template-${stamp}`, prompt: "" };
+}
+
+function newSuiteShot(stamp) {
+  return { id: `shot-${stamp}`, name: "新建图位", size: "1024x1024", description: "", prompt: "" };
 }
 
 function renderSinglePromptConfig(config) {
   return [
-    promptSection(
-      "单图模板分类",
-      config.single.templateCategories
-        .map((category, index) =>
-          promptField(`single.templateCategories.${index}.label`, `${category.id} 显示名`, category.label, { type: "input" })
-        )
-        .join("")
-    ),
-    promptSection(
-      "单图提示词模板",
-      config.single.templates
-        .map(
-          (template, index) => `
-            <article class="admin-prompt-card">
-              <div class="admin-prompt-card-head">
-                <strong>${escapeHtml(template.title)}</strong>
-                <span>${escapeHtml(template.id)} / ${escapeHtml(template.category)}</span>
-              </div>
-              ${promptField(`single.templates.${index}.title`, "模板标题", template.title, { type: "input" })}
-              ${promptField(`single.templates.${index}.prompt`, "模板提示词", template.prompt)}
-            </article>
-          `
-        )
-        .join("")
-    ),
+    renderPromptConfigTreeManager("single", config),
     promptSection(
       "补图变体提示词",
       promptField("single.supplementalVariantPrompt", "补图变体文案", config.single.supplementalVariantPrompt)
@@ -1156,42 +1501,7 @@ function renderSinglePromptConfig(config) {
 
 function renderSuitePromptConfig(config) {
   return [
-    promptSection(
-      "套图类型与图位",
-      config.suite.presets
-        .map(
-          (preset, presetIndex) => `
-            <article class="admin-prompt-card">
-              <div class="admin-prompt-card-head">
-                <strong>${escapeHtml(preset.title)}</strong>
-                <span>${escapeHtml(preset.id)}</span>
-              </div>
-              <div class="admin-prompt-grid two">
-                ${promptField(`suite.presets.${presetIndex}.title`, "套图标题", preset.title, { type: "input" })}
-              </div>
-              ${preset.shots
-                .map(
-                  (shot, shotIndex) => `
-                    <div class="admin-prompt-subcard">
-                      <div class="admin-prompt-card-head">
-                        <strong>${escapeHtml(shot.name)}</strong>
-                        <span>${escapeHtml(shot.id)}</span>
-                      </div>
-                      <div class="admin-prompt-grid two">
-                        ${promptField(`suite.presets.${presetIndex}.shots.${shotIndex}.name`, "图位名称", shot.name, { type: "input" })}
-                        ${promptField(`suite.presets.${presetIndex}.shots.${shotIndex}.size`, "推荐尺寸", shot.size, { type: "input" })}
-                      </div>
-                      ${promptField(`suite.presets.${presetIndex}.shots.${shotIndex}.description`, "图位说明", shot.description, { type: "input" })}
-                      ${promptField(`suite.presets.${presetIndex}.shots.${shotIndex}.prompt`, "图位提示词", shot.prompt)}
-                    </div>
-                  `
-                )
-                .join("")}
-            </article>
-          `
-        )
-        .join("")
-    ),
+    renderPromptConfigTreeManager("suite", config),
     promptSection(
       "视觉风格与套图拼接文案",
       [
@@ -1348,6 +1658,7 @@ function renderSuitePromptFactoryConfig(config) {
           <span>套图参考图（多选）</span>
           <input id="suiteFactoryReferenceImagesInput" type="file" accept="image/*" multiple />
         </label>
+        <p class="prompt-factory-field-note">上传几张参考图，就生成几个套图图位。图位名称会根据对应参考图理解生成。</p>
         <div class="suite-factory-reference-strip prompt-factory-reference-list">${renderSuiteFactoryReferenceImages()}</div>
         <label class="field admin-prompt-field">
           <span>生成模型</span>
@@ -1355,7 +1666,7 @@ function renderSuitePromptFactoryConfig(config) {
             ${state.factoryModelOptions.length ? state.factoryModelOptions.map((option) => `<option value="${escapeAttr(option.providerModelId)}">${escapeHtml(option.providerName)} / ${escapeHtml(option.modelName)} / ${escapeHtml(modelKindText(option.modelKind))}</option>`).join("") : `<option value="">请配置 Muskapis gpt-5.5 文本理解模型</option>`}
           </select>
         </label>
-        <button class="primary-button" id="generateSuiteFactoryAssetBtn" type="button" ${state.factoryModelOptions.length ? "" : "disabled"}>生成套图提示词与验证图</button>
+        <button class="primary-button" id="generateSuiteFactoryAssetBtn" type="button" ${state.factoryModelOptions.length ? "" : "disabled"}>生成套图提示词与 Prompt + 原图</button>
       </div>
       <div class="prompt-factory-library">
         <div class="prompt-factory-toolbar">
@@ -1405,21 +1716,17 @@ function renderSuiteFactoryReferenceImages() {
   return state.suiteFactoryReferenceImages.map((image) => renderFactoryImagePreview(image, "")).join("");
 }
 
-function factorySimilarityScoreText(asset) {
+function factoryAssetSummaryText(asset) {
   const value = String(asset?.comparison || "").trim();
-  if (!value) return asset?.status === "generated" || asset?.status === "published" ? "相似度待复核" : "等待生成";
-  try {
-    const parsed = JSON.parse(value);
-    const rawScore = parsed?.similarityScore ?? parsed?.similarity_score ?? parsed?.score ?? parsed?.similarity;
-    if (rawScore !== undefined && rawScore !== null && rawScore !== "") {
-      const score = Math.max(0, Math.min(100, Math.round(Number(rawScore))));
-      if (Number.isFinite(score)) return `相似度 ${score}分`;
-    }
-  } catch {}
-  const match = value.match(/(?:相似度|similarity|score)\D{0,12}(\d{1,3})/i);
-  if (match) return `相似度 ${Math.max(0, Math.min(100, Number(match[1])))}分`;
-  if (value.startsWith("相似度") && value.length <= 24) return value;
-  return asset?.status === "failed" ? asset.error || "生成失败" : "相似度待复核";
+  if (asset?.status === "failed") return asset.error || "生成失败";
+  if (value) return value.length > 28 ? `${value.slice(0, 28)}...` : value;
+  if (asset?.assetKind === "suite") {
+    const shots = Array.isArray(asset.suiteShots) ? asset.suiteShots : [];
+    const generated = shots.filter((shot) => shot.promptOnlyImageUrl).length;
+    if (asset?.status === "generated" || asset?.status === "published") return generated ? `已生成 ${generated} 张 Prompt + 原图` : "等待图位验证图生成";
+  }
+  if (asset?.status === "generated" || asset?.status === "published") return asset.imageBUrl ? "Prompt + 原图已生成" : "等待验证图生成";
+  return "等待生成";
 }
 
 function renderPromptFactoryAssetList(scope = "single") {
@@ -1434,7 +1741,7 @@ function renderPromptFactoryAssetList(scope = "single") {
       const step = FACTORY_GENERATION_STEPS.find((item) => item.id === factoryCurrentStep(asset, job)) || FACTORY_GENERATION_STEPS[0];
       const summary = generating
         ? `${progress?.label || step.label} · 已等待 ${factoryElapsedText(job)}`
-        : factorySimilarityScoreText(asset);
+        : factoryAssetSummaryText(asset);
       return `
         <button class="prompt-factory-asset-row ${asset.id === activeId ? "active" : ""} ${generating ? "generating" : ""}" type="button" data-factory-asset-id="${escapeAttr(asset.id)}" data-factory-scope="${escapeAttr(scope)}">
           <strong>${escapeHtml(asset.title || "未命名素材")}</strong>
@@ -1478,6 +1785,7 @@ function renderPromptFactoryAssetDetail(asset, config) {
     ${progressPanel}
     <section class="prompt-factory-section">
       <h4>参考分析</h4>
+      <p class="prompt-factory-field-note">用于记录模型对参考图的版式、构图、文字层级和电商风格的中文分析，帮助把参考图转换成可复用 Prompt，不会作为 C 端最终提示词直接发布。</p>
       <textarea rows="4" data-factory-field="referenceAnalysis">${escapeHtml(asset.referenceAnalysis || "")}</textarea>
     </section>
     <section class="prompt-factory-section">
@@ -1489,14 +1797,8 @@ function renderPromptFactoryAssetDetail(asset, config) {
       <textarea rows="7" data-factory-field="englishPrompt">${escapeHtml(asset.englishPrompt || "")}</textarea>
     </section>
     <div class="prompt-factory-preview-grid">
-      ${renderFactoryValidationImage("Image A", asset.imageAUrl, asset, "imageA")}
-      ${renderFactoryValidationImage("Image B", asset.imageBUrl, asset, "imageB")}
+      ${renderFactoryValidationImage("Prompt + 原图", asset.imageBUrl, asset, "imageB")}
     </div>
-    <section class="prompt-factory-section">
-      <h4>相似分数</h4>
-      <div class="prompt-factory-score-card">${escapeHtml(factorySimilarityScoreText(asset))}</div>
-      <textarea rows="2" data-factory-field="comparison">${escapeHtml(asset.comparison || asset.error || "")}</textarea>
-    </section>
     <section class="prompt-factory-publish-row">
       <label class="field compact-field"><span>平台</span><select data-factory-field="targetPlatformId">${platforms.map((platform) => `<option value="${escapeAttr(platform.id)}" ${platform.id === selectedPlatform.id ? "selected" : ""}>${escapeHtml(platform.label || platform.id)}</option>`).join("")}</select></label>
       <label class="field compact-field"><span>品类</span><select data-factory-field="targetCategoryId">${(selectedPlatform.categories || []).map((category) => `<option value="${escapeAttr(category.id)}" ${category.id === selectedCategory.id ? "selected" : ""}>${escapeHtml(category.label || category.id)}</option>`).join("")}</select></label>
@@ -1527,6 +1829,7 @@ function renderSuitePromptFactoryAssetDetail(asset, config) {
     ${renderFactoryGenerationProgress(asset)}
     <section class="prompt-factory-section">
       <h4>参考分析</h4>
+      <p class="prompt-factory-field-note">用于记录模型对参考图的版式、构图、文字层级和电商风格的中文分析，帮助生成整套可复用图位 Prompt。</p>
       <textarea rows="4" data-factory-field="referenceAnalysis">${escapeHtml(asset.referenceAnalysis || "")}</textarea>
     </section>
     <section class="prompt-factory-section">
@@ -1540,11 +1843,6 @@ function renderSuitePromptFactoryAssetDetail(asset, config) {
     <section class="prompt-factory-section">
       <h4>套图图位提示词</h4>
       <div class="suite-factory-shot-list">${renderSuiteFactoryShotList(asset)}</div>
-    </section>
-    <section class="prompt-factory-section">
-      <h4>生成概况</h4>
-      <div class="prompt-factory-score-card">${escapeHtml(factorySimilarityScoreText(asset))}</div>
-      <textarea rows="2" data-factory-field="comparison">${escapeHtml(asset.comparison || asset.error || "")}</textarea>
     </section>
     <section class="prompt-factory-publish-row suite-factory-publish-row">
       <label class="field compact-field"><span>方式</span><select data-factory-field="publishMode"><option value="append" ${publishMode === "append" ? "selected" : ""}>追加新套图</option><option value="overwrite" ${publishMode === "overwrite" ? "selected" : ""}>覆盖已有套图</option></select></label>
@@ -1572,25 +1870,12 @@ function renderSuiteFactoryShotList(asset) {
       <label class="field admin-prompt-field"><span>图位说明</span><input type="text" data-suite-shot-field="description" value="${escapeAttr(shot.description || "")}" /></label>
       <label class="field admin-prompt-field"><span>中文图位 Prompt</span><textarea rows="5" data-suite-shot-field="chinesePrompt">${escapeHtml(shot.chinesePrompt || "")}</textarea></label>
       <label class="field admin-prompt-field"><span>English Shot Prompt</span><textarea rows="4" data-suite-shot-field="englishPrompt">${escapeHtml(shot.englishPrompt || "")}</textarea></label>
-      <div class="suite-factory-shot-images">
-        <div class="suite-factory-shot-image">
-          <strong>Prompt-only 图</strong>
-          ${renderSuiteShotImagePreview("Prompt-only 图", shot.promptOnlyImageUrl || "", `图位${index + 1}-Prompt-only`, "等待生成后展示提示词验证图")}
-        </div>
-        <div class="suite-factory-shot-image">
-          <strong>参考辅助图</strong>
-          ${renderSuiteShotImagePreview("参考辅助图", shot.referenceImageUrl || "", `图位${index + 1}-参考辅助图`, "点击后使用参考图+原图生成")}
-          <button class="small-button" type="button" data-suite-shot-action="reference-image" data-asset-id="${escapeAttr(asset.id)}" data-shot-id="${escapeAttr(shot.id || `shot-${index + 1}`)}">生成参考辅助图</button>
-        </div>
+      <div class="suite-factory-shot-validation">
+        ${renderFactoryValidationImage(`${shot.name || `0${index + 1} 套图图位`} · Prompt + 原图`, shot.promptOnlyImageUrl || "", asset, "imageB")}
       </div>
       ${shot.imageError ? `<div class="empty-state compact-empty danger-empty">${escapeHtml(shot.imageError)}</div>` : ""}
     </article>
   `).join("");
-}
-
-function renderSuiteShotImagePreview(label, url, name, emptyText) {
-  if (!url) return `<div class="prompt-factory-validation-state suite-shot-empty-image"><span></span><strong>${escapeHtml(emptyText)}</strong></div>`;
-  return renderFactoryValidationImage(label, url, { title: name, status: "generated" }, "suiteShot");
 }
 
 function renderFactoryGenerationProgress(asset) {
@@ -1658,9 +1943,14 @@ function renderFactoryValidationImage(label, url, asset = null, slot = "") {
       ${url && !imageBroken ? `
         <div class="prompt-factory-preview-frame">
           <button class="prompt-factory-preview-button" type="button" data-factory-preview-image="${escapeAttr(url)}" data-factory-preview-title="${escapeAttr(label)}">
-            <img src="${escapeAttr(url)}" alt="${escapeAttr(label)}" />
+            <img src="${escapeAttr(url)}" alt="${escapeAttr(label)}" data-factory-preview-img="1" />
             <span>点击全屏查看</span>
           </button>
+          <div class="prompt-factory-validation-state prompt-factory-preview-fallback" data-factory-preview-fallback hidden>
+            <span></span>
+            <strong>远程图片暂时无法预览</strong>
+            <small>图片链接可能已过期或远端不可访问。可以点击“重试当前素材”重新生成稳定预览。</small>
+          </div>
           <div class="prompt-factory-image-actions">
             <button class="small-button" type="button" data-factory-preview-image="${escapeAttr(url)}" data-factory-preview-title="${escapeAttr(label)}">全屏查看</button>
             <button class="small-button prompt-factory-download-button" type="button" data-factory-download-image="${escapeAttr(url)}" data-factory-download-name="${escapeAttr(safeTitle)}">下载图片</button>
@@ -1683,39 +1973,28 @@ function isLikelyTruncatedFactoryImage(url) {
 
 function renderFactoryValidationStatus(asset, slot, hasImage) {
   if (hasImage) {
-    return { className: "ready", badge: "已生成", title: "验证图已生成", detail: "可以检查产品一致性和版式贴合度。" };
+    return { className: "ready", badge: "已生成", title: "Prompt + 原图图片已生成", detail: "可以检查产品一致性和提示词复用效果。" };
   }
   const job = factoryGenerationJob(asset);
   const currentStep = factoryCurrentStep(asset, job);
   const failed = asset?.status === "failed" || job?.status === "failed";
   const stale = isFactoryStageStale(asset, job);
   if (stale) {
-    return { className: "failed", badge: "可能卡住", title: `${slot === "imageB" ? "Image B" : "Image A"} 生成等待过久`, detail: "远端图片接口长时间没有返回，可稍等或点击重试当前素材。" };
+    return { className: "failed", badge: "可能卡住", title: "Prompt + 原图图片生成等待过久", detail: "远端图片接口长时间没有返回，可稍等或点击重试当前素材。" };
   }
   if (failed) {
     return { className: "failed", badge: "失败", title: "验证图未生成", detail: asset?.error || job?.message || "远端请求失败，请重试当前素材。" };
   }
   const generating = asset?.status === "generating" || job?.status === "running";
-  if (generating && slot === "imageA") {
-    if (currentStep === "imageA") {
-      return { className: "generating", badge: "生成中", title: "正在生成参考辅助图", detail: "使用商品原图和参考图生成 Image A。" };
-    }
-    if (["imageB", "compare"].includes(currentStep)) {
-      return { className: "waiting", badge: "处理中", title: "Image A 已提交", detail: "远端正在返回或进入下一步验证。" };
-    }
-  }
   if (generating && slot === "imageB") {
     if (currentStep === "imageB") {
-      return { className: "generating", badge: "生成中", title: "正在生成 Prompt-only 验证图", detail: "只使用商品原图和生成 Prompt，验证是否可下发复用。" };
-    }
-    if (currentStep === "compare") {
-      return { className: "waiting", badge: "对比中", title: "等待对比验证", detail: "Image B 已提交，正在进入对比结论阶段。" };
+      return { className: "generating", badge: "生成中", title: "正在生成 Prompt + 原图图片", detail: "只使用商品原图和生成 Prompt，验证是否可下发复用。" };
     }
   }
   if (generating) {
     return { className: "queued", badge: "排队", title: "等待验证图生成", detail: "提示词分析完成后会自动进入图片验证。" };
   }
-  return { className: "empty", badge: "未生成", title: "等待验证图生成", detail: "点击生成后这里会显示 Image A / Image B 的实时状态。" };
+  return { className: "empty", badge: "未生成", title: "等待验证图生成", detail: "点击生成后这里会显示 Prompt + 原图图片的实时状态。" };
 }
 
 function promptAssetStatusLabel(status) {
@@ -1729,6 +2008,37 @@ function promptAssetStatusClass(status) {
 function bindPromptFactoryEvents() {
   els.promptConfigEditor.addEventListener("click", handlePromptFactoryClick);
   els.promptConfigEditor.addEventListener("change", handlePromptFactoryChange);
+  els.promptConfigEditor.addEventListener("input", handlePromptFactoryInput);
+  els.promptConfigEditor.addEventListener("error", handleFactoryPreviewImageError, true);
+}
+
+function handleFactoryPreviewImageError(event) {
+  const image = event.target.closest?.("[data-factory-preview-img]");
+  if (!image) return;
+  const frame = image.closest(".prompt-factory-preview-frame");
+  const fallback = frame?.querySelector("[data-factory-preview-fallback]");
+  image.closest(".prompt-factory-preview-button")?.setAttribute("hidden", "");
+  if (fallback) fallback.hidden = false;
+}
+
+function handlePromptFactoryInput(event) {
+  const factoryField = event.target.closest("[data-factory-field]");
+  if (factoryField) {
+    const detail = factoryField.closest("#suitePromptFactoryAssetDetail, #promptFactoryAssetDetail");
+    const active = promptFactoryActiveAssetFromDetail(detail);
+    if (!active) return;
+    active[factoryField.dataset.factoryField] = factoryField.value;
+    return;
+  }
+
+  const shotField = event.target.closest("[data-suite-shot-field]");
+  if (!shotField) return;
+  const detail = shotField.closest("#suitePromptFactoryAssetDetail");
+  const active = promptFactoryActiveAssetFromDetail(detail);
+  const shotRow = shotField.closest("[data-suite-shot-index]");
+  const index = Number(shotRow?.dataset.suiteShotIndex);
+  if (!active || !Array.isArray(active.suiteShots) || !Number.isInteger(index) || !active.suiteShots[index]) return;
+  active.suiteShots[index][shotField.dataset.suiteShotField] = shotField.value;
 }
 
 async function handlePromptFactoryClick(event) {
@@ -1786,14 +2096,6 @@ async function handlePromptFactoryClick(event) {
     if (suiteActionButton.dataset.suiteFactoryAction === "retry") await generatePromptAsset(assetId, suiteActionButton, "suite");
     if (suiteActionButton.dataset.suiteFactoryAction === "delete") await deletePromptAsset(assetId, suiteActionButton, "suite");
     if (suiteActionButton.dataset.suiteFactoryAction === "publish") await publishSuitePromptAsset(assetId, suiteActionButton);
-    return;
-  }
-
-  const suiteShotButton = event.target.closest("[data-suite-shot-action]");
-  if (suiteShotButton) {
-    const assetId = suiteShotButton.dataset.assetId;
-    const shotId = suiteShotButton.dataset.shotId;
-    if (suiteShotButton.dataset.suiteShotAction === "reference-image") await generateSuiteShotReferenceImage(assetId, shotId, suiteShotButton);
     return;
   }
 
@@ -1877,10 +2179,8 @@ async function handlePromptFactoryChange(event) {
     event.target.dataset.factoryField === "publishMode" ||
     event.target.dataset.factoryField === "targetPresetId"
   ) {
-    const suiteMode = state.activeAdminView === "suite-factory" || state.activePromptGroup === "suiteFactory";
-    const active = suiteMode
-      ? state.suitePromptAssets.find((asset) => asset.id === state.activeSuitePromptAssetId)
-      : state.promptAssets.find((asset) => asset.id === state.activePromptAssetId);
+    const detail = event.target.closest("#suitePromptFactoryAssetDetail, #promptFactoryAssetDetail");
+    const active = promptFactoryActiveAssetFromDetail(detail);
     if (!active) return;
     if (event.target.dataset.factoryField === "targetPlatformId") {
       active.targetPlatformId = event.target.value;
@@ -1894,25 +2194,6 @@ async function handlePromptFactoryChange(event) {
     if (event.target.dataset.factoryField === "publishMode") active.publishMode = event.target.value;
     if (event.target.dataset.factoryField === "targetPresetId") active.publishedTemplateId = event.target.value;
     renderPromptConfigEditor();
-  }
-}
-
-async function generateSuiteShotReferenceImage(assetId, shotId, button = null) {
-  if (!assetId || !shotId) return;
-  setBusy(button, "生成中", true);
-  try {
-    await savePromptAsset(assetId, "suite");
-    const payload = await adminFetch(`/prompt-assets/${encodeURIComponent(assetId)}/suite-shots/${encodeURIComponent(shotId)}/reference-image`, {
-      method: "POST",
-      body: JSON.stringify({})
-    });
-    replacePromptAsset(payload.asset, "suite");
-    renderPromptConfigEditor();
-    showToast("参考辅助图已生成");
-  } catch (error) {
-    showToast(error.message, true);
-  } finally {
-    setBusy(button, "生成参考辅助图", false);
   }
 }
 
@@ -1947,7 +2228,7 @@ async function runFactoryBatchGeneration(button, assets = state.promptAssets, sc
       await generatePromptAsset(asset.id, null, scope);
     }
   } finally {
-    setBusy(button, scope === "suite" ? "生成套图提示词与验证图" : "生成提示词与验证图", false);
+    setBusy(button, scope === "suite" ? "生成套图提示词与 Prompt + 原图" : "生成提示词与验证图", false);
   }
 }
 
@@ -2449,66 +2730,6 @@ function escapeHtml(value) {
 
 function escapeAttr(value) {
   return escapeHtml(value).replaceAll("`", "&#096;");
-}
-
-function renderSinglePromptConfig(config) {
-  const platforms = config.single?.matrix?.platforms || [];
-  return [
-    promptSection(
-      "单图三级矩阵",
-      platforms
-        .map(
-          (platform, platformIndex) => `
-            <article class="admin-prompt-card">
-              <div class="admin-prompt-card-head">
-                <strong>${escapeHtml(platform.label)}</strong>
-                <span>${escapeHtml(platform.id)}</span>
-              </div>
-              ${(platform.categories || [])
-                .map(
-                  (category, categoryIndex) => `
-                    <div class="admin-prompt-subcard">
-                      <div class="admin-prompt-card-head">
-                        <strong>${escapeHtml(category.label)}</strong>
-                        <span>${escapeHtml(category.id)}</span>
-                      </div>
-                      ${(category.scenarios || [])
-                        .map(
-                          (scenario, scenarioIndex) => `
-                            <div class="admin-prompt-subcard">
-                              <div class="admin-prompt-card-head">
-                                <strong>${escapeHtml(scenario.title)}</strong>
-                                <span>${escapeHtml(scenario.id)} / ${escapeHtml(scenario.templateId)}</span>
-                              </div>
-                              ${promptField(
-                                `single.matrix.platforms.${platformIndex}.categories.${categoryIndex}.scenarios.${scenarioIndex}.title`,
-                                "场景标题",
-                                scenario.title,
-                                { type: "input" }
-                              )}
-                              ${promptField(
-                                `single.matrix.platforms.${platformIndex}.categories.${categoryIndex}.scenarios.${scenarioIndex}.prompt`,
-                                "场景提示词",
-                                scenario.prompt
-                              )}
-                            </div>
-                          `
-                        )
-                        .join("")}
-                    </div>
-                  `
-                )
-                .join("")}
-            </article>
-          `
-        )
-        .join("")
-    ),
-    promptSection(
-      "补图变体提示词",
-      promptField("single.supplementalVariantPrompt", "补图变体文案", config.single.supplementalVariantPrompt)
-    )
-  ].join("");
 }
 
 // ── Redeem code manager ────────────────────────────────────────────────────

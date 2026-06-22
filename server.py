@@ -901,9 +901,7 @@ def build_single_template_categories(single_matrix: dict) -> list[dict]:
 
 
 def legacy_single_template_defaults() -> list[dict]:
-    config = bundled_prompt_config()
-    templates = config.get("single", {}).get("templates", [])
-    return copy.deepcopy(templates) if isinstance(templates, list) else []
+    return []
 
 
 def build_single_templates_from_matrix(single_matrix: dict, legacy_templates: list[dict] | None = None) -> list[dict]:
@@ -955,21 +953,10 @@ def build_default_single_prompt_config() -> dict:
         categories = []
         for category_id in platform["categories"]:
             category_label = SINGLE_CATEGORY_LABELS[category_id]
-            scenarios = []
-            for scene in SINGLE_PLATFORM_SCENES[platform["id"]]:
-                template_id = f"{platform['id']}-{category_id}-{scene['id']}"
-                scenarios.append(
-                    {
-                        "id": scene["id"],
-                        "title": scene["title"],
-                        "prompt": prompt_text(scene["prompt"], {"category": category_label}),
-                        "templateId": template_id,
-                    }
-                )
-            categories.append({"id": category_id, "label": category_label, "scenarios": scenarios})
+            categories.append({"id": category_id, "label": category_label, "scenarios": []})
         platforms.append({"id": platform["id"], "label": platform["label"], "categories": categories})
 
-    defaults = {"platformId": platforms[0]["id"], "categoryId": platforms[0]["categories"][0]["id"], "scenarioId": platforms[0]["categories"][0]["scenarios"][0]["id"]}
+    defaults = {"platformId": platforms[0]["id"], "categoryId": platforms[0]["categories"][0]["id"], "scenarioId": ""}
     matrix = {"defaults": defaults, "platforms": platforms}
     templates = build_single_templates_from_matrix(matrix, legacy_single_template_defaults())
     return {
@@ -1073,9 +1060,67 @@ def merge_single_matrix_custom_scenarios(single: dict, source_single: dict | Non
                 target_ids.add(scenario_id)
 
 
+def normalize_single_matrix_from_source(source_matrix: dict) -> dict:
+    defaults = source_matrix.get("defaults") if isinstance(source_matrix.get("defaults"), dict) else {}
+    platforms = []
+    seen_platforms: set[str] = set()
+    for source_platform in source_matrix.get("platforms", []):
+        if not isinstance(source_platform, dict):
+            continue
+        platform_id = trim_text(str(source_platform.get("id") or ""), 120)
+        if not platform_id or platform_id in seen_platforms:
+            continue
+        seen_platforms.add(platform_id)
+        categories = []
+        seen_categories: set[str] = set()
+        for source_category in source_platform.get("categories", []):
+            if not isinstance(source_category, dict):
+                continue
+            category_id = trim_text(str(source_category.get("id") or ""), 120)
+            if not category_id or category_id in seen_categories:
+                continue
+            seen_categories.add(category_id)
+            scenarios = []
+            seen_scenarios: set[str] = set()
+            for source_scenario in source_category.get("scenarios", []):
+                if not isinstance(source_scenario, dict):
+                    continue
+                scenario_id = trim_text(str(source_scenario.get("id") or ""), 120)
+                template_id = trim_text(str(source_scenario.get("templateId") or ""), 160)
+                if not scenario_id or not template_id or scenario_id in seen_scenarios:
+                    continue
+                seen_scenarios.add(scenario_id)
+                scenarios.append(
+                    {
+                        "id": scenario_id,
+                        "title": trim_text(str(source_scenario.get("title") or scenario_id), 200),
+                        "prompt": trim_text(str(source_scenario.get("prompt") or ""), PROMPT_TEXT_LIMIT),
+                        "templateId": template_id,
+                    }
+                )
+            categories.append(
+                {
+                    "id": category_id,
+                    "label": trim_text(str(source_category.get("label") or category_id), 120),
+                    "scenarios": scenarios,
+                }
+            )
+        platforms.append(
+            {
+                "id": platform_id,
+                "label": trim_text(str(source_platform.get("label") or platform_id), 120),
+                "categories": categories,
+            }
+        )
+    return {"defaults": defaults, "platforms": platforms}
+
+
 def normalize_single_prompt_config(source_single, default_single: dict) -> dict:
+    source_matrix = source_single.get("matrix") if isinstance(source_single, dict) else None
     single = merge_prompt_config(copy.deepcopy(default_single), source_single if isinstance(source_single, dict) else {})
-    if isinstance(source_single, dict) and not isinstance(source_single.get("matrix"), dict):
+    if isinstance(source_matrix, dict) and isinstance(source_matrix.get("platforms"), list):
+        single["matrix"] = normalize_single_matrix_from_source(source_matrix)
+    elif isinstance(source_single, dict):
         apply_legacy_single_template_overrides(single.get("matrix", {}), source_single.get("templates", []))
     merge_single_matrix_custom_scenarios(single, source_single if isinstance(source_single, dict) else None)
     defaults = normalize_single_defaults(single)
@@ -1731,6 +1776,8 @@ def normalize_prompt_asset_images(value, limit: int = 20) -> list[dict]:
 
 def normalize_suite_prompt_shots(value, references: list[dict] | None = None) -> list[dict]:
     source = value if isinstance(value, list) else []
+    fallback_references = references if isinstance(references, list) else []
+    shot_limit = min(20, len(fallback_references)) if fallback_references else 20
     shots = []
     for index, item in enumerate(source, start=1):
         if not isinstance(item, dict):
@@ -1763,9 +1810,8 @@ def normalize_suite_prompt_shots(value, references: list[dict] | None = None) ->
             }
         )
     if shots:
-        return shots[:20]
+        return shots[:shot_limit]
 
-    fallback_references = references if isinstance(references, list) else []
     for index, reference in enumerate(fallback_references[:20], start=1):
         base_name = trim_text(str(reference.get("name") or f"参考图 {index}"), 120)
         size = normalize_image_size(str(reference.get("size") or "")) or "1024x1024"
@@ -1785,11 +1831,62 @@ def normalize_suite_prompt_shots(value, references: list[dict] | None = None) ->
     return shots
 
 
+GENERIC_SUITE_SHOT_NAMES = {
+    "首屏品牌横幅",
+    "卖点信息图",
+    "细节特写图",
+    "生活场景图",
+    "使用步骤图",
+    "尺寸包装图",
+    "对比说明图",
+    "配件展示图",
+    "促销广告图",
+    "问答信任图",
+    "套图图位",
+}
+
+
+def text_has_chinese(value: str) -> bool:
+    return any("\u4e00" <= char <= "\u9fff" for char in str(value or ""))
+
+
+def clean_suite_shot_name(value: str) -> str:
+    text = trim_text(str(value or ""), 120)
+    text = re.sub(r"^\s*\d{1,2}\s*[.、_-]?\s*", "", text).strip()
+    text = re.sub(r"^(?:请|生成|创建|制作|设计|输出|一张|一个|用于|打造)+", "", text).strip()
+    return trim_text(text.strip(" ：:，,。；;、-_/"), 120)
+
+
+def suite_shot_chinese_name_from_text(value: str) -> str:
+    text = trim_text(str(value or ""), 240)
+    if not text_has_chinese(text):
+        return ""
+    for separator in ("：", ":", "，", ",", "。", "；", ";", "\n"):
+        if separator in text:
+            candidate = clean_suite_shot_name(text.split(separator, 1)[0])
+            if 2 <= len(candidate) <= 24 and text_has_chinese(candidate):
+                return candidate
+    match = re.search(r"([\u4e00-\u9fffA-Za-z0-9（）()]{2,24}图)", text)
+    if match:
+        candidate = clean_suite_shot_name(match.group(1))
+        if candidate and text_has_chinese(candidate):
+            return candidate
+    candidate = clean_suite_shot_name(text)
+    if 2 <= len(candidate) <= 18 and text_has_chinese(candidate):
+        return candidate
+    return ""
+
+
 def suite_shot_chinese_name(raw_name: str, chinese_prompt: str, description: str, index: int) -> str:
     text = " ".join(part for part in (raw_name, chinese_prompt, description) if part)
-    has_chinese = any("\u4e00" <= char <= "\u9fff" for char in raw_name)
-    if has_chinese:
-        cleaned = re.sub(r"^\s*\d{1,2}\s*[.、_-]?\s*", "", raw_name).strip() or "套图图位"
+    raw_clean = clean_suite_shot_name(raw_name)
+    prompt_name = suite_shot_chinese_name_from_text(chinese_prompt) or suite_shot_chinese_name_from_text(description)
+    if text_has_chinese(raw_clean) and raw_clean not in GENERIC_SUITE_SHOT_NAMES:
+        cleaned = raw_clean
+    elif prompt_name:
+        cleaned = prompt_name
+    elif text_has_chinese(raw_clean):
+        cleaned = raw_clean
     else:
         rules = [
             (("首屏", "hero", "banner", "横幅", "品牌"), "首屏品牌横幅"),
@@ -2538,11 +2635,6 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_admin_delete_prompt_asset(asset_id)
             if path.startswith("/api/admin/prompt-assets/") and method == "POST":
                 prompt_asset_path = path.removeprefix("/api/admin/prompt-assets/")
-                if "/suite-shots/" in prompt_asset_path and prompt_asset_path.endswith("/reference-image"):
-                    asset_part, shot_part = prompt_asset_path.split("/suite-shots/", 1)
-                    asset_id = unquote(asset_part.rstrip("/"))
-                    shot_id = unquote(shot_part.removesuffix("/reference-image").strip("/"))
-                    return self.handle_admin_generate_suite_reference_image(asset_id, shot_id)
                 if prompt_asset_path.endswith("/generate"):
                     asset_id = unquote(prompt_asset_path.removesuffix("/generate").rstrip("/"))
                     return self.handle_admin_generate_prompt_asset(asset_id)
@@ -2914,6 +3006,7 @@ class Handler(SimpleHTTPRequestHandler):
                 raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置可用图片模型")
             # ── credit check ──
             credit_cost = count * GENERATION_COST_PER_IMAGE
+            credits_remaining = None
             with connect() as cconn:
                 credit_result = consume_credits(cconn, user["id"], credit_cost)
                 if not credit_result["ok"]:
@@ -2922,6 +3015,7 @@ class Handler(SimpleHTTPRequestHandler):
                         "积分不足",
                         payload={"required": credit_cost, "remaining": credit_result["remaining"]},
                     )
+                credits_remaining = credit_result["remaining"]
                 cconn.commit()
             last_error = None
             for attempt_index, option in enumerate(provider_models_to_try, start=1):
@@ -2950,6 +3044,8 @@ class Handler(SimpleHTTPRequestHandler):
                         request_body,
                         prompt_source=prompt_source,
                         template_id=body.get("templateId"),
+                        suite_preset_id=body.get("suitePresetId") or body.get("suite_preset_id"),
+                        suite_shot_id=body.get("suiteShotId") or body.get("suite_shot_id"),
                         count=count,
                         size=size,
                         reference_count=len(references),
@@ -2992,6 +3088,8 @@ class Handler(SimpleHTTPRequestHandler):
                         refund_amount = (count - actual_count) * GENERATION_COST_PER_IMAGE
                         with connect() as rconn:
                             refund_credits(rconn, user["id"], refund_amount)
+                            refreshed_user = rconn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+                            credits_remaining = row_user(refreshed_user)["creditsRemaining"] if refreshed_user else credits_remaining
                             rconn.commit()
                     self.json_response(
                         {
@@ -3014,6 +3112,7 @@ class Handler(SimpleHTTPRequestHandler):
                             },
                             "attemptCount": attempt_index,
                             "apiKeyConfigured": True,
+                            "creditsRemaining": credits_remaining,
                         }
                     )
                     return
@@ -3066,11 +3165,24 @@ class Handler(SimpleHTTPRequestHandler):
                 request_body,
                 prompt_source=prompt_source,
                 template_id=body.get("templateId"),
+                suite_preset_id=body.get("suitePresetId") or body.get("suite_preset_id"),
+                suite_shot_id=body.get("suiteShotId") or body.get("suite_shot_id"),
                 count=count,
                 size=size,
                 reference_count=len(references),
             ),
         }
+        credit_cost = count * GENERATION_COST_PER_IMAGE
+        with connect() as cconn:
+            credit_result = consume_credits(cconn, user["id"], credit_cost)
+            if not credit_result["ok"]:
+                raise AppError(
+                    HTTPStatus.TOO_MANY_REQUESTS,
+                    "积分不足",
+                    payload={"required": credit_cost, "remaining": credit_result["remaining"]},
+                )
+            credits_remaining = credit_result["remaining"]
+            cconn.commit()
         started_at = time.monotonic()
         try:
             payload = call_upstream_model_with_retry(resolved_endpoint, api_key, request_body)
@@ -3102,6 +3214,14 @@ class Handler(SimpleHTTPRequestHandler):
                 images=images,
                 request_snapshot=request_snapshot,
             )
+            actual_count = len(images)
+            if actual_count < count:
+                refund_amount = (count - actual_count) * GENERATION_COST_PER_IMAGE
+                with connect() as rconn:
+                    refund_credits(rconn, user["id"], refund_amount)
+                    refreshed_user = rconn.execute("SELECT * FROM users WHERE id=?", (user["id"],)).fetchone()
+                    credits_remaining = row_user(refreshed_user)["creditsRemaining"] if refreshed_user else credits_remaining
+                    rconn.commit()
             self.json_response(
                 {
                     "images": [
@@ -3116,6 +3236,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "request": request_snapshot,
                     "model": model,
                     "apiKeyConfigured": True,
+                    "creditsRemaining": credits_remaining,
                 }
             )
         except UpstreamError as error:
@@ -3134,6 +3255,9 @@ class Handler(SimpleHTTPRequestHandler):
                 response_body=error.payload,
                 duration_ms=duration_ms,
             )
+            with connect() as rconn:
+                refund_credits(rconn, user["id"], credit_cost)
+                rconn.commit()
             raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {error.status}: {error.message}")
 
     def handle_generated_assets(self, query: str) -> None:
@@ -4000,12 +4124,6 @@ class Handler(SimpleHTTPRequestHandler):
             asset = generate_prompt_asset(conn, asset_id, str(body.get("providerModelId") or ""))
         self.json_response({"asset": asset})
 
-    def handle_admin_generate_suite_reference_image(self, asset_id: str, shot_id: str) -> None:
-        self.require_admin()
-        with connect() as conn:
-            asset = generate_suite_prompt_asset_reference_image(conn, asset_id, shot_id)
-        self.json_response({"asset": asset})
-
     def handle_admin_publish_prompt_asset(self, asset_id: str) -> None:
         self.require_admin()
         body = self.read_json()
@@ -4249,7 +4367,51 @@ def generate_prompt_asset_image(option: dict, prompt: str, references: list[dict
     images = extract_image_results_from_payload(payload)
     if not images:
         raise UpstreamError(502, "接口未返回可识别的图片地址或 b64_json", payload)
-    return images[0]["url"]
+    return durable_prompt_asset_image_url(images[0]["url"])
+
+
+def suite_shot_validation_prompt(base_prompt: str, shot: dict) -> str:
+    shot_prompt = trim_text(str(shot.get("chinesePrompt") or ""), PROMPT_ASSET_TEXT_LIMIT).strip()
+    return with_in_image_copy_language_rule(
+        "\n".join(part for part in (base_prompt, shot_prompt) if part),
+        language="zh",
+    )
+
+
+def durable_prompt_asset_image_url(url: str) -> str:
+    value = str(url or "").strip()
+    if not value or value.startswith("data:image/"):
+        return value
+    if not value.lower().startswith(("http://", "https://")):
+        return value
+    return download_image_url_as_data_url(value)
+
+
+def download_image_url_as_data_url(url: str, max_bytes: int = 8_000_000) -> str:
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": "image-editor-tool/1.0", "Accept": "image/*"},
+        method="GET",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=UPSTREAM_TIMEOUT_SECONDS) as response:
+            info = response.info()
+            mime_type = str(info.get_content_type() if hasattr(info, "get_content_type") else info.get("Content-Type", "image/png"))
+            if not mime_type.startswith("image/"):
+                mime_type = "image/png"
+            data = response.read(max_bytes + 1)
+            if len(data) > max_bytes:
+                raise UpstreamError(502, "远程图片过大，无法保存预览", {"url": url, "maxBytes": max_bytes})
+            if not data:
+                raise UpstreamError(502, "远程图片为空，无法保存预览", {"url": url})
+            encoded = base64.b64encode(data).decode("ascii")
+            return f"data:{mime_type};base64,{encoded}"
+    except urllib.error.HTTPError as error:
+        raise UpstreamError(error.code, "远程图片链接无法下载", {"url": url})
+    except urllib.error.URLError as error:
+        raise UpstreamError(502, f"远程图片链接无法下载：{error.reason}", {"url": url})
+    except (TimeoutError, socket.timeout):
+        raise UpstreamError(504, "远程图片下载超时", {"url": url})
 
 
 def update_prompt_asset_progress(
@@ -4289,106 +4451,6 @@ def prompt_asset_reference_images(asset: dict) -> list[dict]:
 
 def prompt_asset_product_image(asset: dict) -> dict:
     return normalize_prompt_asset_image(asset.get("productImage") or {})
-
-
-def suite_shot_prompt(asset: dict, shot: dict) -> str:
-    prompt = "\n".join(
-        part
-        for part in [
-            asset.get("chinesePrompt") or "",
-            f"图位名称：{shot.get('name') or ''}",
-            f"图位说明：{shot.get('description') or ''}" if shot.get("description") else "",
-            shot.get("chinesePrompt") or "",
-        ]
-        if part
-    )
-    return with_in_image_copy_language_rule(prompt, language="zh")
-
-
-def suite_reference_assisted_prompt(asset: dict, shot: dict) -> str:
-    prompt = "\n".join(
-        part
-        for part in [
-            "使用上传的原商品图作为商品身份，必须保持商品主体 1:1 一致。",
-            "使用对应套图参考图作为版式、构图、文字层级、光线和电商风格参考。",
-            suite_shot_prompt(asset, shot),
-        ]
-        if part
-    )
-    return with_in_image_copy_language_rule(prompt, language="zh")
-
-
-def generate_suite_prompt_only_images_for_shots(
-    conn: sqlite3.Connection,
-    asset_id: str,
-    asset: dict,
-    suite_shots: list[dict],
-    product: dict,
-    image_option: dict,
-) -> list[dict]:
-    if not product:
-        return suite_shots
-    generated_shots = []
-    for index, shot in enumerate(suite_shots, start=1):
-        update_prompt_asset_progress(
-            conn,
-            asset_id,
-            "imageB",
-            f"生成第 {index} 张套图验证图",
-            f"正在使用商品原图和第 {index} 个图位 Prompt 生成 Prompt-only 验证图。",
-            image_option=image_option,
-        )
-        next_shot = {**shot, "imageError": ""}
-        try:
-            next_shot["promptOnlyImageUrl"] = generate_prompt_asset_image(
-                image_option,
-                suite_shot_prompt(asset, shot),
-                [product],
-                size=shot.get("size") or "1024x1024",
-            )
-        except Exception as error:
-            next_shot["imageError"] = str(error)
-        generated_shots.append(next_shot)
-        update_prompt_asset(conn, asset_id, {"suiteShots": generated_shots + suite_shots[index:]})
-        conn.commit()
-    return generated_shots
-
-
-def generate_suite_prompt_asset_reference_image(conn: sqlite3.Connection, asset_id: str, shot_id: str) -> dict:
-    asset = prompt_asset_by_id(conn, asset_id)
-    if not asset:
-        raise AppError(HTTPStatus.NOT_FOUND, "套图提示词素材不存在")
-    if normalize_prompt_asset_kind(asset.get("assetKind")) != PROMPT_ASSET_KIND_SUITE:
-        raise AppError(HTTPStatus.BAD_REQUEST, "这不是套图提示词素材")
-    product = prompt_asset_product_image(asset)
-    if not product:
-        raise AppError(HTTPStatus.BAD_REQUEST, "请先上传商品原图")
-    references = prompt_asset_reference_images(asset)
-    suite_shots = normalize_suite_prompt_shots(asset.get("suiteShots"), references)
-    shot_index = next((index for index, shot in enumerate(suite_shots) if str(shot.get("id") or "") == str(shot_id or "")), -1)
-    if shot_index < 0:
-        raise AppError(HTTPStatus.NOT_FOUND, "套图图位不存在")
-    image_option = selected_prompt_factory_image_model(conn)
-    reference = references[shot_index] if shot_index < len(references) else (references[0] if references else {})
-    reference_images = [product, reference] if reference.get("url") else [product]
-    update_prompt_asset_progress(
-        conn,
-        asset_id,
-        "imageA",
-        "生成参考辅助图",
-        f"正在为「{suite_shots[shot_index].get('name') or '套图图位'}」使用商品原图和参考图生成参考辅助版本。",
-        image_option=image_option,
-    )
-    image_url = generate_prompt_asset_image(
-        image_option,
-        suite_reference_assisted_prompt(asset, suite_shots[shot_index]),
-        reference_images,
-        size=suite_shots[shot_index].get("size") or "1024x1024",
-    )
-    suite_shots[shot_index] = {**suite_shots[shot_index], "referenceImageUrl": image_url, "imageError": ""}
-    updated = update_prompt_asset(conn, asset_id, {"suiteShots": suite_shots, "error": ""})
-    conn.commit()
-    return updated
 
 
 def generate_prompt_asset(conn: sqlite3.Connection, asset_id: str, provider_model_id: str = "") -> dict:
@@ -4453,13 +4515,23 @@ def generate_prompt_asset(conn: sqlite3.Connection, asset_id: str, provider_mode
         )
         if not chinese_prompt or not english_prompt:
             raise AppError(HTTPStatus.BAD_GATEWAY, "模型未返回完整的中英文提示词")
+        asset_title = trim_text(
+            str(
+                prompt_payload.get("assetTitle")
+                or prompt_payload.get("title")
+                or prompt_payload.get("name")
+                or ""
+            ),
+            200,
+        )
         suite_shots = normalize_suite_prompt_shots(prompt_payload.get("suiteShots"), references)
-        partial = update_prompt_asset(
-            conn,
-            asset_id,
-            {
+        update_values = {
                 "referenceAnalysis": trim_text(
-                    str(analysis_payload.get("summary") or json.dumps(analysis_payload, ensure_ascii=False)),
+                    str(
+                        analysis_payload.get("chineseSummary")
+                        or analysis_payload.get("summary")
+                        or json.dumps(analysis_payload, ensure_ascii=False)
+                    ),
                     PROMPT_ASSET_TEXT_LIMIT,
                 ),
                 "chinesePrompt": chinese_prompt,
@@ -4473,95 +4545,75 @@ def generate_prompt_asset(conn: sqlite3.Connection, asset_id: str, provider_mode
                     "hasProductImage": bool(product),
                     "assetKind": asset_kind,
                 },
-            },
-        )
+        }
+        if asset_title:
+            update_values["title"] = asset_title
+        partial = update_prompt_asset(conn, asset_id, update_values)
         if asset_kind == PROMPT_ASSET_KIND_SUITE:
-            generated_suite_shots = generate_suite_prompt_only_images_for_shots(
-                conn,
-                asset_id,
-                partial,
-                suite_shots,
-                product,
-                image_option,
-            )
-            completed_count = sum(1 for shot in generated_suite_shots if shot.get("promptOnlyImageUrl"))
-            comparison = f"已生成 {completed_count}/{len(generated_suite_shots)} 张套图 Prompt-only 验证图"
-            if not product:
-                comparison = "未上传商品原图，已生成套图提示词但未验证出图。"
+            image_b_url = ""
+            comparison = "未上传商品原图，已生成套图提示词但未生成 Prompt + 原图图片。"
+            if product:
+                update_prompt_asset_progress(
+                    conn,
+                    asset_id,
+                    "imageB",
+                    "生成 Prompt + 原图图片",
+                    "验证出图模型正在按每个套图图位分别使用商品原图和对应 Prompt，逐张测试是否可下发复用。",
+                    text_option=text_option,
+                    image_option=image_option,
+                )
+                generated_count = 0
+                for shot_index, shot in enumerate(suite_shots):
+                    shot_prompt = suite_shot_validation_prompt(chinese_prompt, shot)
+                    shot_size = normalize_image_size(str(shot.get("size") or "1024x1024")) or "1024x1024"
+                    shot_image_url = generate_prompt_asset_image(image_option, shot_prompt, [product], size=shot_size)
+                    shot["promptOnlyImageUrl"] = shot_image_url
+                    shot["imageError"] = ""
+                    if not image_b_url:
+                        image_b_url = shot_image_url
+                    generated_count += 1
+                    update_prompt_asset(
+                        conn,
+                        asset_id,
+                        {
+                            "imageBUrl": image_b_url,
+                            "suiteShots": suite_shots,
+                            "comparison": f"已生成 {generated_count} 张 Prompt + 原图图片",
+                        },
+                    )
+                    conn.commit()
+                conn.commit()
+                comparison = f"已生成 {generated_count} 张 Prompt + 原图图片"
             return update_prompt_asset(
                 conn,
                 asset_id,
                 {
                     "status": PROMPT_ASSET_STATUS_GENERATED,
                     "imageAUrl": "",
-                    "imageBUrl": "",
+                    "imageBUrl": image_b_url,
                     "comparison": comparison,
-                    "suiteShots": generated_suite_shots,
+                    "suiteShots": suite_shots,
                     "response": {"analysis": analysis_payload, "prompt": prompt_payload},
                     "error": "",
                 },
             )
         image_a_url = ""
         image_b_url = ""
-        comparison = "未上传商品原图，未验证产品迁移。"
+        comparison = "未上传商品原图，已生成提示词但未生成 Prompt + 原图图片。"
         if product:
             update_prompt_asset_progress(
                 conn,
                 asset_id,
-                "imageA",
-                "生成 Image A",
-                "验证出图模型正在使用商品原图和参考图，生成参考辅助版本。",
-                text_option=text_option,
-                image_option=image_option,
-            )
-            image_a_url = generate_prompt_asset_image(image_option, prompt_factory_reference_assisted_prompt(partial), [product, *references])
-            partial = update_prompt_asset(conn, asset_id, {"imageAUrl": image_a_url})
-            conn.commit()
-            update_prompt_asset_progress(
-                conn,
-                asset_id,
                 "imageB",
-                "生成 Image B",
+                "生成 Prompt + 原图图片",
                 "验证出图模型正在只使用商品原图和生成 Prompt，测试提示词是否可下发复用。",
                 text_option=text_option,
                 image_option=image_option,
             )
             image_b_url = generate_prompt_asset_image(image_option, chinese_prompt, [product])
-            partial = update_prompt_asset(conn, asset_id, {"imageBUrl": image_b_url})
+            update_prompt_asset(conn, asset_id, {"imageBUrl": image_b_url})
             conn.commit()
-            comparison_references = [
-                image
-                for image in [
-                    references[0] if references else {},
-                    {"name": "Image A", "url": image_a_url},
-                    {"name": "Image B", "url": image_b_url},
-                ]
-                if image.get("url")
-            ]
-            update_prompt_asset_progress(
-                conn,
-                asset_id,
-                "compare",
-                "对比验证图",
-                "文本理解模型正在比较 Image A、Image B 与参考风格，输出可审核结论。",
-                text_option=text_option,
-                image_option=image_option,
-            )
-            comparison_payload = call_prompt_factory_text(
-                text_option,
-                prompt_factory_comparison_instruction(),
-                comparison_references,
-            )
-            comparison_source = (
-                json.dumps(comparison_payload, ensure_ascii=False)
-                if any(key in comparison_payload for key in ("similarityScore", "similarity_score", "score", "similarity"))
-                else str(comparison_payload.get("comparison") or json.dumps(comparison_payload, ensure_ascii=False))
-            )
-            comparison = trim_text(
-                comparison_source,
-                PROMPT_ASSET_TEXT_LIMIT,
-            )
-            comparison = normalize_prompt_factory_comparison_text(comparison)
+            comparison = "已生成 1 张 Prompt + 原图图片"
         return update_prompt_asset(
             conn,
             asset_id,
@@ -4602,6 +4654,15 @@ def resolve_generation_prompt(body: dict, prompt_config: dict, references: list[
         prompt = with_in_image_copy_language_rule(with_reference_context(prompt, references, prompt_config), language="zh")
         return with_strict_product_reference(prompt, prompt_config), "template"
 
+    suite_preset_id = trim_text(str(body.get("suitePresetId") or body.get("suite_preset_id") or "").strip(), 160)
+    suite_shot_id = trim_text(str(body.get("suiteShotId") or body.get("suite_shot_id") or "").strip(), 160)
+    if suite_preset_id or suite_shot_id:
+        prompt = suite_shot_private_prompt(prompt_config, suite_preset_id, suite_shot_id)
+        if not prompt:
+            raise AppError(HTTPStatus.BAD_REQUEST, "套图模板或图位不存在")
+        prompt = with_in_image_copy_language_rule(with_reference_context(prompt, references, prompt_config), language="zh")
+        return with_strict_product_reference(prompt, prompt_config), "suite-template"
+
     prompt = trim_text(str(body.get("prompt") or "").strip(), 8000)
     if not prompt:
         raise AppError(HTTPStatus.BAD_REQUEST, "请选择模板")
@@ -4612,6 +4673,18 @@ def single_template_prompt(prompt_config: dict, template_id: str) -> str:
     for template in prompt_config.get("single", {}).get("templates", []):
         if str(template.get("id") or "") == template_id:
             return trim_text(str(template.get("prompt") or "").strip(), 8000)
+    return ""
+
+
+def suite_shot_private_prompt(prompt_config: dict, preset_id: str, shot_id: str) -> str:
+    if not preset_id or not shot_id:
+        return ""
+    for preset in prompt_config.get("suite", {}).get("presets", []):
+        if str(preset.get("id") or "") != preset_id:
+            continue
+        for shot in preset.get("shots", []):
+            if str(shot.get("id") or "") == shot_id:
+                return trim_text(str(shot.get("prompt") or "").strip(), 8000)
     return ""
 
 
@@ -4633,18 +4706,21 @@ def with_in_image_copy_language_rule(prompt: str, *, language: str = "zh") -> st
 def prompt_factory_analysis_instruction() -> str:
     return """
 Analyze the ecommerce reference image and optional product image. Return strict JSON only with keys:
-summary, imageType, canvasRatio, productPlacement, backgroundLighting, textHierarchy,
-englishCopySuggestions, riskPoints. Focus on layout, labels, icons, callouts, typography,
-scene style, and seller realism. All visible in-image copy must be in English. Translate any visible Chinese copy into concise English.
+chineseSummary, summary, imageType, canvasRatio, productPlacement, backgroundLighting,
+textHierarchy, englishCopySuggestions, riskPoints. Focus on layout, labels, icons,
+callouts, typography, scene style, and seller realism.
+chineseSummary must be written in Simplified Chinese for a B-side admin reviewer. It should explain the reusable layout, visual style, product placement, text hierarchy, and risk notes captured from the reference image.
+All visible in-image copy in generated images must be in English. Translate any visible Chinese copy into concise English.
 """.strip()
 
 
 def prompt_factory_prompt_instruction(analysis: dict) -> str:
     return f"""
 Create reusable prompt-only ecommerce image prompts from this reference analysis. Return strict JSON only:
-{{"chinesePrompt":"...", "englishPrompt":"..."}}
+{{"assetTitle":"short Chinese asset title", "chinesePrompt":"...", "englishPrompt":"..."}}
 
 Rules:
+- assetTitle must be a concise Simplified Chinese title based on the model's understanding of the reference image and product scene, not the uploaded filename.
 - The prompts must work with only one uploaded original product image and text prompt.
 - Do not mention a separate reference image.
 - Preserve exact product identity: shape, color, proportions, material, screen, buttons, ports, openings, logo, accessories, and visible construction.
@@ -4660,10 +4736,13 @@ Reference analysis JSON:
 def prompt_factory_suite_prompt_instruction(analysis: dict, reference_count: int) -> str:
     return f"""
 Create reusable prompt-only ecommerce suite prompts from this multi-image reference analysis. Return strict JSON only:
-{{"chinesePrompt":"overall suite style prompt", "englishPrompt":"overall suite style prompt in English", "suiteShots":[{{"name":"01 ...", "size":"1024x1024", "description":"...", "chinesePrompt":"shot-level prompt", "englishPrompt":"shot-level prompt in English"}}]}}
+{{"assetTitle":"short Chinese suite asset title", "chinesePrompt":"overall suite style prompt", "englishPrompt":"overall suite style prompt in English", "suiteShots":[{{"name":"01 ...", "size":"1024x1024", "description":"...", "chinesePrompt":"shot-level prompt", "englishPrompt":"shot-level prompt in English"}}]}}
 
 Rules:
-- Create {max(1, reference_count)} to {max(1, reference_count)} suiteShots, one for each reference image/order when possible.
+- assetTitle must be a concise Simplified Chinese title based on the uploaded reference images and product scene, not the uploaded filename.
+- Create exactly {max(1, reference_count)} suiteShots: one and only one shot for each uploaded reference image, preserving reference image order. Do not invent extra shots when there is only one reference image.
+- Name each shot in Simplified Chinese from the actual visual purpose and content of that specific reference image. Avoid generic names such as "首屏品牌横幅", "卖点信息图", "细节特写图", "Hero Banner", or "Feature Infographic" unless those exact words are visibly justified by the reference.
+- Each name should be concise, specific, and product-aware, such as "屏幕参数细节图" or "指夹血氧仪功能贴标图".
 - The overall prompts must describe the unified ecommerce suite style, product consistency, layout rhythm, lighting, text hierarchy, and seller realism.
 - Each suiteShots item must describe one C-side suite image slot that can work with only one uploaded original product image and text prompt.
 - Do not mention a separate reference image in final prompts.
@@ -4778,6 +4857,8 @@ def public_request_snapshot_body(
     *,
     prompt_source: str,
     template_id,
+    suite_preset_id="",
+    suite_shot_id="",
     count: int,
     size: str,
     reference_count: int,
@@ -4785,6 +4866,14 @@ def public_request_snapshot_body(
     if prompt_source == "template":
         return {
             "templateId": str(template_id or ""),
+            "count": count,
+            "size": size,
+            "referenceImageCount": reference_count,
+        }
+    if prompt_source == "suite-template":
+        return {
+            "suitePresetId": str(suite_preset_id or ""),
+            "suiteShotId": str(suite_shot_id or ""),
             "count": count,
             "size": size,
             "referenceImageCount": reference_count,

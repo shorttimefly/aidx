@@ -2743,6 +2743,116 @@ input[readonly] {
   resize: vertical;
 }
 
+.prompt-tree-manager {
+  display: grid;
+  grid-template-columns: minmax(240px, 320px) minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.prompt-tree-sidebar,
+.prompt-tree-detail {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.prompt-tree-sidebar-head {
+  display: grid;
+  gap: 3px;
+}
+
+.prompt-tree-sidebar-head strong {
+  font-size: 15px;
+}
+
+.prompt-tree-sidebar-head small {
+  color: var(--muted);
+}
+
+.prompt-tree-root-add {
+  justify-self: start;
+  min-height: 32px;
+  padding: 7px 10px;
+  font-size: 12px;
+  font-weight: 820;
+}
+
+.prompt-tree-list {
+  display: grid;
+  gap: 6px;
+  max-height: 680px;
+  overflow: auto;
+}
+
+.prompt-tree-node {
+  width: 100%;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 8px 8px 8px calc(8px + var(--tree-depth, 0) * 18px);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink);
+  text-align: left;
+  cursor: pointer;
+}
+
+.prompt-tree-node.active {
+  border-color: rgba(22, 119, 255, 0.42);
+  background: #eef7ff;
+  box-shadow: inset 3px 0 0 var(--blue);
+}
+
+.prompt-tree-node span:first-child {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prompt-tree-node strong,
+.prompt-tree-node small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-tree-node small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.prompt-tree-actions {
+  display: inline-flex;
+  gap: 4px;
+  opacity: 0.82;
+}
+
+.prompt-tree-actions i {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--panel-subtle);
+  color: var(--muted);
+  font-style: normal;
+  font-weight: 900;
+}
+
+.prompt-tree-node:hover .prompt-tree-actions i,
+.prompt-tree-node.active .prompt-tree-actions i {
+  background: #fff;
+  color: var(--ink);
+}
+
 .prompt-factory-shell {
   display: grid;
   grid-template-columns: minmax(260px, 360px) minmax(0, 1fr);
@@ -2833,20 +2943,6 @@ input[readonly] {
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.prompt-factory-score-card {
-  display: inline-flex;
-  align-items: center;
-  width: fit-content;
-  min-height: 36px;
-  padding: 8px 14px;
-  border: 1px solid #bdebdc;
-  border-radius: 999px;
-  background: #effff9;
-  color: #067a5b;
-  font-size: 18px;
-  font-weight: 950;
 }
 
 .prompt-factory-delete-button {
@@ -2970,6 +3066,16 @@ input[readonly] {
   border-radius: 8px;
   background: #fff;
   cursor: zoom-in;
+}
+
+.prompt-factory-preview-button[hidden],
+.prompt-factory-preview-fallback[hidden] {
+  display: none;
+}
+
+.prompt-factory-preview-fallback {
+  min-height: 260px;
+  color: var(--muted);
 }
 
 .prompt-factory-preview-button img {
@@ -3107,6 +3213,14 @@ input[readonly] {
 
 .prompt-factory-section h4 {
   margin: 0;
+}
+
+.prompt-factory-field-note {
+  max-width: 860px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .prompt-factory-progress {
@@ -3282,33 +3396,12 @@ input[readonly] {
   margin-bottom: 0;
 }
 
-.suite-factory-shot-images {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  align-items: start;
+.suite-factory-shot-validation {
+  margin-top: 4px;
 }
 
-.suite-factory-shot-image {
-  display: grid;
-  gap: 8px;
-  min-width: 0;
-}
-
-.suite-factory-shot-image > strong {
-  font-size: 13px;
-}
-
-.suite-factory-shot-image .prompt-factory-validation {
-  min-height: 0;
-}
-
-.suite-factory-shot-image .prompt-factory-validation-state {
-  min-height: 210px;
-}
-
-.suite-shot-empty-image {
-  aspect-ratio: auto;
+.suite-factory-shot-validation .prompt-factory-validation {
+  margin: 0;
 }
 
 .danger-empty {
@@ -3733,8 +3826,7 @@ input[readonly] {
   .admin-prompt-nav,
   .admin-prompt-grid.two,
   .prompt-factory-shell,
-  .prompt-factory-workspace,
-  .suite-factory-shot-images {
+  .prompt-factory-workspace {
     grid-template-columns: 1fr;
   }
 

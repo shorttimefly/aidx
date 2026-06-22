@@ -12,7 +12,7 @@ const DEFAULT_ENDPOINT = "https://aokapi.com/v1beta/models/{model}:generateConte
 const DEFAULT_MODEL = "gemini-2.5-flash-image";
 const DEFAULT_FOLDER_NAME = "未分类素材";
 const DEFAULT_SINGLE_TEMPLATE_CATEGORY = "3c-digital-accessories";
-const DEFAULT_SINGLE_TEMPLATE_ID = "amazon-aplus-3c-digital-accessories-brand-story";
+const DEFAULT_SINGLE_TEMPLATE_ID = "";
 const AUTH_TOKEN_KEY = "imageStudio.authToken";
 const ADMIN_ENTRY_TOKEN_PARAM = "adminToken";
 const ADMIN_ROLE = "admin";
@@ -165,17 +165,13 @@ function buildDefaultSinglePromptConfig() {
     categories: platform.categories.map((categoryId) => ({
       id: categoryId,
       label: SINGLE_CATEGORY_LABELS[categoryId] || categoryId,
-      scenarios: (SINGLE_PLATFORM_SCENES[platform.id] || []).map((scenario) => ({
-        id: scenario.id,
-        title: scenario.title,
-        templateId: `${platform.id}-${categoryId}-${scenario.id}`
-      }))
+      scenarios: []
     }))
   }));
   const defaults = {
     platformId: platforms[0]?.id || "",
     categoryId: platforms[0]?.categories?.[0]?.id || "",
-    scenarioId: platforms[0]?.categories?.[0]?.scenarios?.[0]?.id || ""
+    scenarioId: ""
   };
   const matrix = { defaults, platforms };
   const templatesFromMatrix = buildSingleTemplatesFromMatrix(matrix);
@@ -183,7 +179,7 @@ function buildDefaultSinglePromptConfig() {
     defaults,
     matrix,
     defaultTemplateCategory: defaults.categoryId,
-    defaultTemplateId: templatesFromMatrix[0]?.id || DEFAULT_SINGLE_TEMPLATE_ID,
+    defaultTemplateId: templatesFromMatrix[0]?.id || "",
     templateCategories: buildSingleTemplateCategoriesFromMatrix(matrix),
     templates: templatesFromMatrix,
     supplementalVariantPrompt: ""
@@ -561,6 +557,7 @@ function buildRuntimePromptConfig() {
   const config = legacyPromptConfig();
   config.version = 2;
   config.single = buildDefaultSinglePromptConfig();
+  config.suite.presets = [];
   return config;
 }
 
@@ -1578,11 +1575,22 @@ async function verifySessionActive() {
 
 function selectedSuitePreset() {
   const presets = currentPromptConfig().suite.presets || [];
-  return presets.find((preset) => preset.id === els.suitePresetInput.value) || presets[0] || legacyPromptConfig().suite.presets[0];
+  return presets.find((preset) => preset.id === els.suitePresetInput.value) || presets[0] || null;
 }
 
 function renderSuitePlan(activeId = null, doneIds = new Set()) {
   const preset = selectedSuitePreset();
+  if (!preset) {
+    els.suiteShotList.innerHTML = `
+      <div class="suite-shot-empty empty-state">
+        <div class="empty-copy">
+          <strong>套图模板已清空</strong>
+          <span>请先在后台重新生成并发布套图模板。</span>
+        </div>
+      </div>
+    `;
+    return;
+  }
   ensureSuiteShotSettings(preset);
   const activeShots = getSuiteActiveShots(preset);
   if (!activeShots.length) {
@@ -1630,6 +1638,7 @@ function renderSuitePlan(activeId = null, doneIds = new Set()) {
 }
 
 function ensureSuiteShotSettings(preset = selectedSuitePreset()) {
+  if (!preset) return;
   preset.shots.forEach((shot) => {
     if (state.suiteShotSettings[shot.id]) return;
     state.suiteShotSettings[shot.id] = {
@@ -1640,6 +1649,7 @@ function ensureSuiteShotSettings(preset = selectedSuitePreset()) {
 }
 
 function resetSuiteShotSettings(preset = selectedSuitePreset()) {
+  if (!preset) return;
   preset.shots.forEach((shot) => {
     state.suiteShotSettings[shot.id] = {
       enabled: true,
@@ -1655,6 +1665,7 @@ function defaultSuiteShotSize(shot) {
 }
 
 function getSuiteActiveShots(preset = selectedSuitePreset()) {
+  if (!preset) return [];
   ensureSuiteShotSettings(preset);
   return preset.shots
     .filter((shot) => state.suiteShotSettings[shot.id]?.enabled !== false)
@@ -1703,6 +1714,7 @@ function suiteSizeOptionMarkup(selectedSize, presetSize) {
 
 function handleSuiteSizeChange() {
   const preset = selectedSuitePreset();
+  if (!preset) return;
   ensureSuiteShotSettings(preset);
   if (els.suiteSizeInput.value === "preset") {
     preset.shots.forEach((shot) => {
@@ -1719,8 +1731,10 @@ function handleSuiteSizeChange() {
 function applySuiteSizeToShots(size) {
   const normalizedSize = normalizeImageSize(size);
   if (!normalizedSize) return;
-  ensureSuiteShotSettings();
-  selectedSuitePreset().shots.forEach((shot) => {
+  const preset = selectedSuitePreset();
+  if (!preset) return;
+  ensureSuiteShotSettings(preset);
+  preset.shots.forEach((shot) => {
     const setting = state.suiteShotSettings[shot.id];
     if (setting?.enabled !== false) setting.size = normalizedSize;
   });
@@ -2296,47 +2310,23 @@ function suiteContext() {
   };
 }
 
-function buildSuitePrompt(shot, preset, context) {
-  const compose = currentPromptConfig().suite.compose || {};
-  const values = {
-    productLabel: context.productLabel,
-    presetTitle: preset.title,
-    shotName: shot.name,
-    category: context.category,
-    sellingPoints: context.sellingPoints,
-    styleText: context.styleText,
-    referenceName: context.referenceName
-  };
-  const referenceLine = state.suiteReference
-    ? promptText(compose.referenceLine, values)
-    : compose.noReferenceLine;
-  const aplusLine = preset.title.includes("A+")
-    ? compose.aplusLine
-    : "";
-
-  return [
-    promptText(compose.taskLine, values),
-    promptText(compose.categoryLine, values),
-    promptText(compose.sellingPointsLine, values),
-    promptText(compose.styleLine, values),
-    aplusLine,
-    referenceLine,
-    shot.prompt,
-    compose.qualityLine,
-    compose.negativeLine
-  ]
-    .filter(Boolean)
-    .join("\n");
-}
-
 async function handleGenerateSuite() {
   if (!(await ensureApiReady())) return;
 
   const preset = selectedSuitePreset();
+  if (!preset) {
+    showToast("套图模板已清空，请先在后台重新生成并发布", true);
+    return;
+  }
   const context = suiteContext();
   const activeShots = getSuiteActiveShots(preset);
   if (!activeShots.length) {
     showToast("请至少保留一张套图图位", true);
+    return;
+  }
+  const credits = state.auth.user ? (state.auth.user.creditsRemaining || 0) : 0;
+  if (credits < activeShots.length) {
+    showCreditsModal(activeShots.length, credits);
     return;
   }
   const doneIds = new Set();
@@ -2358,10 +2348,10 @@ async function handleGenerateSuite() {
 
     for (const shot of activeShots) {
       renderSuitePlan(shot.id, doneIds);
-      const prompt = buildSuitePrompt(shot, preset, context);
       const requestedSize = shot.outputSize || shot.size;
       const images = await requestImages({
-        prompt,
+        suitePresetId: preset.id,
+        suiteShotId: shot.id,
         count: 1,
         size: requestedSize,
         referenceImages: state.suiteReference ? [state.suiteReference] : []
@@ -2370,7 +2360,7 @@ async function handleGenerateSuite() {
         id: createId("suite-img"),
         name: `${shot.name}-${context.productName || timestampName()}`,
         url: images[0].url,
-        prompt,
+        prompt: `套图模板：${preset.title} / ${shot.name}`,
         createdAt: new Date().toISOString(),
         source: "suite",
         suiteId,
@@ -2983,7 +2973,7 @@ async function handleRefine() {
   }
 }
 
-async function requestImages({ prompt, templateId, variantIndex = 0, count, size, referenceImages = [] }) {
+async function requestImages({ prompt, templateId, suitePresetId, suiteShotId, variantIndex = 0, count, size, referenceImages = [] }) {
   const references = normalizeReferenceImages(referenceImages);
   const requestSize = normalizeImageSize(size) || "1024x1024";
   const requestBody = {
@@ -2995,6 +2985,9 @@ async function requestImages({ prompt, templateId, variantIndex = 0, count, size
   if (templateId) {
     requestBody.templateId = templateId;
     if (variantIndex) requestBody.variantIndex = variantIndex;
+  } else if (suitePresetId && suiteShotId) {
+    requestBody.suitePresetId = suitePresetId;
+    requestBody.suiteShotId = suiteShotId;
   } else {
     requestBody.prompt = withStrictProductReference(withReferenceContext(prompt, references));
   }
@@ -3015,7 +3008,14 @@ async function requestImages({ prompt, templateId, variantIndex = 0, count, size
     state.auth.apiKeyConfigured = Boolean(payload.apiKeyConfigured);
     updateConnectionState();
   }
+  syncCreditsFromPayload(payload);
   return images.map((image) => ({ ...image, request: image.request || requestSnapshot }));
+}
+
+function syncCreditsFromPayload(payload = {}) {
+  if (!state.auth.user || payload.creditsRemaining === undefined || payload.creditsRemaining === null) return;
+  state.auth.user.creditsRemaining = payload.creditsRemaining;
+  updateCreditsDisplay(payload.creditsRemaining, state.auth.user.credits);
 }
 
 async function postImageRequest(endpoint, apiKey, body) {
