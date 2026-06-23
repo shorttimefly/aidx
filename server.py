@@ -809,6 +809,7 @@ def init_db() -> None:
         ensure_column(conn, "user_settings", "video_endpoint_primary", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "user_settings", "video_endpoint_secondary", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "provider_models", "model_kind", "TEXT NOT NULL DEFAULT 'image'")
+        ensure_column(conn, "provider_models", "display_name", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "prompt_assets", "asset_kind", "TEXT NOT NULL DEFAULT 'single'")
         ensure_column(conn, "prompt_assets", "suite_shots_json", "TEXT NOT NULL DEFAULT '[]'")
         migrate_default_endpoint(conn)
@@ -1294,10 +1295,12 @@ def normalize_provider_model_name(value: str, provider_type: str) -> str:
 
 
 def row_provider_model(row: sqlite3.Row) -> dict:
+    display_name = row_value(row, "display_name", "")
     return {
         "id": row["id"],
         "providerId": row["provider_id"],
         "modelName": row["model_name"],
+        "displayName": display_name if display_name else row["model_name"],
         "modelKind": normalize_model_kind(row_value(row, "model_kind", MODEL_KIND_IMAGE)),
         "priority": int(row["priority"] or 100),
         "enabled": bool(row["enabled"]),
@@ -1692,20 +1695,22 @@ def save_model_providers(conn: sqlite3.Connection, providers) -> None:
                 priority = index * 100 + model_index
             model_enabled = 1 if model_item.get("enabled", True) else 0
             model_created_at = row_value(existing_models.get(model_id), "created_at", timestamp) or timestamp
+            display_name = trim_text(str(model_item.get("displayName") or model_item.get("display_name") or ""), 160)
             conn.execute(
                 """
                 INSERT INTO provider_models
-                  (id, provider_id, model_name, model_kind, priority, enabled, created_at, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                  (id, provider_id, model_name, display_name, model_kind, priority, enabled, created_at, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                   provider_id=excluded.provider_id,
                   model_name=excluded.model_name,
+                  display_name=excluded.display_name,
                   model_kind=excluded.model_kind,
                   priority=excluded.priority,
                   enabled=excluded.enabled,
                   updated_at=excluded.updated_at
                 """,
-                (model_id, provider_id, model_name, model_kind, priority, model_enabled, model_created_at, timestamp),
+                (model_id, provider_id, model_name, display_name, model_kind, priority, model_enabled, model_created_at, timestamp),
             )
             keep_model_ids.append(model_id)
     if keep_model_ids:
