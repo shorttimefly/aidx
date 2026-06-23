@@ -5681,6 +5681,22 @@ def log_generation(
     return log_id
 
 
+def _generate_thumbnail(data: bytes, record_id: str, ext: str) -> str:
+    """Generate a 200x200 thumbnail and save to disk. Returns thumbnail URL path."""
+    try:
+        import io
+        from PIL import Image
+        img = Image.open(io.BytesIO(data))
+        img.thumbnail((200, 200), Image.LANCZOS)
+        thumb_data = io.BytesIO()
+        fmt = "JPEG" if ext in (".jpg", ".jpeg") else "PNG"
+        img.convert("RGB").save(thumb_data, format=fmt, quality=75)
+        thumb_filename = f"thumb_{record_id}.jpg"
+        (GENERATED_DIR / thumb_filename).write_bytes(thumb_data.getvalue())
+        return f"/api/generated-images/{thumb_filename}"
+    except Exception:
+        return ""
+
 GENERATED_DIR = STORAGE_DIR / "generated"
 
 def _save_image_to_disk(image_url: str, record_id: str) -> str:
@@ -5703,7 +5719,8 @@ def _save_image_to_disk(image_url: str, record_id: str) -> str:
             filename = f"{record_id}{ext}"
             filepath = GENERATED_DIR / filename
             filepath.write_bytes(data)
-            return f"/api/generated-images/{filename}"
+            thumb = _generate_thumbnail(data, record_id, ext)
+            return f"/api/generated-images/{filename}" + (f"||{thumb}" if thumb else "")
         except (ValueError, binascii.Error, OSError):
             pass
         return url
@@ -5723,7 +5740,8 @@ def _save_image_to_disk(image_url: str, record_id: str) -> str:
             filename = f"{record_id}{ext}"
             filepath = GENERATED_DIR / filename
             filepath.write_bytes(data)
-            return f"/api/generated-images/{filename}"
+            thumb = _generate_thumbnail(data, record_id, ext)
+            return f"/api/generated-images/{filename}" + (f"||{thumb}" if thumb else "")
         except Exception:
             pass
     return url

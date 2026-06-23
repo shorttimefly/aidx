@@ -17,8 +17,18 @@ function appRoute(path) {
 /* Fix relative image URLs from the server */
 function fixImageUrl(url) {
   if (!url) return url;
+  var parts = url.split("||");
+  url = parts[0];
   if (url.startsWith("/api/generated-images/")) return APP_BASE + url;
   return url;
+}
+function fixImageThumb(url) {
+  if (!url) return url;
+  var parts = url.split("||");
+  var thumb = parts[1] || parts[0];
+  if (thumb.startsWith("/api/generated-images/")) return APP_BASE + thumb;
+  if (parts[0].startsWith("/api/generated-images/")) return APP_BASE + parts[0];
+  return thumb;
 }
 
 const Auth = {
