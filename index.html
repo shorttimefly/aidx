@@ -530,7 +530,7 @@
       .map(
         (img, i) =>
           `<div class="result-card">
-            <img src="${attrEscape(img.url)}" alt="生成图 ${i + 1}" loading="lazy" />
+            <img src="${attrEscape(fixImageUrl(img.url))}" alt="生成图 ${i + 1}" loading="lazy" />
             <div class="result-meta">#${i + 1} ${escapeHtml(templateId)}</div>
           </div>`
       )

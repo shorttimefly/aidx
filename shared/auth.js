@@ -14,6 +14,12 @@ const APP_BASE = (function () {
 function appRoute(path) {
   return APP_BASE + path;
 }
+/* Fix relative image URLs from the server */
+function fixImageUrl(url) {
+  if (!url) return url;
+  if (url.startsWith("/api/generated-images/")) return APP_BASE + url;
+  return url;
+}
 
 const Auth = {
   /** Read token from localStorage */
