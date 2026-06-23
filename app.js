@@ -964,7 +964,7 @@ function bindEvents() {
   els.connectionState.addEventListener("click", openSettingsModal);
   els.singleConnectionState.addEventListener("click", openSettingsModal);
   els.adminEntryBtn.addEventListener("click", openAdminEntry);
-  els.openAuthBtn.addEventListener("click", () => openAuthModal({ locked: false }));
+  els.openAuthBtn.addEventListener("click", () => { window.location.replace("./login.html"); });
   els.authSubmitBtn.addEventListener("click", handleAuth);
   els.authModeTabs.forEach((button) => {
     button.addEventListener("click", () => switchAuthMode(button.dataset.authMode));
