@@ -812,6 +812,8 @@ def init_db() -> None:
         ensure_column(conn, "provider_models", "display_name", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "prompt_assets", "asset_kind", "TEXT NOT NULL DEFAULT 'single'")
         ensure_column(conn, "prompt_assets", "suite_shots_json", "TEXT NOT NULL DEFAULT '[]'")
+        ensure_column(conn, "generated_assets", "downloaded", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "generated_assets", "edited", "INTEGER NOT NULL DEFAULT 0")
         migrate_default_endpoint(conn)
         ensure_sessions_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, role)")
@@ -2555,6 +2557,14 @@ class Handler(SimpleHTTPRequestHandler):
             if path.startswith("/api/generated-assets/") and method == "DELETE":
                 asset_id = unquote(path.removeprefix("/api/generated-assets/"))
                 return self.handle_delete_generated_asset(asset_id)
+            if path.startswith("/api/generated-assets/") and method == "POST":
+                asset_path = unquote(path.removeprefix("/api/generated-assets/"))
+                if asset_path.endswith("/download"):
+                    asset_id = asset_path.removesuffix("/download")
+                    return self.handle_record_asset_download(asset_id)
+                if asset_path.endswith("/edit"):
+                    asset_id = asset_path.removesuffix("/edit")
+                    return self.handle_record_asset_edit(asset_id)
             if path == "/api/generation-logs" and method == "POST":
                 return self.handle_create_generation_log()
             if path == "/api/image-feedback" and method == "POST":
@@ -3286,6 +3296,20 @@ class Handler(SimpleHTTPRequestHandler):
             )
             if result.rowcount == 0:
                 raise AppError(HTTPStatus.NOT_FOUND, "资产不存在或无权删除")
+        self.json_response({"ok": True})
+
+    def handle_record_asset_download(self, asset_id: str) -> None:
+        """POST /api/generated-assets/<id>/download — record download"""
+        user = self.require_user()
+        with connect() as conn:
+            conn.execute("UPDATE generated_assets SET downloaded=1 WHERE id=? AND user_id=?", (asset_id, user["id"]))
+        self.json_response({"ok": True})
+
+    def handle_record_asset_edit(self, asset_id: str) -> None:
+        """POST /api/generated-assets/<id>/edit — record edit"""
+        user = self.require_user()
+        with connect() as conn:
+            conn.execute("UPDATE generated_assets SET edited=1 WHERE id=? AND user_id=?", (asset_id, user["id"]))
         self.json_response({"ok": True})
 
     def handle_create_generation_log(self) -> None:

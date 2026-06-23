@@ -75,8 +75,8 @@
           + '<div class="asset-meta"><span class="name">' + esc(a.name||"未命名") + '</span>'
           + (a.model ? '<span>' + esc(a.model) + ' · ' + esc(a.size||"") + (a.refCount?" · "+a.refCount+"张参考图":"") + '</span>' : '')
           + '<div class="flex gap-2" style="margin-top:4px">'
-          + '<button class="btn btn-ghost btn-sm" data-action="download" data-url="' + escAttr(url) + '" data-name="' + escAttr(a.name||"image") + '">下载</button>'
-          + '<a class="btn btn-ghost btn-sm" href="./edit.html?url=' + encodeURIComponent(url) + '">编辑</a>'
+          + '<button class="btn btn-ghost btn-sm" data-action="download" data-url="' + escAttr(url) + '" data-name="' + escAttr(a.name||"image") + '" data-id="' + escAttr(a.id) + '">下载</button>'
+          + '<a class="btn btn-ghost btn-sm" href="./edit.html?url=' + encodeURIComponent(url) + '" data-action="edit" data-id="' + escAttr(a.id) + '">编辑</a>'
           + '<button class="btn btn-ghost btn-sm" data-action="delete" data-id="' + escAttr(a.id) + '" style="color:var(--color-error)">删除</button>'
           + '</div></div></div>';
       }).join("");
@@ -93,6 +93,10 @@
     if (action === "download") {
       e.preventDefault();
       downloadAsset(btn.getAttribute("data-url"), btn.getAttribute("data-name"));
+      trackDownload(btn.getAttribute("data-id"));
+    }
+    if (action === "edit") {
+      trackEdit(btn.getAttribute("data-id"));
     }
     if (action === "delete") {
       e.preventDefault();
@@ -110,6 +114,13 @@
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 1000);
     } catch(e) { window.open(url, "_blank"); }
+  }
+
+  async function trackDownload(id) {
+    try { await fetch(appRoute("/api/generated-assets/"+id+"/download"), { method:"POST", headers:{"Authorization":"Bearer "+Auth.token} }); } catch(e){}
+  }
+  async function trackEdit(id) {
+    try { await fetch(appRoute("/api/generated-assets/"+id+"/edit"), { method:"POST", headers:{"Authorization":"Bearer "+Auth.token} }); } catch(e){}
   }
 
   async function deleteAsset(id) {
