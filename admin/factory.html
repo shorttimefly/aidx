@@ -87,8 +87,6 @@ async function init() {
   document.getElementById("topbarUser").textContent = Auth.user?.email || "";
   document.getElementById("sidebarUser").textContent = Auth.user?.email || "";
   await loadAssets();
-  // auto-load first detail
-  if (assets.length && !activeId) selectAsset(assets[0].id);
 }
 
 async function loadAssets() {
@@ -127,10 +125,9 @@ function renderList() {
 
 async function selectAsset(id) {
   activeId = id; renderList();
+  document.getElementById("detailPanel").innerHTML = '<div class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">加载中...</div>';
   var asset = assets.find(function(a) { return a.id === id; });
-  if (!asset) {
-    try { asset = await Api.admin("/admin/prompt-assets/" + id); } catch(e) { return; }
-  }
+  try { asset = await Api.admin("/admin/prompt-assets/" + id); } catch(e) { return; }
   var panel = document.getElementById("detailPanel");
   var refs = (asset.referenceImages || []).map(function(r) { return r.url || r; }).filter(Boolean);
   var productImg = (asset.productImage || {}).url || "";
