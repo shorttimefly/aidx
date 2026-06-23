@@ -67,7 +67,7 @@
         + '<div class="asset-meta"><span class="name">' + esc(name) + '</span>'
         + (a.model ? '<span>' + esc(a.model) + ' · ' + esc(a.size || "") + '</span>' : '')
         + '<div class="flex gap-2" style="margin-top:4px">'
-        + '<a class="btn btn-ghost btn-sm" href="' + escAttr(url) + '" download="' + escAttr(name) + '.png">下载</a>'
+        + '<a class="btn btn-ghost btn-sm" href="#" onclick="downloadAsset(event,\'' + escAttr(url) + '\',\'' + escAttr(name) + '\')">下载</a>'
         + '<a class="btn btn-ghost btn-sm" href="./edit.html?url=' + encodeURIComponent(url) + '">编辑</a>'
         + '</div></div></div>';
     }).join("");
@@ -78,6 +78,25 @@
 
   function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
   function escAttr(s) { return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;"); }
+
+  async function downloadAsset(e, url, name) {
+    e.preventDefault();
+    try {
+      var resp = await fetch(url);
+      if (!resp.ok) throw new Error("下载失败");
+      var blob = await resp.blob();
+      var blobUrl = URL.createObjectURL(blob);
+      var a = document.createElement("a");
+      a.href = blobUrl;
+      a.download = (name || "image") + ".png";
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 1000);
+    } catch(err) {
+      window.open(url, "_blank");
+    }
+  }
 })();
 </script>
 </body>
