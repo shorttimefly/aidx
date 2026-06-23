@@ -2911,6 +2911,12 @@ async function handleRefine() {
   }
   if (!(await ensureApiReady())) return;
 
+  var credits = state.auth.user ? (state.auth.user.creditsRemaining || 0) : 0;
+  if (credits < 1) {
+    showCreditsModal(1, credits);
+    return;
+  }
+
   state.referenceFallbackNotice = "";
   const compose = currentPromptConfig().refinement.compose || {};
   const composedPrompt = [
