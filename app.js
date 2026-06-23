@@ -924,9 +924,7 @@ function cacheElements() {
     closeSettingsModalBtn: document.getElementById("closeSettingsModalBtn"),
     cancelSettingsBtn: document.getElementById("cancelSettingsBtn"),
     authModal: document.getElementById("authModal"),
-    authTypeInput: document.getElementById("authTypeInput"),
     authModeTabs: document.querySelectorAll("[data-auth-mode]"),
-    authNameLabel: document.getElementById("authNameLabel"),
     authNameInput: document.getElementById("authNameInput"),
     authPasswordInput: document.getElementById("authPasswordInput"),
     authSubmitBtn: document.getElementById("authSubmitBtn"),
@@ -969,7 +967,6 @@ function bindEvents() {
   els.authModeTabs.forEach((button) => {
     button.addEventListener("click", () => switchAuthMode(button.dataset.authMode));
   });
-  els.authTypeInput.addEventListener("change", updateAuthTypeUi);
   els.logoutBtn.addEventListener("click", handleLogout);
   els.suitePresetInput.addEventListener("change", () => {
     resetSuiteShotSettings();
