@@ -101,11 +101,12 @@
                   <th>角色</th>
                   <th>积分</th>
                   <th>状态</th>
+                  <th>在用模型</th>
                   <th>操作</th>
                 </tr>
               </thead>
               <tbody id="userTableBody">
-                <tr><td colspan="6"><div class="empty-state"><span class="spinner"></span>加载中…</div></td></tr>
+                <tr><td colspan="7"><div class="empty-state"><span class="spinner"></span>加载中…</div></td></tr>
               </tbody>
             </table>
           </div>
@@ -144,7 +145,7 @@
       userCount.textContent = "共 " + users.length + " 个用户";
 
       if (!users.length) {
-        userTableBody.innerHTML = '<tr><td colspan="6"><div class="empty-state">暂无用户数据</div></td></tr>';
+        userTableBody.innerHTML = '<tr><td colspan="7"><div class="empty-state">暂无用户数据</div></td></tr>';
         return;
       }
 
@@ -183,6 +184,11 @@
           + '<span>' + (disabled ? '已禁用' : '正常') + '</span>'
           + '</div></td>';
 
+        var imgModels = u.allowedImageModels || [];
+        var modelCell = '<td class="model-cell"><span class="text-sm">'
+          + (imgModels.length ? imgModels.map(function(m) { return m.displayName || m.modelName || ''; }).filter(Boolean).join(', ') : '<span class="text-muted">默认模型</span>')
+          + '</span></td>';
+
         var opsCell = '<td><div class="op-group">'
           + (disabled
             ? '<button class="btn btn-secondary btn-sm" data-action="enable" data-id="' + u.id + '">启用</button>'
@@ -196,6 +202,7 @@
           + '<td>' + roleBadge + '</td>'
           + creditCell
           + statusCell
+          + modelCell
           + opsCell
           + '</tr>';
       }).join("");
@@ -208,13 +215,13 @@
 
     /* ── Load data ── */
     async function loadUsers() {
-      userTableBody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><span class="spinner"></span>加载中…</div></td></tr>';
+      userTableBody.innerHTML = '<tr><td colspan="7"><div class="empty-state"><span class="spinner"></span>加载中…</div></td></tr>';
       try {
         var data = await Api.admin("/admin/users");
         renderUsers(data.users || []);
       } catch (e) {
         if (!e.authFailure) {
-          userTableBody.innerHTML = '<tr><td colspan="6"><div class="empty-state">加载失败: ' + escapeHtml(e.message) + '</div></td></tr>';
+          userTableBody.innerHTML = '<tr><td colspan="7"><div class="empty-state">加载失败: ' + escapeHtml(e.message) + '</div></td></tr>';
           toast(e.message, true);
         }
       }
