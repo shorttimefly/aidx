@@ -63,8 +63,8 @@
         </div>
         <div style="overflow-x:auto">
           <table class="log-table">
-            <thead><tr><th>时间</th><th>用户</th><th>模型</th><th>提示词</th><th>数量</th><th>状态</th><th>下载</th><th>编辑</th><th>耗时</th><th>操作</th></tr></thead>
-            <tbody id="logBody"><tr><td colspan="10" class="text-muted" style="text-align:center;padding:var(--space-8)">加载中...</td></tr></tbody>
+            <thead><tr><th>时间</th><th>用户</th><th>模板</th><th>模型</th><th>提示词</th><th>数量</th><th>状态</th><th>下载</th><th>编辑</th><th>耗时</th><th>操作</th></tr></thead>
+            <tbody id="logBody"><tr><td colspan="11" class="text-muted" style="text-align:center;padding:var(--space-8)">加载中...</td></tr></tbody>
           </table>
         </div>
         <div class="load-more" id="loadMore"></div>
@@ -91,13 +91,14 @@ async function loadLogs() {
     const data = await Api.admin(`/logs?limit=${limit}`);
     const logs = data.logs || [];
     if (!logs.length && offset === 0) {
-      document.getElementById("logBody").innerHTML = '<tr><td colspan="10" class="text-muted" style="text-align:center;padding:var(--space-8)">暂无生成记录</td></tr>';
+      document.getElementById("logBody").innerHTML = '<tr><td colspan="11" class="text-muted" style="text-align:center;padding:var(--space-8)">暂无生成记录</td></tr>';
       return;
     }
     document.getElementById("logBody").innerHTML = logs.map(l => `
       <tr>
         <td>${fmtTime(l.createdAt)}</td>
         <td class="text-sm">${esc(l.userName || l.userId || "-")}</td>
+        <td class="text-sm">${esc(l.templateLabel || "-")}</td>
         <td>${esc(l.model || "-")}</td>
         <td class="prompt-cell" title="${escAttr(l.prompt || "")}">${esc((l.prompt || "").slice(0, 80))}</td>
         <td>${l.count || 0}</td>
@@ -107,12 +108,12 @@ async function loadLogs() {
         <td>${l.durationMs ? (l.durationMs / 1000).toFixed(1) + 's' : '-'}</td>
         <td><button class="btn btn-ghost btn-sm" onclick="showDetail('${l.id}')">详情</button></td>
       </tr>
-    `).join("") || '<tr><td colspan="10" class="text-muted" style="text-align:center">暂无更多</td></tr>';
+    `).join("") || '<tr><td colspan="11" class="text-muted" style="text-align:center">暂无更多</td></tr>';
     document.getElementById("loadMore").innerHTML = logs.length === limit
       ? `<button class="btn btn-secondary btn-sm" onclick="offset+=limit;loadLogs()">加载更多</button>`
       : "";
   } catch(e) {
-    document.getElementById("logBody").innerHTML = `<tr><td colspan="10" class="text-muted" style="text-align:center">加载失败: ${esc(e.message)}</td></tr>`;
+    document.getElementById("logBody").innerHTML = `<tr><td colspan="11" class="text-muted" style="text-align:center">加载失败: ${esc(e.message)}</td></tr>`;
   }
 }
 

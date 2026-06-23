@@ -3969,7 +3969,19 @@ class Handler(SimpleHTTPRequestHandler):
             for sr in stats_rows:
                 stats[sr["log_id"]] = {"downloaded": sr["dl"] or 0, "edited": sr["ed"] or 0}
         logs = []
+        # Get template name mapping from prompt config
+        prompt_config = prompt_config_settings(conn)
+        templates = prompt_config.get("single", {}).get("templates", [])
+        template_map = {t.get("id"): t for t in templates if isinstance(t, dict)}
         for row in rows:
+            user_req = parse_json_field(row["user_request_json"])
+            template_id = str(user_req.get("templateId") or "").strip() if isinstance(user_req, dict) else ""
+            template_label = ""
+            if template_id and template_id in template_map:
+                t = template_map[template_id]
+                template_label = f'{t.get("platform","")} / {t.get("category","")} / {t.get("title",template_id)}'
+            elif template_id:
+                template_label = template_id
             logs.append(
                 {
                     "id": row["id"],
@@ -3994,6 +4006,7 @@ class Handler(SimpleHTTPRequestHandler):
                     "createdAt": row["created_at"],
                     "downloaded": stats.get(row["id"], {}).get("downloaded", 0),
                     "edited": stats.get(row["id"], {}).get("edited", 0),
+                "templateLabel": template_label,
                 }
             )
         self.json_response({"logs": logs})
