@@ -82,9 +82,7 @@
     if (!confirm("确定删除此素材？")) return;
     try {
       await Api.fetch("/generated-assets/" + id, { method: "DELETE" });
-      // Remove from DOM
-      var card = e.target.closest(".asset-card");
-      if (card) card.remove();
+      location.reload();
     } catch(err) { 
       alert("删除失败: " + err.message); 
     }
