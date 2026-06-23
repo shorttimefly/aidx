@@ -103,6 +103,7 @@ p { color: var(--color-text-secondary); }
 }
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:focus-visible { outline: 2px solid var(--color-accent); outline-offset: 2px; }
+.btn:active { transform: scale(0.97); }
 
 .btn-primary { background: var(--color-cta); color: #fff; }
 .btn-primary:hover:not(:disabled) { background: #0284c7; }
@@ -201,3 +202,72 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
   .shell-content { padding: var(--space-4); }
   :root { --font-size-base: 0.875rem; }
 }
+
+/* ── Component: Global Interactivity ─────────────────────────────────────── */
+
+a, button, select, input[type="checkbox"], input[type="radio"], [role="button"],
+[onclick], .clickable, .sidebar-nav a, .asset-item, .tree-node-header {
+  cursor: pointer;
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="file"]),
+select, textarea, button, a {
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast), background var(--transition-fast);
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible, button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+/* ── Component: Table ────────────────────────────────────────────────────── */
+
+.admin-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+.admin-table th, .admin-table td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--color-border); }
+.admin-table th { font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); font-size: var(--font-size-xs); text-transform: uppercase; letter-spacing: 0.04em; }
+.admin-table tbody tr:hover { background: var(--color-bg); }
+.admin-table tbody tr { transition: background var(--transition-fast); }
+
+/* ── Component: Loading Spinner ──────────────────────────────────────────── */
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block; width: 24px; height: 24px;
+  border: 3px solid var(--color-border); border-top-color: var(--color-accent);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+.spinner-lg { width: 36px; height: 36px; border-width: 4px; }
+.spinner-sm { width: 16px; height: 16px; border-width: 2px; }
+
+/* ── Component: Empty State ──────────────────────────────────────────────── */
+
+.empty-state {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  padding: var(--space-12) var(--space-6); text-align: center; color: var(--color-text-muted);
+  min-height: 200px;
+}
+.empty-state strong { font-weight: var(--font-weight-medium); color: var(--color-text-secondary); margin-bottom: var(--space-2); display: block; }
+.empty-state span, .empty-state p { font-size: var(--font-size-sm); }
+
+/* ── Component: Toast Animation ──────────────────────────────────────────── */
+
+.toast {
+  position: fixed; bottom: var(--space-6); left: 50%; transform: translateX(-50%) translateY(12px);
+  padding: var(--space-3) var(--space-6); background: var(--color-primary); color: #fff;
+  border-radius: var(--radius-lg); font-size: var(--font-size-sm); font-weight: var(--font-weight-medium);
+  opacity: 0; pointer-events: none; transition: opacity var(--transition-fast), transform var(--transition-fast);
+  z-index: 9999;
+}
+.toast.active { opacity: 1; transform: translateX(-50%) translateY(0); pointer-events: auto; }
+.toast.error { background: var(--color-error); }
+.toast.success { background: var(--color-success); }
+
+/* ── Component: Card Hover ───────────────────────────────────────────────── */
+
+.card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-6); transition: border-color var(--transition-fast); }
+.card.interactive:hover { border-color: var(--color-accent); }
+
+/* ── Component: Scrollbar ────────────────────────────────────────────────── */
+
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--color-text-muted); }
