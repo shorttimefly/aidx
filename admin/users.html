@@ -1,0 +1,251 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>用户管理 — AI 智能图片编辑器 · 后台管理</title>
+  <link rel="stylesheet" href="../shared/styles.css" />
+  <style>
+    /* ── Table ── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    th { text-align: left; padding: var(--space-2) var(--space-3); font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); border-bottom: 2px solid var(--color-border); white-space: nowrap; }
+    td { padding: var(--space-3); border-bottom: 1px solid var(--color-border); vertical-align: middle; }
+    tr:hover td { background: var(--color-bg); }
+    .shell-content { max-width: 100%; }
+
+    /* ── Credit tooltip ── */
+    .credit-cell { position: relative; cursor: default; }
+    .credit-cell:hover .credit-tooltip { display: block; }
+    .credit-tooltip {
+      display: none; position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+      background: var(--color-primary); color: #fff; padding: var(--space-3); border-radius: var(--radius-md);
+      font-size: var(--font-size-xs); white-space: nowrap; z-index: 100; min-width: 200px; margin-bottom: 4px;
+    }
+    .credit-tooltip .row { display: flex; justify-content: space-between; gap: var(--space-4); padding: 2px 0; }
+    .credit-tooltip .row .label { color: rgba(255,255,255,0.7); }
+    .credit-tooltip .divider { border-top: 1px solid rgba(255,255,255,0.2); margin: 4px 0; }
+    .credit-tooltip .deduction { color: var(--color-error); font-size: 10px; max-height: 120px; overflow-y: auto; }
+
+    /* ── Status badge ── */
+    .user-status { display: inline-flex; align-items: center; gap: 6px; }
+    .user-status .dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
+    .user-status .dot.active { background: var(--color-success); }
+    .user-status .dot.disabled { background: var(--color-error); }
+
+    /* ── Operations ── */
+    .op-group { display: flex; gap: var(--space-2); }
+
+    /* ── Loading / empty ── */
+    .empty-state { text-align: center; padding: var(--space-10); color: var(--color-text-muted); }
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: var(--space-2); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <!-- Sidebar -->
+    <aside class="shell-sidebar">
+      <div class="sidebar-brand">AI Image Studio</div>
+      <nav class="sidebar-nav">
+        <a href="../admin/index.html">首页</a>
+        <a href="users.html" class="active">用户管理</a>
+        <a href="models.html">模型配置</a>
+        <a href="prompts.html">提示词配置</a>
+        <a href="./factory.html">提示词工厂</a>
+        <a href="redeem.html">兑换码</a>
+        <a href="logs.html">生成记录</a>
+      </nav>
+      <div class="sidebar-footer">
+        <span>B端管理台</span>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="shell-main">
+      <header class="shell-topbar">
+        <h2 style="font-size:var(--font-size-lg);">用户管理</h2>
+        <div class="flex items-center gap-4">
+          <a href="../index.html" class="btn btn-ghost btn-sm">C端</a>
+        <span id="topbarUser" class="text-sm text-secondary"></span>
+          <button class="btn btn-ghost btn-sm" id="logoutBtn" type="button">退出</button>
+        </div>
+      </header>
+
+      <section class="shell-content">
+        <div class="card" style="padding:var(--space-4);">
+          <div class="flex items-center justify-between" style="margin-bottom:var(--space-4);">
+            <span id="userCount" class="text-sm text-muted"></span>
+            <button class="btn btn-ghost btn-sm" id="refreshBtn" type="button">刷新</button>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>邮箱</th>
+                  <th>姓名</th>
+                  <th>角色</th>
+                  <th>积分</th>
+                  <th>状态</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="userTableBody">
+                <tr><td colspan="6"><div class="empty-state"><span class="spinner"></span>加载中…</div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="../shared/auth.js"></script>
+  <script src="../shared/api.js"></script>
+
+  <script>
+    "use strict";
+
+    /* ── Elements ── */
+    const topbarUser = document.getElementById("topbarUser");
+    const userCount = document.getElementById("userCount");
+    const userTableBody = document.getElementById("userTableBody");
+    const refreshBtn = document.getElementById("refreshBtn");
+    const logoutBtn = document.getElementById("logoutBtn");
+    const toastEl = document.getElementById("toast");
+
+    /* ── Toast ── */
+    function toast(msg, isError) {
+      toastEl.textContent = msg;
+      toastEl.classList.toggle("error", !!isError);
+      toastEl.classList.add("active");
+      clearTimeout(toastEl._t);
+      toastEl._t = setTimeout(function () { toastEl.classList.remove("active"); }, 3000);
+    }
+
+    /* ── Render ── */
+    function renderUsers(users) {
+      userCount.textContent = "共 " + users.length + " 个用户";
+
+      if (!users.length) {
+        userTableBody.innerHTML = '<tr><td colspan="6"><div class="empty-state">暂无用户数据</div></td></tr>';
+        return;
+      }
+
+      userTableBody.innerHTML = users.map(function (u) {
+        var disabled = u.disabled;
+        var roleBadge = u.role === "admin"
+          ? '<span class="badge badge-warning">管理员</span>'
+          : '<span class="badge badge-neutral">用户</span>';
+
+        var remaining = u.creditsRemaining != null ? u.creditsRemaining : 0;
+        var total = u.credits != null ? u.credits : 0;
+
+        /* Credit tooltip: deduction history */
+        var deductionHtml = "";
+        if (u.recentDeductions && u.recentDeductions.length) {
+          var lines = u.recentDeductions.map(function (d) {
+            var label = d.hasTemplate ? "模板生成" : "自由生成";
+            var time = (d.createdAt || "").slice(0, 16).replace("T", " ");
+            return '<div class="row"><span>' + label + '</span><span>' + time + '</span><span>-' + d.count + '</span></div>';
+          }).join("");
+          deductionHtml = '<div class="divider"></div><div class="deduction">' + lines + '</div>';
+        }
+
+        var creditCell = '<td class="credit-cell">'
+          + '<span class="font-medium">' + remaining + '</span>'
+          + '<span class="text-muted"> / ' + total + '</span>'
+          + '<div class="credit-tooltip">'
+          + '<div class="row"><span class="label">剩余</span><span class="font-semibold">' + remaining + '</span></div>'
+          + '<div class="row"><span class="label">总额</span><span>' + total + '</span></div>'
+          + '<div class="row"><span class="label">已用</span><span>' + (u.creditsUsed || 0) + '</span></div>'
+          + deductionHtml
+          + '</div></td>';
+
+        var statusCell = '<td><div class="user-status">'
+          + '<span class="dot ' + (disabled ? 'disabled' : 'active') + '"></span>'
+          + '<span>' + (disabled ? '已禁用' : '正常') + '</span>'
+          + '</div></td>';
+
+        var opsCell = '<td><div class="op-group">'
+          + (disabled
+            ? '<button class="btn btn-secondary btn-sm" data-action="enable" data-id="' + u.id + '">启用</button>'
+            : '<button class="btn btn-danger btn-sm" data-action="disable" data-id="' + u.id + '">禁用</button>')
+          + '</div></td>';
+
+        return '<tr>'
+          + '<td class="font-medium">' + escapeHtml(u.email || "") + '</td>'
+          + '<td>' + escapeHtml(u.name || "-") + '</td>'
+          + '<td>' + roleBadge + '</td>'
+          + creditCell
+          + statusCell
+          + opsCell
+          + '</tr>';
+      }).join("");
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    /* ── Load data ── */
+    async function loadUsers() {
+      userTableBody.innerHTML = '<tr><td colspan="6"><div class="empty-state"><span class="spinner"></span>加载中…</div></td></tr>';
+      try {
+        var data = await Api.admin("/admin/users");
+        renderUsers(data.users || []);
+      } catch (e) {
+        if (!e.authFailure) {
+          userTableBody.innerHTML = '<tr><td colspan="6"><div class="empty-state">加载失败: ' + escapeHtml(e.message) + '</div></td></tr>';
+          toast(e.message, true);
+        }
+      }
+    }
+
+    /* ── Toggle user ── */
+    async function toggleUser(userId, disabled) {
+      try {
+        await Api.admin("/admin/users/" + encodeURIComponent(userId), {
+          method: "PATCH",
+          body: { disabled: disabled }
+        });
+        toast(disabled ? "用户已禁用" : "用户已启用");
+        loadUsers();
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+
+    /* ── Events ── */
+    userTableBody.addEventListener("click", function (e) {
+      var btn = e.target.closest("button[data-action]");
+      if (!btn) return;
+      var userId = btn.getAttribute("data-id");
+      var action = btn.getAttribute("data-action");
+      if (action === "disable") toggleUser(userId, true);
+      else if (action === "enable") toggleUser(userId, false);
+    });
+
+    refreshBtn.addEventListener("click", loadUsers);
+
+    logoutBtn.addEventListener("click", function () {
+      Auth.logout();
+    });
+
+    /* ── Init ── */
+    async function init() {
+      try {
+        var user = await Auth.init("admin");
+        topbarUser.textContent = user.email || "";
+        loadUsers();
+      } catch (e) {
+        /* Auth.init handles redirect */
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

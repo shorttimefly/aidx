@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>素材库 - AI Image Studio</title>
+  <link rel="stylesheet" href="./shared/styles.css" />
+  <style>
+    .asset-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--space-4); }
+    .asset-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); overflow: hidden; }
+    .asset-card img { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; }
+    .asset-meta { padding: var(--space-2) var(--space-3); font-size: var(--font-size-xs); }
+    .asset-meta .name { font-weight: var(--font-weight-medium); display: block; margin-bottom: var(--space-1); }
+    .empty { text-align: center; padding: var(--space-12); color: var(--color-text-muted); }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="shell-sidebar">
+    <div class="sidebar-brand">AI Image Studio</div>
+    <nav class="sidebar-nav">
+      <a href="./index.html">生成图片</a>
+      <a href="./library.html" class="active">素材库</a>
+    </nav>
+    <div class="sidebar-footer"><span id="sidebarCredits">—</span></div>
+  </aside>
+
+  <div class="shell-main">
+    <header class="shell-topbar">
+      <span class="text-sm text-muted">素材库</span>
+      <div class="flex items-center gap-4">
+        <a href="./admin/index.html" class="btn btn-ghost btn-sm" id="adminLink" style="display:none">B端</a>
+        <span id="topbarUser" class="text-sm">—</span>
+        <button class="btn btn-ghost btn-sm" onclick="Auth.logout()">退出</button>
+      </div>
+    </header>
+
+    <main class="shell-content">
+      <div id="grid" class="asset-grid"></div>
+      <div class="empty" id="empty">暂无素材，去<a href="./index.html">生成图片</a></div>
+      <div id="toast" class="toast"></div>
+    </main>
+  </div>
+</div>
+
+<script src="./shared/auth.js"></script>
+<script src="./shared/api.js"></script>
+<script>
+(async function() {
+  try { await Auth.init("user"); } catch { return; }
+  var u = Auth.user || {};
+  document.getElementById("topbarUser").textContent = u.email || u.name || "";
+  document.getElementById("sidebarCredits").textContent = (u.creditsRemaining || 0) + " 积分";
+  if (Auth.isAdmin) { var al = document.getElementById("adminLink"); if (al) al.style.display = ""; }
+
+  try {
+    var data = await Api.get("/generated-assets?limit=100");
+    var assets = data.assets || [];
+    if (!assets.length) { document.getElementById("empty").style.display = "block"; return; }
+    document.getElementById("empty").style.display = "none";
+    document.getElementById("grid").innerHTML = assets.map(function(a) {
+      var url = a.image_url || a.url || "";
+      var name = a.name || "未命名";
+      return '<div class="asset-card">'
+        + '<img src="' + escAttr(url) + '" alt="' + escAttr(name) + '" loading="lazy" />'
+        + '<div class="asset-meta"><span class="name">' + esc(name) + '</span>'
+        + (a.model ? '<span>' + esc(a.model) + ' · ' + esc(a.size || "") + '</span>' : '')
+        + '</div></div>';
+    }).join("");
+  } catch(e) {
+    document.getElementById("empty").innerHTML = "加载失败: " + esc(e.message);
+    document.getElementById("empty").style.display = "block";
+  }
+
+  function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function escAttr(s) { return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;"); }
+})();
+</script>
+</body>
+</html>

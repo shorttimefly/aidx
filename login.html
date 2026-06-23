@@ -1,44 +1,217 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>登录 - AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260610-login" />
-  </head>
-  <body class="admin-body">
-    <main class="admin-shell admin-login-shell">
-      <header class="admin-header">
-        <div>
-          <p class="eyebrow">AI IMAGE EDITOR</p>
-          <h1>登录或注册</h1>
-        </div>
-      </header>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>登录 - AI Image Studio</title>
+  <link rel="stylesheet" href="./shared/styles.css" />
+  <style>
+    .login-page {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100dvh;
+      background: var(--color-bg);
+      padding: var(--space-4);
+    }
 
-      <section class="panel admin-login-panel">
-        <div class="panel-header">
-          <h3>登录</h3>
-        </div>
-        <div class="admin-login-grid">
-          <div class="auth-tabs" role="tablist" aria-label="账号操作">
-            <button class="auth-tab active" id="authLoginTab" type="button" role="tab" aria-selected="true" data-auth-mode="login">登录</button>
-            <button class="auth-tab" id="authRegisterTab" type="button" role="tab" aria-selected="false" data-auth-mode="register">注册</button>
-          </div>
-          <label class="field">
-            <span>邮箱</span>
-            <input id="loginEmailInput" type="email" autocomplete="email" placeholder="you@example.com" />
-          </label>
-          <label class="field">
-            <span>密码</span>
-            <input id="loginPasswordInput" type="password" autocomplete="current-password" placeholder="至少 8 位" />
-          </label>
-          <p class="form-message" id="loginMessage"></p>
-          <button class="primary-button" id="loginSubmitBtn" type="button">登录</button>
-        </div>
-      </section>
-    </main>
+    .login-card {
+      width: 100%;
+      max-width: 420px;
+    }
 
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./login.js?v=20260623-login" defer></script>
-  </body>
+    .login-brand {
+      text-align: center;
+      margin-bottom: var(--space-6);
+    }
+
+    .login-brand h1 {
+      font-size: var(--font-size-xl);
+      font-weight: var(--font-weight-bold);
+      color: var(--color-text);
+    }
+
+    .login-brand p {
+      margin-top: var(--space-1);
+      font-size: var(--font-size-sm);
+      color: var(--color-text-secondary);
+    }
+
+    .tab-bar {
+      display: flex;
+      border-bottom: 1px solid var(--color-border);
+      margin-bottom: var(--space-6);
+    }
+
+    .tab-btn {
+      flex: 1;
+      padding: var(--space-3) var(--space-4);
+      font-family: inherit;
+      font-size: var(--font-size-sm);
+      font-weight: var(--font-weight-medium);
+      color: var(--color-text-secondary);
+      background: none;
+      border: none;
+      border-bottom: 2px solid transparent;
+      cursor: pointer;
+      transition: all var(--transition-fast);
+    }
+
+    .tab-btn.active {
+      color: var(--color-accent);
+      border-bottom-color: var(--color-accent);
+    }
+
+    .tab-btn:hover:not(.active) {
+      color: var(--color-text);
+    }
+
+    .form-error {
+      color: var(--color-error);
+      font-size: var(--font-size-sm);
+      min-height: 1.25em;
+      margin: var(--space-2) 0;
+    }
+
+    .login-footer {
+      display: flex;
+      justify-content: center;
+      margin-top: var(--space-5);
+      padding-top: var(--space-5);
+      border-top: 1px solid var(--color-border);
+    }
+
+    .field + .field {
+      margin-top: var(--space-4);
+    }
+
+    #submitBtn {
+      width: 100%;
+      margin-top: var(--space-2);
+    }
+  </style>
+</head>
+<body class="login-page">
+
+  <div class="card login-card">
+    <div class="login-brand">
+      <h1>AI Image Studio</h1>
+      <p>登录或注册您的账号</p>
+    </div>
+
+    <div class="tab-bar" role="tablist" aria-label="账号操作">
+      <button class="tab-btn active" id="tabLogin" type="button" role="tab" aria-selected="true">登录</button>
+      <button class="tab-btn" id="tabRegister" type="button" role="tab" aria-selected="false">注册</button>
+    </div>
+
+    <form id="authForm" novalidate>
+      <div class="field">
+        <label for="email">邮箱</label>
+        <input class="input" id="email" type="email" autocomplete="email" placeholder="you@example.com" required />
+      </div>
+      <div class="field">
+        <label for="password">密码</label>
+        <input class="input" id="password" type="password" autocomplete="current-password" placeholder="至少 8 位" required />
+      </div>
+      <p class="form-error" id="formError" aria-live="polite"></p>
+      <button class="btn btn-primary" id="submitBtn" type="submit">登录</button>
+    </form>
+
+    <div class="login-footer">
+      <a href="./admin/login.html" class="btn btn-ghost btn-sm">B端管理台登录</a>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="./shared/auth.js"></script>
+  <script>
+  "use strict";
+
+  var mode = "login";
+
+  var els = {
+    tabLogin:    document.getElementById("tabLogin"),
+    tabRegister: document.getElementById("tabRegister"),
+    form:        document.getElementById("authForm"),
+    email:       document.getElementById("email"),
+    password:    document.getElementById("password"),
+    submitBtn:   document.getElementById("submitBtn"),
+    formError:   document.getElementById("formError"),
+    toast:       document.getElementById("toast")
+  };
+
+  /* ---- Tab toggle ---- */
+  els.tabLogin.addEventListener("click", function () { switchMode("login"); });
+  els.tabRegister.addEventListener("click", function () { switchMode("register"); });
+
+  function switchMode(m) {
+    mode = m;
+    var isLogin = m === "login";
+    els.tabLogin.classList.toggle("active", isLogin);
+    els.tabLogin.setAttribute("aria-selected", isLogin ? "true" : "false");
+    els.tabRegister.classList.toggle("active", !isLogin);
+    els.tabRegister.setAttribute("aria-selected", !isLogin ? "true" : "false");
+    els.submitBtn.textContent = isLogin ? "登录" : "注册";
+    els.formError.textContent = "";
+    els.password.placeholder = isLogin ? "请输入密码" : "至少 8 位";
+  }
+
+  /* ---- Submit ---- */
+  els.form.addEventListener("submit", function (e) {
+    e.preventDefault();
+    handleSubmit();
+  });
+
+  async function handleSubmit() {
+    var email = els.email.value.trim();
+    var password = els.password.value;
+    els.formError.textContent = "";
+
+    if (!email || !password) {
+      els.formError.textContent = "请输入邮箱和密码";
+      return;
+    }
+    if (mode === "register" && password.length < 8) {
+      els.formError.textContent = "密码至少 8 位";
+      return;
+    }
+
+    setBusy(true);
+    try {
+      if (mode === "register") {
+        await Auth.register(email, password);
+      } else {
+        await Auth.login(email, password);
+      }
+      window.location.replace(APP_BASE + "/index.html");
+    } catch (err) {
+      els.formError.textContent = err.message || "操作失败，请重试";
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function setBusy(busy) {
+    els.submitBtn.disabled = busy;
+    els.submitBtn.textContent = busy
+      ? (mode === "register" ? "注册中..." : "登录中...")
+      : (mode === "register" ? "注册" : "登录");
+  }
+
+  /* ---- Session check: redirect to index if already logged in ---- */
+  (async function checkSession() {
+    if (!Auth.token) return;
+    try {
+      var resp = await fetch(appRoute("/api/me"), {
+        headers: { Authorization: "Bearer " + Auth.token }
+      });
+      if (!resp.ok) throw new Error("invalid");
+      window.location.replace(APP_BASE + "/index.html");
+    } catch (e) {
+      Auth.clear();
+    }
+  })();
+  </script>
+</body>
 </html>

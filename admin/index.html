@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>AI Image Studio B端 — 管理后台</title>
+    <link rel="stylesheet" href="../shared/styles.css" />
+    <style>
+      /* ── Dashboard stat cards ── */
+      .stat-grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: var(--space-6);
+        margin-top: var(--space-6);
+      }
+
+      @media (max-width: 1024px) {
+        .stat-grid { grid-template-columns: repeat(2, 1fr); }
+      }
+      @media (max-width: 600px) {
+        .stat-grid { grid-template-columns: 1fr; }
+      }
+
+      .stat-card {
+        display: flex;
+        flex-direction: column;
+        gap: var(--space-2);
+      }
+
+      .stat-label {
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-medium);
+        color: var(--color-text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .stat-value {
+        font-size: var(--font-size-2xl);
+        font-weight: var(--font-weight-bold);
+        color: var(--color-primary);
+        line-height: var(--line-height-tight);
+      }
+
+      .stat-sub {
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+      }
+
+      /* ── Page header ── */
+      .page-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        flex-wrap: wrap;
+        gap: var(--space-4);
+      }
+
+      .page-header h2 {
+        margin: 0;
+      }
+
+      /* ── Loading / empty ── */
+      .stat-card.loading .stat-value {
+        color: var(--color-text-muted);
+      }
+
+      .stat-card.loading .stat-value::after {
+        content: "—";
+      }
+
+      /* ── Skeleton pulse ── */
+      @keyframes skeleton-pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.4; }
+      }
+
+      .skeleton {
+        background: var(--color-border);
+        border-radius: var(--radius-sm);
+        animation: skeleton-pulse 1.5s ease-in-out infinite;
+      }
+
+      .skeleton-value {
+        width: 60%;
+        height: 2rem;
+        margin-top: var(--space-1);
+      }
+
+      /* ── Topbar user area ── */
+      .topbar-user {
+        display: flex;
+        align-items: center;
+        gap: var(--space-4);
+      }
+
+      /* ── Sidebar active state ── */
+      .sidebar-nav a.active {
+        background: var(--color-accent);
+        color: #fff;
+      }
+
+      /* ── Refresh button ── */
+      .refresh-hint {
+        font-size: var(--font-size-xs);
+        color: var(--color-text-muted);
+        margin-left: var(--space-2);
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <!-- ── Sidebar ── -->
+      <aside class="shell-sidebar">
+        <div class="sidebar-brand">AI Image Studio B端</div>
+        <nav class="sidebar-nav">
+          <a href="./index.html" class="active" data-nav="index">
+            <span>🏠</span>
+            <span>首页</span>
+          </a>
+          <a href="./users.html" data-nav="users">
+            <span>👥</span>
+            <span>用户管理</span>
+          </a>
+          <a href="./models.html" data-nav="models">
+            <span>⚙️</span>
+            <span>模型配置</span>
+          </a>
+          <a href="./prompts.html" data-nav="prompts">
+            <span>📝</span>
+            <span>提示词配置</span>
+          </a>
+          <a href="./factory.html" data-nav="factory">
+            <span>🏭</span>
+            <span>提示词工厂</span>
+          </a>
+          <a href="./redeem.html" data-nav="redeem">
+            <span>🎫</span>
+            <span>兑换码</span>
+          </a>
+          <a href="./logs.html" data-nav="logs">
+            <span>📋</span>
+            <span>生成记录</span>
+          </a>
+        </nav>
+      </aside>
+
+      <!-- ── Main area ── -->
+      <div class="shell-main">
+        <!-- Top bar -->
+        <header class="shell-topbar">
+          <span class="text-sm text-muted font-medium">管理后台</span>
+          <div class="topbar-user">
+            <a href="../index.html" class="btn btn-ghost btn-sm">C端</a>
+            <span id="userEmail" class="text-sm font-medium">…</span>
+            <button id="logoutBtn" class="btn btn-secondary btn-sm" type="button">
+              退出登录
+            </button>
+          </div>
+        </header>
+
+        <!-- Content -->
+        <main class="shell-content">
+          <div class="page-header">
+            <h2>数据概览</h2>
+            <span id="lastUpdated" class="text-sm text-muted"></span>
+          </div>
+
+          <div class="stat-grid" id="statGrid">
+            <!-- Total users -->
+            <div class="card stat-card loading" id="cardUsers">
+              <span class="stat-label">总用户数</span>
+              <span class="stat-value" id="statUsers">—</span>
+              <span class="stat-sub">含 <span id="statAdmins">—</span> 位管理员</span>
+            </div>
+
+            <!-- Total calls -->
+            <div class="card stat-card loading" id="cardCalls">
+              <span class="stat-label">总调用次数</span>
+              <span class="stat-value" id="statCalls">—</span>
+              <span class="stat-sub" id="statCallsSub">&nbsp;</span>
+            </div>
+
+            <!-- Total images -->
+            <div class="card stat-card loading" id="cardImages">
+              <span class="stat-label">总生成图片</span>
+              <span class="stat-value" id="statImages">—</span>
+              <span class="stat-sub" id="statImagesSub">&nbsp;</span>
+            </div>
+
+            <!-- Token / credits -->
+            <div class="card stat-card loading" id="cardTokens">
+              <span class="stat-label">总 Token 消耗</span>
+              <span class="stat-value" id="statTokens">—</span>
+              <span class="stat-sub">输入 <span id="statInputTokens">—</span> · 输出 <span id="statOutputTokens">—</span></span>
+            </div>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <!-- Toast -->
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="../shared/auth.js"></script>
+    <script src="../shared/api.js"></script>
+    <script>
+      "use strict";
+
+      /* ── DOM refs ── */
+      const userEmailEl = document.getElementById("userEmail");
+      const logoutBtn = document.getElementById("logoutBtn");
+      const lastUpdatedEl = document.getElementById("lastUpdated");
+      const toastEl = document.getElementById("toast");
+
+      const statUsersEl = document.getElementById("statUsers");
+      const statAdminsEl = document.getElementById("statAdmins");
+      const statCallsEl = document.getElementById("statCalls");
+      const statCallsSubEl = document.getElementById("statCallsSub");
+      const statImagesEl = document.getElementById("statImages");
+      const statImagesSubEl = document.getElementById("statImagesSub");
+      const statTokensEl = document.getElementById("statTokens");
+      const statInputTokensEl = document.getElementById("statInputTokens");
+      const statOutputTokensEl = document.getElementById("statOutputTokens");
+
+      const cardEls = {
+        users: document.getElementById("cardUsers"),
+        calls: document.getElementById("cardCalls"),
+        images: document.getElementById("cardImages"),
+        tokens: document.getElementById("cardTokens")
+      };
+
+      /* ── Toast ── */
+      function showToast(msg, isError) {
+        toastEl.textContent = msg;
+        toastEl.classList.toggle("error", !!isError);
+        toastEl.classList.add("active");
+        clearTimeout(toastEl._timer);
+        toastEl._timer = setTimeout(function () {
+          toastEl.classList.remove("active");
+        }, 3000);
+      }
+
+      /* ── Formatting ── */
+      function fmtNum(n) {
+        if (n == null || isNaN(n)) return "—";
+        if (n >= 1e9) return (n / 1e9).toFixed(1) + "B";
+        if (n >= 1e6) return (n / 1e6).toFixed(1) + "M";
+        if (n >= 1e3) return (n / 1e3).toFixed(1) + "K";
+        return String(n);
+      }
+
+      function fmtTime(iso) {
+        if (!iso) return "";
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return "";
+        var now = new Date();
+        var diff = Math.max(0, now - d);
+        if (diff < 60e3) return "刚刚更新";
+        if (diff < 3600e3) return Math.floor(diff / 60e3) + " 分钟前";
+        return d.toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" });
+      }
+
+      /* ── Load summary ── */
+      async function loadSummary() {
+        try {
+          var data = await Api.admin("/admin/summary");
+          var s = data.summary;
+          if (!s) throw new Error("未获取到汇总数据");
+
+          /* Remove loading state */
+          Object.keys(cardEls).forEach(function (k) {
+            cardEls[k].classList.remove("loading");
+          });
+
+          statUsersEl.textContent = fmtNum(s.users);
+          statAdminsEl.textContent = fmtNum(s.admin_users);
+
+          statCallsEl.textContent = fmtNum(s.calls);
+          if (s.feedbacks != null) {
+            statCallsSubEl.innerHTML =
+              '<span style="color:var(--color-success)">👍 ' + fmtNum(s.upvotes) + '</span>' +
+              ' · ' +
+              '<span style="color:var(--color-error)">👎 ' + fmtNum(s.downvotes) + '</span>' +
+              ' 反馈';
+          }
+
+          statImagesEl.textContent = fmtNum(s.images);
+          if (s.calls && s.images) {
+            var avg = s.calls > 0 ? (s.images / s.calls).toFixed(1) : "0";
+            statImagesSubEl.textContent = "平均每次 " + avg + " 张";
+          }
+
+          statTokensEl.textContent = fmtNum(s.total_tokens);
+          statInputTokensEl.textContent = fmtNum(s.input_tokens);
+          statOutputTokensEl.textContent = fmtNum(s.output_tokens);
+
+          lastUpdatedEl.textContent = "更新于 " + new Date().toLocaleTimeString("zh-CN", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit"
+          });
+        } catch (e) {
+          if (e.authFailure) return; /* Auth module handles redirect */
+          showToast("加载汇总失败：" + (e.message || "未知错误"), true);
+        }
+      }
+
+      /* ── Logout ── */
+      async function handleLogout() {
+        logoutBtn.disabled = true;
+        logoutBtn.textContent = "退出中…";
+        try {
+          /* Call server logout if token exists */
+          if (Auth.token) {
+            await fetch(appRoute("/api/auth/logout"), {
+              method: "POST",
+              headers: { Authorization: "Bearer " + Auth.token }
+            });
+          }
+        } catch (e) {
+          /* ignore network errors */
+        }
+        /* Clear local state and redirect to admin login */
+        Auth.clear();
+        window.location.replace(appRoute("/admin/login.html"));
+      }
+
+      /* ── Init ── */
+      async function init() {
+        /* Auth guard */
+        try {
+          var user = await Auth.init("admin");
+          userEmailEl.textContent = user.email || user.name || "管理员";
+        } catch (e) {
+          /* Auth.init redirects on failure */
+          return;
+        }
+
+        /* Bind events */
+        logoutBtn.addEventListener("click", handleLogout);
+
+        /* Load dashboard */
+        await loadSummary();
+      }
+
+      /* ── Boot ── */
+      document.addEventListener("DOMContentLoaded", init);
+    </script>
+  </body>
+</html>

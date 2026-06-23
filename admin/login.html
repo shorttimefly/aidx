@@ -1,0 +1,246 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>管理员登录 — AI 智能图片编辑器</title>
+    <link rel="stylesheet" href="../shared/styles.css" />
+    <style>
+      /* ── Page-level: centered login on light gray bg ── */
+      .login-page {
+        min-height: 100dvh;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: var(--color-bg);
+        padding: var(--space-4);
+      }
+
+      .login-card {
+        width: 100%;
+        max-width: 400px;
+      }
+
+      .login-card h1 {
+        font-size: var(--font-size-xl);
+        font-weight: var(--font-weight-semibold);
+        margin-bottom: var(--space-1);
+      }
+
+      .login-card .subtitle {
+        color: var(--color-text-secondary);
+        font-size: var(--font-size-sm);
+        margin-bottom: var(--space-6);
+      }
+
+      .login-card .field {
+        margin-bottom: var(--space-4);
+      }
+
+      .login-card .btn {
+        width: 100%;
+        padding: 0.625rem 1rem;
+        font-size: var(--font-size-base);
+      }
+
+      .login-card .btn:disabled {
+        opacity: 0.6;
+        cursor: not-allowed;
+      }
+
+      .login-error {
+        color: var(--color-error);
+        font-size: var(--font-size-sm);
+        font-weight: var(--font-weight-medium);
+        margin-bottom: var(--space-3);
+        min-height: 1.25em;
+      }
+
+      .login-footer {
+        text-align: center;
+        margin-top: var(--space-5);
+        font-size: var(--font-size-sm);
+        color: var(--color-text-secondary);
+      }
+
+      .login-footer a {
+        font-weight: var(--font-weight-medium);
+      }
+
+      .login-spinner {
+        display: inline-block;
+        width: 14px;
+        height: 14px;
+        border: 2px solid rgba(255,255,255,0.3);
+        border-top-color: #fff;
+        border-radius: 50%;
+        animation: spin 0.6s linear infinite;
+        margin-right: var(--space-2);
+        vertical-align: middle;
+      }
+
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="login-page">
+      <div class="card login-card">
+        <h1>管理员登录</h1>
+        <p class="subtitle">AI 智能图片编辑器 · 后台管理</p>
+
+        <label class="field">
+          <span>邮箱</span>
+          <input
+            class="input"
+            id="email"
+            type="email"
+            autocomplete="email"
+            placeholder="admin@example.com"
+          />
+        </label>
+
+        <label class="field">
+          <span>密码</span>
+          <input
+            class="input"
+            id="password"
+            type="password"
+            autocomplete="current-password"
+            placeholder="请输入密码"
+          />
+        </label>
+
+        <p class="login-error" id="error" aria-live="polite"></p>
+
+        <button class="btn btn-primary" id="submitBtn" type="button">
+          管理员登录
+        </button>
+
+        <div class="login-footer">
+          <a href="../login.html">← 返回C端登录</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <script src="../shared/auth.js"></script>
+
+    <script>
+      "use strict";
+
+      const emailInput = document.getElementById("email");
+      const passwordInput = document.getElementById("password");
+      const errorEl = document.getElementById("error");
+      const submitBtn = document.getElementById("submitBtn");
+      const toastEl = document.getElementById("toast");
+
+      /* ── Helpers ── */
+
+      function setError(msg) {
+        errorEl.textContent = msg || "";
+      }
+
+      function clearError() {
+        errorEl.textContent = "";
+      }
+
+      function showToast(msg, isError) {
+        toastEl.textContent = msg;
+        toastEl.classList.toggle("error", !!isError);
+        toastEl.classList.add("active");
+        clearTimeout(toastEl._timeout);
+        toastEl._timeout = setTimeout(function () {
+          toastEl.classList.remove("active");
+        }, 3000);
+      }
+
+      function setLoading(loading) {
+        submitBtn.disabled = loading;
+        if (loading) {
+          submitBtn.innerHTML =
+            '<span class="login-spinner"></span>登录中…';
+        } else {
+          submitBtn.textContent = "管理员登录";
+        }
+      }
+
+      function redirectToAdmin() {
+        window.location.replace(appRoute("/admin/index.html"));
+      }
+
+      /* ── Login ── */
+
+      async function handleLogin() {
+        clearError();
+
+        var email = emailInput.value.trim();
+        var password = passwordInput.value;
+
+        if (!email) {
+          setError("请输入邮箱地址");
+          emailInput.focus();
+          return;
+        }
+        if (!password) {
+          setError("请输入密码");
+          passwordInput.focus();
+          return;
+        }
+
+        setLoading(true);
+        try {
+          await Auth.login(email, password, true);
+          showToast("登录成功", false);
+          setTimeout(redirectToAdmin, 300);
+        } catch (e) {
+          setError(e.message || "登录失败，请重试");
+          showToast(e.message || "登录失败", true);
+        } finally {
+          setLoading(false);
+        }
+      }
+
+      /* ── Check existing session ── */
+
+      async function checkExistingSession() {
+        if (!Auth.token) return; /* no token, stay on page */
+
+        setLoading(true);
+        try {
+          await Auth.verify("admin");
+          /* verified — redirect */
+          redirectToAdmin();
+        } catch (e) {
+          /* token invalid or network error — stay on login page */
+          setLoading(false);
+        }
+      }
+
+      /* ── Bindings ── */
+
+      submitBtn.addEventListener("click", handleLogin);
+
+      passwordInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          handleLogin();
+        }
+      });
+
+      emailInput.addEventListener("keydown", function (e) {
+        if (e.key === "Enter") {
+          e.preventDefault();
+          passwordInput.focus();
+        }
+      });
+
+      /* ── Init ── */
+
+      checkExistingSession();
+      emailInput.focus();
+    </script>
+  </body>
+</html>

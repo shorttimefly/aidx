@@ -1,660 +1,638 @@
 <!doctype html>
 <html lang="zh-CN">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>AI智能图片编辑器</title>
-    <link rel="stylesheet" href="./styles.css?v=20260610-auth-tabs" />
-  </head>
-  <body>
-    <div class="app-shell">
-      <aside class="rail">
-        <div class="brand">
-          <div class="brand-mark" aria-hidden="true">AI</div>
-          <div>
-            <h1>AI智能图片编辑器</h1>
-            <span>Commerce Vision Lab</span>
-          </div>
-        </div>
-        <nav class="main-nav" aria-label="主导航">
-          <button class="nav-item" type="button" data-view="suite">
-            <span class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="m12 3 1.7 5.3L19 10l-5.3 1.7L12 17l-1.7-5.3L5 10l5.3-1.7z" /><path d="M18 15v4" /><path d="M16 17h4" /></svg>
-            </span>
-            <span>套图</span>
-          </button>
-          <button class="nav-item active" type="button" data-view="generate">
-            <span class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-            </span>
-            <span>单图</span>
-          </button>
-          <button class="nav-item" type="button" data-view="edit">
-            <span class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="m14.7 6.3 3 3L8 19H5v-3z" /><path d="m13 8 3 3" /></svg>
-            </span>
-            <span>二次编辑</span>
-          </button>
-          <button class="nav-item" type="button" data-view="video">
-            <span class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M4 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2Z" /><path d="m16 10 4-3v10l-4-3" /></svg>
-            </span>
-            <span>AI视频</span>
-          </button>
-          <button class="nav-item" type="button" data-view="library">
-            <span class="icon" aria-hidden="true">
-              <svg viewBox="0 0 24 24"><path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" /></svg>
-            </span>
-            <span>素材库</span>
-          </button>
-        </nav>
-        <section class="account-card" aria-label="账号状态">
-          <span id="accountTitle">未登录</span>
-          <strong id="accountNameText">注册后使用工具</strong>
-          <div class="account-key-status" id="accountKeyStatus" aria-label="模型 Key 配置状态">
-            <span><b>图片 Key</b><em>登录后查看</em></span>
-            <span><b>视频 Key</b><em>登录后查看</em></span>
-          </div>
-          <div class="account-credits" id="accountCredits" hidden>
-            <span class="account-credits-label">剩余积分</span>
-            <strong class="account-credits-value" id="creditsRemainingText">0</strong>
-            <button class="mini-button ghost-button" id="openCreditsModalBtn" type="button" title="兑换积分" style="margin-left:8px;font-size:11px;">增加积分</button>
-          </div>
-          <div class="account-actions">
-            <button class="mini-button ghost-button" id="openAuthBtn" type="button">登录 / 注册</button>
-            <button class="mini-button ghost-button danger" id="logoutBtn" type="button">退出</button>
-          </div>
-        </section>
-        <div class="rail-footer">
-          <div class="metric">
-            <span id="folderCount">0</span>
-            <label>文件夹</label>
-          </div>
-          <div class="metric">
-            <span id="assetCount">0</span>
-            <label>素材</label>
-          </div>
-        </div>
-      </aside>
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Image Studio — 生成图片</title>
+  <link rel="stylesheet" href="shared/styles.css" />
+  <style>
+    /* ── Page‑specific overrides (still flat / professional) ── */
+    .shell-content { display: flex; gap: var(--space-6); align-items: flex-start; }
+    .gen-panel { flex: 1; min-width: 0; }
+    .result-panel { flex: 1; min-width: 0; }
 
-      <main class="workspace">
-        <div class="workspace-global-actions">
-          <button class="ghost-button admin-entry-button" id="adminEntryBtn" type="button">管理员入口</button>
-        </div>
+    .dropzone {
+      border: 2px dashed var(--color-border); border-radius: var(--radius-lg);
+      padding: var(--space-8) var(--space-6); text-align: center; cursor: pointer;
+      transition: border-color var(--transition-fast), background var(--transition-fast);
+      background: var(--color-bg); position: relative;
+    }
+    .dropzone:hover, .dropzone.drag-over { border-color: var(--color-accent); background: rgba(8,145,178,0.04); }
+    .dropzone input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+    .dropzone strong { display: block; font-weight: var(--font-weight-semibold); margin-bottom: var(--space-1); }
+    .dropzone span { font-size: var(--font-size-xs); color: var(--color-text-muted); }
 
-        <section id="view-suite" class="view" aria-labelledby="suiteTitle">
-          <div class="topbar hero-topbar">
-            <div>
-              <p class="eyebrow">AI COMMERCE KIT</p>
-              <h2 id="suiteTitle">一键生成商品详情页套图</h2>
-            </div>
-            <button class="status-pill" id="connectionState" type="button">API 未保存</button>
-          </div>
+    .ref-previews { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-top: var(--space-3); }
+    .ref-thumb { position: relative; width: 72px; height: 72px; border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--color-border); flex-shrink: 0; }
+    .ref-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+    .ref-thumb .ref-remove {
+      position: absolute; top: 2px; right: 2px; width: 18px; height: 18px;
+      border-radius: 50%; background: var(--color-error); color: #fff; border: none;
+      font-size: 11px; line-height: 18px; text-align: center; cursor: pointer; padding: 0;
+    }
 
-          <div class="suite-layout">
-            <section class="panel suite-panel" aria-label="套图生成参数">
-              <div class="panel-header">
-                <h3>商品输入</h3>
-                <span class="mini-badge">Batch</span>
-              </div>
+    .selectors-row { display: flex; gap: var(--space-3); margin-top: var(--space-4); }
+    .selectors-row .field { flex: 1; min-width: 0; }
 
-              <div class="dropzone compact-dropzone" id="suiteDropzone">
-                <input id="suiteUploadInput" type="file" accept="image/*" />
-                <div class="drop-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M20 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3" /></svg>
-                </div>
-                <strong>上传商品基图</strong>
-                <span>生成时保持主体、颜色、材质和比例一致</span>
-              </div>
-              <div id="suiteReferencePreview" class="suite-reference empty-state">
-                <div class="empty-copy">
-                  <strong>未选择基图</strong>
-                  <span>可上传商品图片作为参考。</span>
-                </div>
-              </div>
+    .controls-row { display: flex; gap: var(--space-3); margin-top: var(--space-4); }
+    .controls-row .field { flex: 1; min-width: 0; }
 
-              <div class="suite-control-grid">
-                <label class="field">
-                  <span>商品名称</span>
-                  <input id="suiteProductNameInput" type="text" placeholder="例如：不锈钢保温杯" />
-                </label>
-                <label class="field">
-                  <span>品类</span>
-                  <input id="suiteCategoryInput" type="text" placeholder="例如：厨房用品 / 3C 配件" />
-                </label>
-              </div>
+    .generate-btn {
+      width: 100%; margin-top: var(--space-5); padding: 0.75rem 1.5rem;
+      font-size: var(--font-size-base); font-weight: var(--font-weight-semibold);
+      background: var(--color-cta); color: #fff; border: none; border-radius: var(--radius-md);
+      cursor: pointer; transition: background var(--transition-fast);
+      display: flex; align-items: center; justify-content: center; gap: var(--space-2);
+    }
+    .generate-btn:hover:not(:disabled) { background: #0284c7; }
+    .generate-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
-              <label class="field">
-                <span>核心卖点</span>
-                <textarea id="suiteSellingPointsInput" rows="4" placeholder="材质、功能、使用场景、包装配件、目标人群..."></textarea>
-              </label>
+    .result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-4); }
+    .result-card {
+      background: var(--color-surface); border: 1px solid var(--color-border);
+      border-radius: var(--radius-lg); overflow: hidden;
+    }
+    .result-card img { width: 100%; display: block; aspect-ratio: 1; object-fit: cover; }
+    .result-card .result-meta { padding: var(--space-2) var(--space-3); font-size: var(--font-size-xs); color: var(--color-text-muted); }
 
-              <div class="suite-control-grid">
-                <label class="field">
-                  <span>套图类型</span>
-                  <select id="suitePresetInput">
-                    <option value="amazon-aplus">Amazon A+ 内容套图</option>
-                    <option value="amazon">Amazon 详情页套图</option>
-                    <option value="mall-long">商城详情长图</option>
-                    <option value="ads">品牌广告套图</option>
-                  </select>
-                </label>
-                <label class="field">
-                  <span>视觉风格</span>
-                  <select id="suiteStyleInput">
-                    <option value="premium">清爽质感</option>
-                    <option value="tech">现代冷调</option>
-                    <option value="warm">自然生活</option>
-                    <option value="bold">活动吸睛</option>
-                    <option value="minimal">纯净白底</option>
-                  </select>
-                </label>
-              </div>
+    .empty-state { display: flex; align-items: center; justify-content: center; min-height: 200px; color: var(--color-text-muted); text-align: center; }
+    .empty-state strong { display: block; font-weight: var(--font-weight-medium); color: var(--color-text-secondary); margin-bottom: var(--space-1); }
 
-              <label class="field suite-size-field">
-                <span>批量尺寸</span>
-                <select id="suiteSizeInput">
-                  <option value="preset">按套图图位推荐尺寸</option>
-                  <option value="1024x1024">1024 x 1024</option>
-                  <option value="1024x1792">1024 x 1792</option>
-                  <option value="1792x1024">1792 x 1024</option>
-                </select>
-              </label>
+    /* ── Modal (flat) ── */
+    .modal-backdrop {
+      position: fixed; inset: 0; background: rgba(15,23,42,0.45); display: flex;
+      align-items: center; justify-content: center; z-index: 1000;
+      opacity: 0; pointer-events: none; transition: opacity var(--transition-normal);
+    }
+    .modal-backdrop.active { opacity: 1; pointer-events: auto; }
+    .modal {
+      background: var(--color-surface); border: 1px solid var(--color-border);
+      border-radius: var(--radius-xl); width: 90%; max-width: 420px; padding: var(--space-6);
+    }
+    .modal h3 { margin-bottom: var(--space-4); }
+    .modal .modal-actions { display: flex; gap: var(--space-3); justify-content: flex-end; margin-top: var(--space-5); }
+    .form-message { font-size: var(--font-size-xs); margin-top: var(--space-2); }
+    .form-message.error { color: var(--color-error); }
+    .form-message.success { color: var(--color-success); }
 
-              <label class="switch suite-switch">
-                <input id="suiteAutoSaveToggle" type="checkbox" checked />
-                <span>生成后保存到素材库</span>
-              </label>
+    .credits-summary { margin-bottom: var(--space-4); font-size: var(--font-size-sm); }
+    .credits-summary p { margin-bottom: var(--space-1); }
 
-              <button class="generate-button suite-generate-button" id="generateSuiteBtn" type="button">
-                <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8z" /></svg>
-                暂未开放
-              </button>
-            </section>
+    /* Sidebar credits */
+    .sidebar-credits { display: flex; flex-direction: column; gap: var(--space-1); }
+    .sidebar-credits strong { font-size: var(--font-size-lg); font-weight: var(--font-weight-bold); }
 
-            <section class="panel suite-plan-panel" aria-label="套图计划">
-              <div class="panel-header">
-                <h3>套图结构</h3>
-                <button class="ghost-button" id="saveSuiteBtn" type="button">保存整套</button>
-              </div>
-              <div id="suiteShotList" class="suite-shot-list"></div>
-              <div id="suiteResultGrid" class="result-grid suite-result-grid empty-state">
-                <div class="empty-copy">
-                  <strong>等待生成套图</strong>
-                  <span>整套商品图会按用途出现在这里。</span>
-                </div>
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <section id="view-generate" class="view active" aria-labelledby="generateTitle">
-          <div class="topbar">
-            <div>
-              <p class="eyebrow">SINGLE IMAGE</p>
-              <h2 id="generateTitle">单张商品图生成</h2>
-            </div>
-            <button class="status-pill" id="singleConnectionState" type="button">API 未保存</button>
-          </div>
-
-          <div class="generator-layout">
-            <section class="panel form-panel" aria-label="生成参数">
-              <div class="panel-header">
-                <h3>输入</h3>
-                <button class="icon-button" type="button" id="clearFormBtn" aria-label="清空输入" title="清空输入">
-                  <svg viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M8 6V4h8v2" /><path d="m10 11 0 6" /><path d="m14 11 0 6" /><path d="M5 6l1 14h12l1-14" /></svg>
-                </button>
-              </div>
-
-              <div class="dropzone" id="dropzone">
-                <input id="uploadInput" type="file" accept="image/*" multiple />
-                <div class="drop-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M20 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3" /></svg>
-                </div>
-                <strong>上传商品参考图</strong>
-                <span>支持本地预览与保存到素材库</span>
-              </div>
-              <div id="uploadPreview" class="upload-preview" aria-live="polite"></div>
-
-              <div class="template-block">
-                <div class="template-head">
-                  <div class="template-tools">
-                    <select id="platformSelect" aria-label="选择平台">
-                      <option value="all">全部模板</option>
-                      <option value="main">主图</option>
-                      <option value="scene">场景图</option>
-                      <option value="infographic">信息图</option>
-                      <option value="content">内容图</option>
-                      <option value="aplus" selected>Amazon A+</option>
-                      <option value="season">活动图</option>
-                    </select>
-                    <select id="categorySelect" aria-label="选择品类"></select>
-                    <select id="scenarioSelect" aria-label="选择场景"></select>
-                  </div>
-                </div>
-                <div id="templateSelectionHint" class="template-selection-hint" aria-live="polite"></div>
-              </div>
-
-              <div class="settings-grid">
-                <label class="field">
-                  <span>生成张数</span>
-                  <input id="countInput" type="number" min="1" max="8" value="1" />
-                </label>
-                <label class="field">
-                  <span>尺寸</span>
-                  <select id="sizeInput">
-                    <option value="1024x1024">1024 x 1024</option>
-                    <option value="1024x1792">1024 x 1792</option>
-                    <option value="1792x1024">1792 x 1024</option>
-                  </select>
-                </label>
-              </div>
-
-              <button class="generate-button" id="generateBtn" type="button">
-                <svg viewBox="0 0 24 24"><path d="M13 2 3 14h8l-1 8 11-13h-8z" /></svg>
-                生成图片
-              </button>
-            </section>
-
-            <section class="panel output-panel" aria-label="生成结果">
-              <div class="panel-header">
-                <h3>生成结果</h3>
-                <div class="result-actions">
-                  <button class="ghost-button" id="saveAllBtn" type="button">批量保存</button>
-                </div>
-              </div>
-              <div id="resultGrid" class="result-grid empty-state">
-                <div class="empty-copy">
-                  <strong>等待生成</strong>
-                  <span>图片会出现在这里，可保存或进入二次编辑。</span>
-                </div>
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <section id="view-edit" class="view" aria-labelledby="editTitle">
-          <div class="topbar">
-            <div>
-              <p class="eyebrow">REFINE</p>
-              <h2 id="editTitle">商品图二次编辑</h2>
-            </div>
-            <button class="ghost-button" id="openLibraryPickBtn" type="button">从素材库选择</button>
-          </div>
-
-          <div class="edit-layout">
-            <section class="panel preview-panel">
-              <div class="panel-header">
-                <h3>基图</h3>
-                <span class="muted" id="selectedImageName">未选择</span>
-              </div>
-              <div id="editPreview" class="edit-preview empty-state">
-                <div class="empty-copy">
-                  <strong>选择一张图片</strong>
-                  <span>可从生成结果或素材库进入二次编辑。</span>
-                </div>
-              </div>
-            </section>
-
-            <section class="panel edit-panel">
-              <div class="panel-header">
-                <h3>微调</h3>
-                <label class="switch">
-                  <input id="autoSaveToggle" type="checkbox" checked />
-                  <span>保存到素材库</span>
-                </label>
-              </div>
-              <label class="field">
-                <span>二次编辑提示词</span>
-                <textarea id="editPromptInput" rows="8" placeholder="例如：保持产品主体不变，替换为明亮厨房场景，画面干净自然，保留真实材质和核心卖点。"></textarea>
-              </label>
-              <div class="quick-edits" id="quickEditGrid"></div>
-              <div class="save-inline" id="autoSaveOptions">
-                <label class="field">
-                  <span>图片名称</span>
-                  <input id="autoSaveNameInput" type="text" />
-                </label>
-                <label class="field">
-                  <span>文件夹</span>
-                  <select id="autoSaveFolderSelect"></select>
-                </label>
-                <label class="field">
-                  <span>新建文件夹</span>
-                  <input id="autoSaveNewFolderInput" type="text" placeholder="留空则使用所选文件夹" />
-                </label>
-              </div>
-              <button class="generate-button" id="refineBtn" type="button">
-                <svg viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="m19 15 .7 2.1L22 18l-2.3.9L19 21l-.7-2.1L16 18l2.3-.9z" /></svg>
-                生成微调版本
-              </button>
-              <div id="editResultGrid" class="result-grid compact empty-state">
-                <div class="empty-copy">
-                  <strong>暂无微调结果</strong>
-                  <span>生成后可以继续迭代或保存。</span>
-                </div>
-              </div>
-            </section>
-          </div>
-        </section>
-
-        <section id="view-video" class="view" aria-labelledby="videoTitle">
-          <div class="topbar">
-            <div>
-              <p class="eyebrow">AI VIDEO</p>
-              <h2 id="videoTitle">AI视频</h2>
-            </div>
-          </div>
-
-          <div class="video-layout">
-            <section class="panel video-control-panel" aria-label="AI视频生成参数">
-              <div class="panel-header">
-                <h3>图生视频</h3>
-                <span class="mini-badge">演示模式</span>
-              </div>
-
-              <div class="dropzone compact-dropzone" id="videoDropzone">
-                <input id="videoUploadInput" type="file" accept="image/*" />
-                <div class="drop-icon" aria-hidden="true">
-                  <svg viewBox="0 0 24 24"><path d="M12 16V4" /><path d="m7 9 5-5 5 5" /><path d="M20 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3" /></svg>
-                </div>
-                <strong>上传商品图（必填）</strong>
-                <span>演示版会以这张图作为商品外观参考，不调用真实视频接口。</span>
-              </div>
-              <div id="videoReferencePreview" class="suite-reference video-reference-preview is-empty"></div>
-
-              <div class="video-config-panel">
-                <section class="video-usage-section" aria-labelledby="videoUsageLabel">
-                  <div class="video-config-head">
-                    <strong id="videoUsageLabel">视频用途</strong>
-                    <small>决定下方可用比例和时长</small>
-                  </div>
-                  <select id="videoPresetInput" class="visually-hidden" aria-label="Amazon 视频用途">
-                    <option value="shoppable">商品详情页 Shoppable Video</option>
-                    <option value="sponsored-brands">Sponsored Brands Video</option>
-                    <option value="store-a-plus">Store / A+ 后台模块</option>
-                  </select>
-                  <div id="videoPresetCards" class="video-preset-cards" role="listbox" aria-label="Amazon 视频用途"></div>
-                </section>
-
-                <section class="video-output-section" aria-labelledby="videoOutputLabel">
-                  <div class="video-config-head compact">
-                    <strong id="videoOutputLabel">输出设置</strong>
-                    <small id="videoOutputHint">已按当前用途筛选比例和时长</small>
-                  </div>
-                  <div class="video-output-group">
-                    <div class="video-output-label">画幅比例</div>
-                    <select id="videoAspectInput" class="visually-hidden" aria-label="画幅比例"></select>
-                    <div id="videoAspectOptions" class="video-choice-row" role="radiogroup" aria-label="画幅比例"></div>
-                  </div>
-                  <div class="video-output-group">
-                    <div class="video-output-label">目标时长</div>
-                    <select id="videoDurationInput" class="visually-hidden" aria-label="目标时长"></select>
-                    <div id="videoDurationOptions" class="video-choice-row" role="radiogroup" aria-label="目标时长"></div>
-                  </div>
-                  <div class="video-composition-note">当前方案会生成 1 条成片视频</div>
-                </section>
-              </div>
-              <div id="videoInlineSummary" class="video-inline-summary" aria-live="polite"></div>
-
-              <label class="field">
-                <span>视频描述</span>
-                <textarea id="videoSellingPointsInput" rows="4" placeholder="可选：描述产品卖点、使用场景或想要的视频感觉，例如：家庭场景中展示大屏读数和便携使用..."></textarea>
-              </label>
-
-              <details class="video-advanced-details">
-                <summary>更多设置</summary>
-                <div class="video-output-group">
-                  <div class="video-output-label">镜头数</div>
-                  <select id="videoSceneCountInput" class="visually-hidden" aria-label="镜头数"></select>
-                  <div id="videoSceneCountOptions" class="video-choice-row" role="radiogroup" aria-label="镜头数"></div>
-                </div>
-                <div class="suite-control-grid">
-                  <label class="field">
-                    <span>商品名称</span>
-                    <input id="videoProductNameInput" type="text" placeholder="例如：指夹式血氧仪" />
-                  </label>
-                  <label class="field">
-                    <span>品类</span>
-                    <input id="videoCategoryInput" type="text" placeholder="例如：家用健康监测设备" />
-                  </label>
-                </div>
-
-                <label class="field">
-                  <span>视频风格</span>
-                  <select id="videoStyleInput">
-                    <option value="clean-medical">医疗清爽</option>
-                    <option value="home-lifestyle">家庭生活</option>
-                    <option value="premium-tech">高级科技</option>
-                    <option value="store-brand">品牌叙事</option>
-                  </select>
-                </label>
-              </details>
-
-              <button class="generate-button" id="generateVideoPlanBtn" type="button">
-                <svg viewBox="0 0 24 24"><path d="m12 3 1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z" /><path d="M5 21h14" /></svg>
-                <span id="generateVideoPlanLabel">生成视频</span>
-              </button>
-            </section>
-
-            <section class="panel video-result-panel" aria-label="视频生成结果">
-              <div class="panel-header">
-                <h3>生成结果</h3>
-                <span id="videoPresetBadge" class="mini-badge">自然视频</span>
-              </div>
-              <div id="videoResultPreview" class="video-result-preview empty-state">
-                <div class="empty-copy">
-                  <strong>生成后在这里预览视频</strong>
-                  <span>右侧会显示 Mock 成片预览、规格摘要和可编辑分镜。</span>
-                </div>
-              </div>
-              <div class="video-result-section">
-                <h4>当前规格摘要</h4>
-                <div id="videoSpecCards" class="video-spec-grid"></div>
-              </div>
-              <p id="videoPresetMeta" class="video-preset-meta">商品详情页顶部主媒体区、详情页视频区、部分搜索结果</p>
-              <details class="video-compliance">
-                <summary class="video-compliance-head">
-                  <strong>医疗设备合规已开启</strong>
-                  <span>查看规则</span>
-                </summary>
-                <ul id="videoComplianceList"></ul>
-                <div class="video-policy-details">
-                  <strong>当前用途补充规则</strong>
-                  <ul id="videoPolicyDetailList"></ul>
-                </div>
-              </details>
-              <details id="videoStoryboardDetails" class="video-storyboard-details" hidden>
-                <summary class="video-compliance-head scene-header">
-                  <strong>视频分镜预览</strong>
-                  <span id="videoSceneCount">待生成</span>
-                </summary>
-                <div id="videoSceneList" class="video-scene-list"></div>
-              </details>
-            </section>
-          </div>
-        </section>
-
-        <section id="view-library" class="view" aria-labelledby="libraryTitle">
-          <div class="topbar">
-            <div>
-              <p class="eyebrow">素材库</p>
-              <h2 id="libraryTitle">素材管理</h2>
-            </div>
-            <button class="primary-button" id="createFolderBtn" type="button">
-              <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-              新建文件夹
-            </button>
-          </div>
-
-          <div class="library-layout">
-            <aside class="panel library-sidebar">
-              <label class="field search-field">
-                <span>搜索文件夹及文件</span>
-                <input id="librarySearchInput" type="search" placeholder="输入名称、提示词、标签..." />
-              </label>
-              <div class="folder-create">
-                <input id="folderNameInput" type="text" placeholder="文件夹名称" />
-                <button class="icon-button" id="folderQuickCreateBtn" type="button" aria-label="创建文件夹" title="创建文件夹">
-                  <svg viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
-                </button>
-              </div>
-              <div id="folderList" class="folder-list"></div>
-            </aside>
-
-            <section class="panel library-main">
-              <div class="panel-header">
-                <h3 id="libraryHeading">全部素材</h3>
-                <div class="result-actions">
-                  <button class="ghost-button" id="renameSelectedBtn" type="button">重命名</button>
-                  <button class="ghost-button danger" id="deleteSelectedBtn" type="button">删除</button>
-                </div>
-              </div>
-              <div id="assetGrid" class="asset-grid empty-state">
-                <div class="empty-copy">
-                  <strong>素材库为空</strong>
-                  <span>生成或上传图片后可以保存到这里。</span>
-                </div>
-              </div>
-            </section>
-          </div>
-        </section>
-
-      </main>
-    </div>
-
-    <div class="modal-backdrop" id="saveModal" aria-hidden="true">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="saveModalTitle">
-        <div class="modal-header">
-          <h3 id="saveModalTitle">保存到素材库</h3>
-          <button class="icon-button" type="button" id="closeSaveModalBtn" aria-label="关闭" title="关闭">
-            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-          </button>
-        </div>
-        <div class="modal-body">
-          <div id="savePreview" class="save-preview"></div>
-          <label class="field">
-            <span>图片名称</span>
-            <input id="saveNameInput" type="text" />
-          </label>
-          <label class="field">
-            <span>选择历史文件夹</span>
-            <select id="saveFolderSelect"></select>
-          </label>
-          <label class="field">
-            <span>新建文件夹</span>
-            <input id="newFolderInput" type="text" placeholder="留空则使用历史文件夹" />
-          </label>
-        </div>
-        <div class="modal-actions">
-          <button class="ghost-button" type="button" id="cancelSaveBtn">取消</button>
-          <button class="primary-button" type="button" id="confirmSaveBtn">保存</button>
+    /* Loading pulse */
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+    .loading-placeholder {
+      aspect-ratio: 1; background: var(--color-bg); border-radius: var(--radius-md);
+      animation: pulse 1.2s ease-in-out infinite;
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <!-- ═══ SIDEBAR ═══ -->
+    <aside class="shell-sidebar">
+      <div class="sidebar-brand">AI Image Studio</div>
+      <nav class="sidebar-nav">
+        <a href="/index.html" class="active">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>
+          生成图片
+        </a>
+        <a href="/library.html">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7h6l2 2h10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>
+          素材库
+        </a>
+      </nav>
+      <div class="sidebar-footer">
+        <div class="sidebar-credits">
+          <span class="text-muted">剩余积分</span>
+          <strong id="sidebarCredits">—</strong>
         </div>
       </div>
-    </div>
+    </aside>
 
-    <div class="modal-backdrop" id="settingsModal" aria-hidden="true">
-      <div class="modal settings-modal" role="dialog" aria-modal="true" aria-labelledby="settingsModalTitle">
-        <div class="modal-header">
-          <h3 id="settingsModalTitle">模型配置</h3>
-          <button class="icon-button" type="button" id="closeSettingsModalBtn" aria-label="关闭" title="关闭">
-            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-          </button>
+    <!-- ═══ MAIN ═══ -->
+    <div class="shell-main">
+      <!-- Top bar -->
+      <header class="shell-topbar">
+        <span class="text-sm text-muted" id="topbarTagline">AI 电商图片生成</span>
+        <div class="flex items-center gap-4">
+          <a href="./admin/index.html" class="btn btn-ghost btn-sm" id="adminLink" style="display:none">B端</a>
+          <span id="topbarUser" class="text-sm font-medium">—</span>
+          <span class="badge badge-neutral" id="topbarCreditsBadge">积分 —</span>
+          <button class="btn btn-ghost btn-sm" id="logoutBtn" type="button">退出</button>
         </div>
-        <div class="modal-body">
-          <label class="field">
-            <span>模型 API Key</span>
-            <input id="apiKeyInput" type="text" autocomplete="off" placeholder="由管理员配置" readonly />
-          </label>
-          <div class="settings-grid">
-            <input id="endpointInput" type="hidden" value="https://aokapi.com/v1beta/models/gemini-2.5-flash-image:generateContent/" />
+      </header>
+
+      <!-- Content -->
+      <div class="shell-content">
+        <!-- Generation panel -->
+        <section class="card gen-panel" aria-label="生成参数">
+          <h3 style="margin-bottom:var(--space-4)">图片生成</h3>
+
+          <!-- Reference image dropzone -->
+          <div class="dropzone" id="dropzone">
+            <input type="file" id="refInput" accept="image/*" multiple />
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--color-text-muted)" stroke-width="1.5" style="margin-bottom:var(--space-2)">
+              <path d="M12 16V4"/><path d="m7 9 5-5 5 5"/><path d="M20 16v3a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1v-3"/>
+            </svg>
+            <strong>上传商品参考图</strong>
+            <span>支持 JPG / PNG，最多 3 张</span>
+          </div>
+          <div class="ref-previews" id="refPreviews"></div>
+
+          <!-- Template selectors -->
+          <div class="selectors-row">
             <label class="field">
-              <span>模型</span>
-              <select id="modelInput" aria-label="模型">
-                <option value="">gemini-2.5-flash-image</option>
+              <span>平台</span>
+              <select id="platformSelect" disabled>
+                <option value="">— 加载中 —</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>品类</span>
+              <select id="categorySelect" disabled>
+                <option value="">— 先选择平台 —</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>场景</span>
+              <select id="scenarioSelect" disabled>
+                <option value="">— 先选择品类 —</option>
               </select>
             </label>
           </div>
-          <div id="referenceProbePanel" class="reference-probe-panel" aria-live="polite"></div>
-          <div class="request-payload-panel">
-            <div class="request-payload-head">
-              <strong>最近一次大模型入参</strong>
-              <span id="requestPayloadMeta">尚未发送请求</span>
-            </div>
-            <pre id="requestPayloadPreview">点击生成或测试入参图片后，这里会显示实际发送给模型的 JSON。图片数据会自动截断。</pre>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button class="ghost-button" type="button" id="testReferenceBtn">测试入参图片</button>
-          <button class="ghost-button" type="button" id="cancelSettingsBtn">取消</button>
-        </div>
-      </div>
-    </div>
 
-    <div class="modal-backdrop auth-backdrop" id="authModal" aria-hidden="true">
-      <div class="modal auth-modal" role="dialog" aria-modal="true" aria-labelledby="authModalTitle">
-        <div class="modal-header">
-          <div>
-            <p class="eyebrow">ACCOUNT REQUIRED</p>
-            <h3 id="authModalTitle">注册或登录后使用</h3>
-          </div>
-        </div>
-        <div class="auth-tabs" role="tablist" aria-label="账号操作">
-          <button class="auth-tab active" id="authLoginTab" type="button" role="tab" aria-selected="true" data-auth-mode="login">登录</button>
-          <button class="auth-tab" id="authRegisterTab" type="button" role="tab" aria-selected="false" data-auth-mode="register">注册</button>
-        </div>
-        <div class="modal-body">
-          <label class="field">
-            <span>邮箱</span>
-            <input id="authNameInput" type="email" autocomplete="email" placeholder="you@example.com" />
-          </label>
-          <label class="field">
-            <span>密码</span>
-            <input id="authPasswordInput" type="password" autocomplete="current-password" placeholder="至少 8 位" />
-          </label>
-          <div class="auth-note">
-            <strong>账号用于绑定管理员配置的 API Key 和生成日志。</strong>
-          </div>
-        </div>
-        <div class="modal-actions">
-          <button class="primary-button" id="authSubmitBtn" type="button">登录</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="modal-backdrop" id="creditsModal" aria-hidden="true">
-      <div class="modal" role="dialog" aria-modal="true" aria-labelledby="creditsModalTitle">
-        <div class="modal-header">
-          <h3 id="creditsModalTitle">兑换积分</h3>
-          <button class="icon-button" type="button" id="closeCreditsModalBtn" aria-label="关闭">
-            <svg viewBox="0 0 24 24"><path d="M18 6 6 18" /><path d="m6 6 12 12" /></svg>
-          </button>
-        </div>
-        <div class="modal-body">
-          <div class="credits-summary">
-            <p>本次需要 <strong id="creditsRequiredText">0</strong> 积分</p>
-            <p>当前剩余 <strong id="creditsRemainingModalText">0</strong> 积分</p>
-          </div>
-          <div class="credits-redeem-form">
+          <!-- Count + Size -->
+          <div class="controls-row">
             <label class="field">
-              <span style="display:flex;justify-content:space-between;align-items:baseline;">
-                <span>兑换码</span>
-                <a href="https://item.taobao.com/item.htm?id=1059575526082&spm=a213gs.v2success.0.0.28eb48315dWcFz" target="_blank" rel="noopener" style="font-size:12px;color:var(--primary,#1a73e8);">获取兑换码 →</a>
-              </span>
-              <input id="creditsRedeemInput" type="text" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" />
+              <span>生成张数</span>
+              <input type="number" id="countInput" min="1" max="8" value="1" />
             </label>
-            <p class="form-message" id="creditsRedeemMessage"></p>
+            <label class="field">
+              <span>尺寸</span>
+              <select id="sizeInput">
+                <option value="1024x1024">1024 × 1024</option>
+                <option value="1024x1792">1024 × 1792</option>
+                <option value="1792x1024">1792 × 1024</option>
+              </select>
+            </label>
           </div>
-        </div>
-        <div class="modal-actions" style="display:flex;align-items:center;justify-content:center;">
-          <button class="primary-button" id="submitRedeemBtn" type="button">兑换</button>
-        </div>
+
+          <!-- Generate button -->
+          <button class="generate-btn" id="generateBtn" type="button">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h8l-1 8 11-13h-8z"/></svg>
+            生成图片
+          </button>
+        </section>
+
+        <!-- Results panel -->
+        <section class="card result-panel" aria-label="生成结果">
+          <h3 style="margin-bottom:var(--space-4)">生成结果</h3>
+          <div id="resultGrid" class="result-grid">
+            <div class="empty-state">
+              <div>
+                <strong>等待生成</strong>
+                <span>图片将在这里展示</span>
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
     </div>
+  </div>
 
-    <div id="toast" class="toast" role="status" aria-live="polite"></div>
-    <script src="./video-constraints.js?v=20260610-video-merge" defer></script>
-    <script src="./video-planner.js?v=20260610-video-merge" defer></script>
-    <script src="./video-mock-service.js?v=20260610-video-merge" defer></script>
-    <script src="./app.js?v=20260622-suite-server-prompt" defer></script>
-  </body>
+  <!-- ═══ CREDIT / REDEEM MODAL ═══ -->
+  <div class="modal-backdrop" id="creditsModal" aria-hidden="true">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="creditsModalTitle">
+      <h3 id="creditsModalTitle">积分不足</h3>
+      <div class="credits-summary">
+        <p>本次需要 <strong id="creditsRequiredText">0</strong> 积分</p>
+        <p>当前剩余 <strong id="creditsRemainingModalText">0</strong> 积分</p>
+      </div>
+      <label class="field">
+        <span>兑换码</span>
+        <input type="text" id="creditsRedeemInput" placeholder="XXXX-XXXX-XXXX-XXXX" autocomplete="off" />
+      </label>
+      <p id="creditsRedeemMessage" class="form-message"></p>
+      <div class="modal-actions">
+        <button class="btn btn-ghost" id="closeCreditsModalBtn" type="button">取消</button>
+        <button class="btn btn-primary" id="submitRedeemBtn" type="button">兑换</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ TOAST ═══ -->
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <!-- ═══ SCRIPTS ═══ -->
+  <script src="shared/auth.js"></script>
+  <script src="shared/api.js"></script>
+  <script>
+  "use strict";
+
+  // ── State ────────────────────────────────────────────────────────────────
+  const state = {
+    matrix: null,          // promptConfig.single.matrix (raw from server)
+    defaults: null,        // matrix.defaults
+    references: [],        // [{ name, size, url }] — data‑URL references
+    generating: false
+  };
+
+  // ── DOM refs ─────────────────────────────────────────────────────────────
+  const $ = (id) => document.getElementById(id);
+  const els = {
+    platformSelect:  $("platformSelect"),
+    categorySelect:  $("categorySelect"),
+    scenarioSelect:  $("scenarioSelect"),
+    countInput:      $("countInput"),
+    sizeInput:       $("sizeInput"),
+    generateBtn:     $("generateBtn"),
+    refInput:        $("refInput"),
+    refPreviews:     $("refPreviews"),
+    resultGrid:      $("resultGrid"),
+    dropzone:        $("dropzone"),
+    sidebarCredits:  $("sidebarCredits"),
+    topbarUser:      $("topbarUser"),
+    topbarCreditsBadge: $("topbarCreditsBadge"),
+    logoutBtn:       $("logoutBtn"),
+    toast:           $("toast"),
+    creditsModal:    $("creditsModal"),
+  };
+
+  // ── Helpers ──────────────────────────────────────────────────────────────
+  function escapeHtml(text) {
+    const div = document.createElement("div");
+    div.appendChild(document.createTextNode(String(text ?? "")));
+    return div.innerHTML;
+  }
+  function attrEscape(value) {
+    return String(value ?? "").replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  let toastTimer;
+  function showToast(msg, isError) {
+    clearTimeout(toastTimer);
+    els.toast.textContent = msg;
+    els.toast.className = "toast active" + (isError ? " error" : "");
+    toastTimer = setTimeout(() => { els.toast.className = "toast"; }, 3000);
+  }
+
+  function updateCreditsUI() {
+    const u = Auth.user;
+    const remaining = u ? (u.creditsRemaining ?? 0) : 0;
+    els.sidebarCredits.textContent = remaining;
+    els.topbarCreditsBadge.textContent = "积分 " + remaining;
+    els.topbarUser.textContent = u ? (u.name || u.email || "用户") : "—";
+  }
+
+  // ── Auth init ────────────────────────────────────────────────────────────
+  async function initAuth() {
+    try {
+      await Auth.init("user");
+      updateCreditsUI();
+      if (Auth.isAdmin) { var al = document.getElementById("adminLink"); if (al) al.style.display = ""; }
+      return true;
+    } catch (e) {
+      // Auth.init already redirects to /login.html on failure
+      console.error("Auth init failed:", e.message);
+      return false;
+    }
+  }
+
+  // ── Load settings → populate selectors ───────────────────────────────────
+  async function loadSettings() {
+    try {
+      const data = await Api.get("/settings");
+      const single = (data.settings && data.settings.promptConfig && data.settings.promptConfig.single) || {};
+      state.matrix = single.matrix || null;
+      state.defaults = (state.matrix && state.matrix.defaults) || null;
+      populatePlatforms();
+    } catch (e) {
+      showToast("加载配置失败: " + e.message, true);
+    }
+  }
+
+  function populatePlatforms() {
+    const sel = els.platformSelect;
+    sel.innerHTML = "";
+    if (!state.matrix || !Array.isArray(state.matrix.platforms)) {
+      sel.innerHTML = '<option value="">无可用平台</option>';
+      sel.disabled = true;
+      return;
+    }
+    state.matrix.platforms.forEach((p) => {
+      const opt = document.createElement("option");
+      opt.value = p.id;
+      opt.textContent = p.label;
+      sel.appendChild(opt);
+    });
+    sel.disabled = false;
+    // Set default
+    if (state.defaults && state.defaults.platformId) {
+      sel.value = state.defaults.platformId;
+    }
+    populateCategories();
+  }
+
+  function populateCategories() {
+    const sel = els.categorySelect;
+    sel.innerHTML = "";
+    const platformId = els.platformSelect.value;
+    const platform = state.matrix && state.matrix.platforms
+      ? state.matrix.platforms.find((p) => p.id === platformId)
+      : null;
+    if (!platform || !Array.isArray(platform.categories)) {
+      sel.innerHTML = '<option value="">— 无品类 —</option>';
+      sel.disabled = true;
+      populateScenarios();
+      return;
+    }
+    platform.categories.forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.label;
+      sel.appendChild(opt);
+    });
+    sel.disabled = false;
+    if (state.defaults && state.defaults.categoryId) {
+      sel.value = state.defaults.categoryId;
+    }
+    populateScenarios();
+  }
+
+  function populateScenarios() {
+    const sel = els.scenarioSelect;
+    sel.innerHTML = "";
+    const platformId = els.platformSelect.value;
+    const categoryId = els.categorySelect.value;
+    const platform = state.matrix && state.matrix.platforms
+      ? state.matrix.platforms.find((p) => p.id === platformId)
+      : null;
+    const category = platform && Array.isArray(platform.categories)
+      ? platform.categories.find((c) => c.id === categoryId)
+      : null;
+    if (!category || !Array.isArray(category.scenarios) || category.scenarios.length === 0) {
+      sel.innerHTML = '<option value="">— 无场景 —</option>';
+      sel.disabled = true;
+      return;
+    }
+    category.scenarios.forEach((s) => {
+      const opt = document.createElement("option");
+      opt.value = s.templateId || s.id || "";
+      opt.textContent = s.title || s.id || "";
+      opt.dataset.scenarioId = s.id || "";
+      sel.appendChild(opt);
+    });
+    sel.disabled = false;
+    if (state.defaults && state.defaults.scenarioId) {
+      // Try to match by scenario id
+      const match = Array.from(sel.options).find((o) => o.dataset.scenarioId === state.defaults.scenarioId);
+      if (match) sel.value = match.value;
+    }
+  }
+
+  // ── Reference image handling ─────────────────────────────────────────────
+  function addReferenceFiles(files) {
+    const available = 3 - state.references.length;
+    if (available <= 0) {
+      showToast("最多上传 3 张参考图", true);
+      return;
+    }
+    const toAdd = Array.from(files).slice(0, available);
+    toAdd.forEach((file) => {
+      if (!file.type.startsWith("image/")) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        state.references.push({
+          name: file.name,
+          size: file.size,
+          url: reader.result
+        });
+        renderRefPreviews();
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  function removeReference(index) {
+    state.references.splice(index, 1);
+    renderRefPreviews();
+  }
+
+  function renderRefPreviews() {
+    els.refPreviews.innerHTML = state.references
+      .map(
+        (ref, i) =>
+          `<div class="ref-thumb"><img src="${attrEscape(ref.url)}" alt="${escapeHtml(ref.name)}" /><button class="ref-remove" type="button" data-index="${i}" title="移除">×</button></div>`
+      )
+      .join("");
+    // Bind remove buttons
+    els.refPreviews.querySelectorAll(".ref-remove").forEach((btn) => {
+      btn.addEventListener("click", () => removeReference(parseInt(btn.dataset.index, 10)));
+    });
+  }
+
+  // ── Dropzone events ──────────────────────────────────────────────────────
+  function initDropzone() {
+    const dz = els.dropzone;
+    dz.addEventListener("click", () => els.refInput.click());
+    dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
+    dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
+    dz.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dz.classList.remove("drag-over");
+      if (e.dataTransfer.files.length) addReferenceFiles(e.dataTransfer.files);
+    });
+    els.refInput.addEventListener("change", () => {
+      if (els.refInput.files.length) addReferenceFiles(els.refInput.files);
+      els.refInput.value = "";
+    });
+  }
+
+  // ── Generate ─────────────────────────────────────────────────────────────
+  async function handleGenerate() {
+    if (state.generating) return;
+
+    // Validate
+    const templateId = els.scenarioSelect.value;
+    if (!templateId) {
+      showToast("请先选择平台 / 品类 / 场景", true);
+      return;
+    }
+    const count = Math.max(1, Math.min(8, parseInt(els.countInput.value, 10) || 1));
+    els.countInput.value = String(count);
+    const size = els.sizeInput.value;
+
+    // Client‑side credit guard
+    const credits = Auth.user ? (Auth.user.creditsRemaining || 0) : 0;
+    if (credits < count) {
+      showCreditsModal(count, credits);
+      return;
+    }
+
+    state.generating = true;
+    els.generateBtn.disabled = true;
+    els.generateBtn.textContent = "生成中…";
+    renderLoadingGrid(count);
+
+    try {
+      const payload = await Api.post("/generate", {
+        count,
+        size,
+        templateId,
+        referenceImages: state.references.map((r) => ({ name: r.name, size: r.size, url: r.url }))
+      });
+
+      // Update credits from response
+      if (payload.creditsRemaining !== undefined && Auth.user) {
+        Auth.user.creditsRemaining = payload.creditsRemaining;
+        updateCreditsUI();
+      }
+
+      const images = payload.images || [];
+      renderResults(images, templateId);
+      showToast("已生成 " + images.length + " 张图片");
+    } catch (err) {
+      if (err.status === 429) {
+        // Credit insufficient
+        const required = (err.data && err.data.required) || count;
+        const remaining = (err.data && err.data.remaining) || 0;
+        showCreditsModal(required, remaining);
+      } else if (err.authFailure) {
+        // Already redirected
+      } else {
+        renderEmptyResult("生成失败", err.message);
+        showToast(err.message || "生成失败", true);
+      }
+    } finally {
+      state.generating = false;
+      els.generateBtn.disabled = false;
+      els.generateBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M13 2 3 14h8l-1 8 11-13h-8z"/></svg> 生成图片';
+    }
+  }
+
+  function renderLoadingGrid(count) {
+    els.resultGrid.innerHTML = Array.from({ length: count }, () => '<div class="loading-placeholder"></div>').join("");
+  }
+
+  function renderResults(images, templateId) {
+    if (!images.length) {
+      renderEmptyResult("无结果", "接口未返回图片");
+      return;
+    }
+    els.resultGrid.innerHTML = images
+      .map(
+        (img, i) =>
+          `<div class="result-card">
+            <img src="${attrEscape(img.url)}" alt="生成图 ${i + 1}" loading="lazy" />
+            <div class="result-meta">#${i + 1} ${escapeHtml(templateId)}</div>
+          </div>`
+      )
+      .join("");
+  }
+
+  function renderEmptyResult(title, msg) {
+    els.resultGrid.innerHTML =
+      `<div class="empty-state"><div><strong>${escapeHtml(title)}</strong><span>${escapeHtml(msg)}</span></div></div>`;
+  }
+
+  // ── Credit / Redeem modal ────────────────────────────────────────────────
+  function showCreditsModal(required, remaining) {
+    const modal = els.creditsModal;
+    $("creditsModalTitle").textContent = required > 0 ? "积分不足" : "兑换积分";
+    $("creditsRequiredText").textContent = required || 0;
+    $("creditsRemainingModalText").textContent =
+      remaining != null ? remaining : (Auth.user ? (Auth.user.creditsRemaining || 0) : 0);
+    $("creditsRedeemInput").value = "";
+    $("creditsRedeemMessage").textContent = "";
+    $("creditsRedeemMessage").className = "form-message";
+    modal.setAttribute("aria-hidden", "false");
+    modal.classList.add("active");
+    $("creditsRedeemInput").focus();
+  }
+
+  function closeCreditsModal() {
+    const modal = els.creditsModal;
+    modal.setAttribute("aria-hidden", "true");
+    modal.classList.remove("active");
+  }
+
+  async function handleSubmitRedeem() {
+    const input = $("creditsRedeemInput");
+    const msgEl = $("creditsRedeemMessage");
+    const btn = $("submitRedeemBtn");
+    const code = input.value.trim();
+    if (!code) {
+      msgEl.textContent = "请输入兑换码";
+      msgEl.className = "form-message error";
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = "兑换中…";
+    msgEl.textContent = "";
+    msgEl.className = "form-message";
+    try {
+      const payload = await Api.post("/redeem", { code });
+      msgEl.textContent = "兑换成功，已增加 " + payload.creditsAdded + " 积分";
+      msgEl.className = "form-message success";
+      input.value = "";
+      // Update user credits
+      if (Auth.user) {
+        Auth.user.creditsRemaining = payload.creditsRemaining;
+        Auth.user.credits = payload.creditsTotal;
+        updateCreditsUI();
+      }
+      // Update modal display
+      $("creditsRemainingModalText").textContent = payload.creditsRemaining;
+      const reqEl = $("creditsRequiredText");
+      reqEl.textContent = Math.max(0, parseInt(reqEl.textContent, 10) - payload.creditsAdded);
+      // If now sufficient, close after a beat
+      if (parseInt(reqEl.textContent, 10) <= 0) {
+        setTimeout(closeCreditsModal, 1200);
+      }
+    } catch (err) {
+      msgEl.textContent = err.message || "兑换失败";
+      msgEl.className = "form-message error";
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "兑换";
+    }
+  }
+
+  // ── Event bindings ───────────────────────────────────────────────────────
+  function bindEvents() {
+    els.platformSelect.addEventListener("change", populateCategories);
+    els.categorySelect.addEventListener("change", populateScenarios);
+    els.generateBtn.addEventListener("click", handleGenerate);
+    els.logoutBtn.addEventListener("click", () => Auth.logout());
+
+    // Modal events
+    $("closeCreditsModalBtn").addEventListener("click", closeCreditsModal);
+    $("submitRedeemBtn").addEventListener("click", handleSubmitRedeem);
+    els.creditsModal.addEventListener("click", (e) => {
+      if (e.target === els.creditsModal) closeCreditsModal();
+    });
+    $("creditsRedeemInput").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") handleSubmitRedeem();
+    });
+  }
+
+  // ── Bootstrap ────────────────────────────────────────────────────────────
+  async function main() {
+    bindEvents();
+    initDropzone();
+
+    const authed = await initAuth();
+    if (!authed) return; // redirecting
+
+    await loadSettings();
+    updateCreditsUI();
+  }
+
+  document.addEventListener("DOMContentLoaded", main);
+  </script>
+</body>
 </html>

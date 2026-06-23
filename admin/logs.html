@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>生成记录 - AI Image Studio B端</title>
+  <link rel="stylesheet" href="../shared/styles.css" />
+  <style>
+    .log-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-sm); }
+    .log-table th, .log-table td { padding: var(--space-2) var(--space-3); text-align: left; border-bottom: 1px solid var(--color-border); }
+    .log-table th { font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); font-size: var(--font-size-xs); text-transform: uppercase; }
+    .log-table td { color: var(--color-text); }
+    .log-table tr:hover td { background: var(--color-bg); }
+    .prompt-cell { max-width: 300px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .load-more { text-align: center; margin-top: var(--space-4); }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="shell-sidebar">
+    <div class="sidebar-brand">AI Image Studio B端</div>
+    <nav class="sidebar-nav">
+      <a href="./index.html">首页</a>
+      <a href="./users.html">用户管理</a>
+      <a href="./models.html">模型配置</a>
+      <a href="./prompts.html">提示词配置</a>
+      <a href="./factory.html">提示词工厂</a>
+      <a href="./redeem.html">兑换码</a>
+      <a href="./logs.html" class="active">生成记录</a>
+    </nav>
+    <div class="sidebar-footer" id="sidebarUser"></div>
+  </aside>
+
+  <div class="shell-main">
+    <header class="shell-topbar">
+      <span class="font-medium">生成记录</span>
+      <div class="flex items-center gap-4">
+        <a href="../index.html" class="btn btn-ghost btn-sm">C端</a>
+        <span class="text-sm text-secondary" id="topbarUser"></span>
+        <button class="btn btn-ghost btn-sm" onclick="Auth.logout()">退出</button>
+      </div>
+    </header>
+
+    <main class="shell-content">
+      <div class="card">
+        <div class="flex items-center justify-between" style="margin-bottom:var(--space-4)">
+          <h3>最近生成记录</h3>
+          <button class="btn btn-ghost btn-sm" onclick="loadLogs()">刷新</button>
+        </div>
+        <div style="overflow-x:auto">
+          <table class="log-table">
+            <thead><tr><th>时间</th><th>用户</th><th>模型</th><th>提示词</th><th>数量</th><th>状态</th><th>耗时</th></tr></thead>
+            <tbody id="logBody"><tr><td colspan="7" class="text-muted" style="text-align:center;padding:var(--space-8)">加载中...</td></tr></tbody>
+          </table>
+        </div>
+        <div class="load-more" id="loadMore"></div>
+      </div>
+      <div id="toast" class="toast"></div>
+    </main>
+  </div>
+</div>
+
+<script src="../shared/auth.js"></script>
+<script src="../shared/api.js"></script>
+<script>
+let offset = 0, limit = 50;
+
+async function init() {
+  try { await Auth.init("admin"); } catch { return; }
+  document.getElementById("topbarUser").textContent = Auth.user?.email || "";
+  document.getElementById("sidebarUser").textContent = Auth.user?.email || "";
+  await loadLogs();
+}
+
+async function loadLogs() {
+  try {
+    const data = await Api.admin(`/logs?limit=${limit}`);
+    const logs = data.logs || [];
+    if (!logs.length && offset === 0) {
+      document.getElementById("logBody").innerHTML = '<tr><td colspan="7" class="text-muted" style="text-align:center;padding:var(--space-8)">暂无生成记录</td></tr>';
+      return;
+    }
+    document.getElementById("logBody").innerHTML = logs.map(l => `
+      <tr>
+        <td>${fmtTime(l.createdAt)}</td>
+        <td class="text-sm">${esc(l.userName || l.userId || "-")}</td>
+        <td>${esc(l.model || "-")}</td>
+        <td class="prompt-cell" title="${escAttr(l.prompt || "")}">${esc((l.prompt || "").slice(0, 80))}</td>
+        <td>${l.count || 0}</td>
+        <td><span class="badge ${l.status === 'completed' ? 'badge-success' : 'badge-error'}">${l.status === 'completed' ? '成功' : '失败'}</span></td>
+        <td>${l.durationMs ? (l.durationMs / 1000).toFixed(1) + 's' : '-'}</td>
+      </tr>
+    `).join("") || '<tr><td colspan="7" class="text-muted" style="text-align:center">暂无更多</td></tr>';
+    document.getElementById("loadMore").innerHTML = logs.length === limit
+      ? `<button class="btn btn-secondary btn-sm" onclick="offset+=limit;loadLogs()">加载更多</button>`
+      : "";
+  } catch(e) {
+    document.getElementById("logBody").innerHTML = `<tr><td colspan="7" class="text-muted" style="text-align:center">加载失败: ${esc(e.message)}</td></tr>`;
+  }
+}
+
+function fmtTime(iso) {
+  if (!iso) return "-";
+  const d = new Date(iso);
+  return d.toLocaleString("zh-CN", { month:"2-digit", day:"2-digit", hour:"2-digit", minute:"2-digit" });
+}
+function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function escAttr(s) { return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
+init();
+</script>
+</body>
+</html>

@@ -1,0 +1,358 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>兑换码管理 — AI 智能图片编辑器 · 后台管理</title>
+  <link rel="stylesheet" href="../shared/styles.css" />
+  <style>
+    /* ── Layout ── */
+    .page-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); align-items: start; }
+    @media (max-width: 900px) { .page-grid { grid-template-columns: 1fr; } }
+
+    /* ── Code block ── */
+    .code-block {
+      background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-md);
+      padding: var(--space-4); font-family: 'SF Mono', 'Fira Code', monospace; font-size: var(--font-size-xs);
+      white-space: pre-wrap; word-break: break-all; max-height: 300px; overflow-y: auto; line-height: 1.6;
+    }
+
+    /* ── Batch list ── */
+    .batch-item {
+      border: 1px solid var(--color-border); border-radius: var(--radius-md); margin-bottom: var(--space-3);
+    }
+    .batch-header {
+      padding: var(--space-3) var(--space-4); display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none; transition: background var(--transition-fast);
+    }
+    .batch-header:hover { background: var(--color-bg); }
+    .batch-header .batch-summary { display: flex; gap: var(--space-4); align-items: center; flex-wrap: wrap; }
+    .batch-detail {
+      display: none; padding: 0 var(--space-4) var(--space-4); border-top: 1px solid var(--color-border);
+    }
+    .batch-item.open .batch-detail { display: block; }
+    .batch-item.open .batch-header { background: var(--color-bg); }
+
+    /* ── Code table ── */
+    .code-table { width: 100%; border-collapse: collapse; font-size: var(--font-size-xs); margin-top: var(--space-3); }
+    .code-table th { text-align: left; padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--color-border); font-weight: var(--font-weight-semibold); color: var(--color-text-secondary); }
+    .code-table td { padding: var(--space-1) var(--space-2); border-bottom: 1px solid var(--color-border); }
+
+    /* ── Form row ── */
+    .form-inline { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: flex-end; margin-bottom: var(--space-4); }
+    .form-inline .field { min-width: 120px; flex: 1; }
+
+    /* ── Toast / spinner ── */
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: var(--space-2); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty-state { text-align: center; padding: var(--space-6); color: var(--color-text-muted); }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <!-- Sidebar -->
+    <aside class="shell-sidebar">
+      <div class="sidebar-brand">AI Image Studio</div>
+      <nav class="sidebar-nav">
+        <a href="../admin/index.html">首页</a>
+        <a href="users.html">用户管理</a>
+        <a href="models.html">模型配置</a>
+        <a href="prompts.html">提示词配置</a>
+        <a href="./factory.html">提示词工厂</a>
+        <a href="redeem.html" class="active">兑换码</a>
+        <a href="logs.html">生成记录</a>
+      </nav>
+      <div class="sidebar-footer">
+        <span>B端管理台</span>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="shell-main">
+      <header class="shell-topbar">
+        <h2 style="font-size:var(--font-size-lg);">兑换码管理</h2>
+        <div class="flex items-center gap-4">
+          <a href="../index.html" class="btn btn-ghost btn-sm">C端</a>
+        <span id="topbarUser" class="text-sm text-secondary"></span>
+          <button class="btn btn-ghost btn-sm" id="logoutBtn" type="button">退出</button>
+        </div>
+      </header>
+
+      <section class="shell-content">
+        <div class="page-grid">
+          <!-- Generate section -->
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-4);">生成兑换码</h3>
+            <div class="form-inline">
+              <label class="field">
+                <span>数量</span>
+                <input class="input" id="genCount" type="number" min="1" max="1000" value="10" />
+              </label>
+              <label class="field">
+                <span>每码积分</span>
+                <input class="input" id="genCredits" type="number" min="1" max="100000" value="10" />
+              </label>
+            </div>
+            <div class="form-inline">
+              <label class="field">
+                <span>过期时间 (可选)</span>
+                <input class="input" id="genExpiresAt" type="datetime-local" />
+              </label>
+              <label class="field">
+                <span>备注 (可选)</span>
+                <input class="input" id="genNote" type="text" maxlength="200" placeholder="如: 活动赠送" />
+              </label>
+            </div>
+            <button class="btn btn-primary" id="generateBtn" type="button">生成兑换码</button>
+
+            <!-- Generated codes display -->
+            <div id="generatedCodes" style="margin-top:var(--space-4); display:none;">
+              <div class="flex items-center justify-between" style="margin-bottom:var(--space-2);">
+                <span class="font-semibold text-sm">生成的兑换码 <span class="text-muted">(仅显示一次，请复制保存)</span></span>
+                <button class="btn btn-secondary btn-sm" id="copyAllBtn" type="button">复制全部</button>
+              </div>
+              <div class="code-block" id="codeBlock"></div>
+            </div>
+          </div>
+
+          <!-- Batch history section -->
+          <div class="card">
+            <div class="flex items-center justify-between" style="margin-bottom:var(--space-4);">
+              <h3>批次历史</h3>
+              <button class="btn btn-ghost btn-sm" id="refreshBatchesBtn" type="button">刷新</button>
+            </div>
+            <div id="batchList">
+              <div class="empty-state"><span class="spinner"></span>加载中…</div>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="../shared/auth.js"></script>
+  <script src="../shared/api.js"></script>
+
+  <script>
+    "use strict";
+
+    /* ── Elements ── */
+    var topbarUser = document.getElementById("topbarUser");
+    var logoutBtn = document.getElementById("logoutBtn");
+    var toastEl = document.getElementById("toast");
+    var genCount = document.getElementById("genCount");
+    var genCredits = document.getElementById("genCredits");
+    var genExpiresAt = document.getElementById("genExpiresAt");
+    var genNote = document.getElementById("genNote");
+    var generateBtn = document.getElementById("generateBtn");
+    var generatedCodes = document.getElementById("generatedCodes");
+    var codeBlock = document.getElementById("codeBlock");
+    var copyAllBtn = document.getElementById("copyAllBtn");
+    var batchList = document.getElementById("batchList");
+    var refreshBatchesBtn = document.getElementById("refreshBatchesBtn");
+
+    /* ── Toast ── */
+    function toast(msg, isError) {
+      toastEl.textContent = msg;
+      toastEl.classList.toggle("error", !!isError);
+      toastEl.classList.add("active");
+      clearTimeout(toastEl._t);
+      toastEl._t = setTimeout(function () { toastEl.classList.remove("active"); }, 3000);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    function fmtTime(iso) {
+      if (!iso) return "-";
+      return iso.slice(0, 16).replace("T", " ");
+    }
+
+    /* ── Generate ── */
+    generateBtn.addEventListener("click", async function () {
+      var count = parseInt(genCount.value) || 10;
+      var credits = parseInt(genCredits.value) || 10;
+      var expiresAt = genExpiresAt.value ? genExpiresAt.value + ":00" : null;
+      var note = genNote.value.trim() || null;
+
+      generateBtn.disabled = true;
+      generateBtn.textContent = "生成中…";
+      try {
+        var data = await Api.admin("/admin/redeem/batches", {
+          method: "POST",
+          body: { count: count, credits: credits, expiresAt: expiresAt, note: note }
+        });
+
+        /* Show codes */
+        codeBlock.textContent = (data.codes || []).join("\n");
+        generatedCodes.style.display = "block";
+        toast("成功生成 " + (data.codes || []).length + " 个兑换码");
+
+        /* Clear form */
+        genNote.value = "";
+
+        /* Refresh batches */
+        loadBatches();
+      } catch (e) {
+        toast(e.message, true);
+      } finally {
+        generateBtn.disabled = false;
+        generateBtn.textContent = "生成兑换码";
+      }
+    });
+
+    /* ── Copy all ── */
+    copyAllBtn.addEventListener("click", function () {
+      var text = codeBlock.textContent;
+      if (!text) return;
+      navigator.clipboard.writeText(text).then(function () {
+        toast("已复制 " + text.split("\n").filter(Boolean).length + " 个兑换码");
+        copyAllBtn.textContent = "已复制!";
+        setTimeout(function () { copyAllBtn.textContent = "复制全部"; }, 2000);
+      }).catch(function () {
+        toast("复制失败，请手动选择复制", true);
+      });
+    });
+
+    /* ── Batch list ── */
+    async function loadBatches() {
+      batchList.innerHTML = '<div class="empty-state"><span class="spinner"></span>加载中…</div>';
+      try {
+        var data = await Api.admin("/admin/redeem/batches");
+        renderBatches(data.batches || []);
+      } catch (e) {
+        if (!e.authFailure) {
+          batchList.innerHTML = '<div class="empty-state">加载失败: ' + escapeHtml(e.message) + '</div>';
+        }
+      }
+    }
+
+    function renderBatches(batches) {
+      if (!batches.length) {
+        batchList.innerHTML = '<div class="empty-state">暂无兑换码批次</div>';
+        return;
+      }
+
+      batchList.innerHTML = batches.map(function (b) {
+        return '<div class="batch-item" data-batch-id="' + b.batchId + '">'
+          + '<div class="batch-header" data-action="toggle">'
+          + '<div class="batch-summary">'
+          + '<span class="font-semibold">' + escapeHtml(b.batchId) + '</span>'
+          + '<span class="badge badge-neutral">' + (b.credits || 0) + ' 积分/码</span>'
+          + '<span class="text-sm text-muted">共 ' + (b.total || 0) + ' 码</span>'
+          + '<span class="badge badge-success">已兑 ' + (b.redeemed || 0) + '</span>'
+          + (b.revoked ? '<span class="badge badge-error">已废 ' + (b.revoked || 0) + '</span>' : '')
+          + '<span class="text-sm text-muted">' + fmtTime(b.createdAt) + '</span>'
+          + '</div>'
+          + '<span class="text-muted text-sm">' + (b.note ? escapeHtml(b.note) : "") + ' ▶</span>'
+          + '</div>'
+          + '<div class="batch-detail">'
+          + '<div class="empty-state"><span class="spinner"></span>加载码列表…</div>'
+          + '</div>'
+          + '</div>';
+      }).join("");
+    }
+
+    /* ── Toggle batch detail ── */
+    batchList.addEventListener("click", async function (e) {
+      var header = e.target.closest(".batch-header");
+      if (!header) {
+        /* Check if it's a revoke button */
+        var revokeBtn = e.target.closest("button[data-action='revoke']");
+        if (revokeBtn) {
+          var codeId = revokeBtn.getAttribute("data-code-id");
+          await revokeCode(codeId);
+        }
+        return;
+      }
+
+      var batchItem = header.closest(".batch-item");
+      var batchId = batchItem.getAttribute("data-batch-id");
+      var detail = batchItem.querySelector(".batch-detail");
+
+      if (batchItem.classList.contains("open")) {
+        batchItem.classList.remove("open");
+        return;
+      }
+
+      /* Open and load codes */
+      batchItem.classList.add("open");
+      detail.innerHTML = '<div class="empty-state"><span class="spinner"></span>加载码列表…</div>';
+
+      try {
+        var data = await Api.admin("/admin/redeem/batches/" + encodeURIComponent(batchId) + "/codes");
+        renderCodes(detail, data.codes || []);
+      } catch (e) {
+        detail.innerHTML = '<div class="empty-state">加载失败: ' + escapeHtml(e.message) + '</div>';
+      }
+    });
+
+    function renderCodes(container, codes) {
+      if (!codes.length) {
+        container.innerHTML = '<div class="empty-state">该批次无兑换码</div>';
+        return;
+      }
+
+      container.innerHTML = '<table class="code-table"><thead><tr>'
+        + '<th>码前缀</th><th>积分</th><th>状态</th><th>兑换者</th><th>兑换时间</th><th>操作</th>'
+        + '</tr></thead><tbody>'
+        + codes.map(function (c) {
+          var statusBadge = c.status === "active"
+            ? '<span class="badge badge-success">可用</span>'
+            : c.status === "redeemed"
+              ? '<span class="badge badge-warning">已兑换</span>'
+              : '<span class="badge badge-error">已作废</span>';
+
+          var revokeBtn = c.status === "active"
+            ? '<button class="btn btn-danger btn-sm" data-action="revoke" data-code-id="' + c.id + '">作废</button>'
+            : "";
+
+          return '<tr>'
+            + '<td class="font-medium">' + escapeHtml(c.codePrefix || "") + '...</td>'
+            + '<td>' + (c.credits || 0) + '</td>'
+            + '<td>' + statusBadge + '</td>'
+            + '<td>' + escapeHtml(c.redeemedBy || "-") + '</td>'
+            + '<td>' + (c.redeemedAt ? fmtTime(c.redeemedAt) : "-") + '</td>'
+            + '<td>' + revokeBtn + '</td>'
+            + '</tr>';
+        }).join("")
+        + '</tbody></table>';
+    }
+
+    async function revokeCode(codeId) {
+      if (!confirm("确认作废该兑换码？")) return;
+      try {
+        await Api.admin("/admin/redeem/codes/" + encodeURIComponent(codeId), { method: "DELETE" });
+        toast("兑换码已作废");
+        loadBatches(); /* Refresh full list to collapse all */
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+
+    /* ── Refresh ── */
+    refreshBatchesBtn.addEventListener("click", loadBatches);
+
+    /* ── Logout ── */
+    logoutBtn.addEventListener("click", function () {
+      Auth.logout();
+    });
+
+    /* ── Init ── */
+    async function init() {
+      try {
+        var user = await Auth.init("admin");
+        topbarUser.textContent = user.email || "";
+        loadBatches();
+      } catch (e) {
+        /* Auth.init handles redirect */
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>

@@ -1,0 +1,381 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>模型配置 — AI 智能图片编辑器 · 后台管理</title>
+  <link rel="stylesheet" href="../shared/styles.css" />
+  <style>
+    /* ── Provider list ── */
+    .provider-item {
+      border: 1px solid var(--color-border); border-radius: var(--radius-md); margin-bottom: var(--space-3);
+    }
+    .provider-header {
+      padding: var(--space-3) var(--space-4); display: flex; align-items: center; justify-content: space-between;
+      cursor: pointer; user-select: none; transition: background var(--transition-fast);
+    }
+    .provider-header:hover { background: var(--color-bg); }
+    .provider-header .provider-summary { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
+    .provider-detail {
+      display: none; padding: 0 var(--space-4) var(--space-4); border-top: 1px solid var(--color-border);
+    }
+    .provider-item.open .provider-detail { display: block; }
+    .provider-item.open .provider-header { background: var(--color-bg); }
+
+    /* ── Model row ── */
+    .model-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); gap: var(--space-3); }
+    .model-row:last-child { border-bottom: none; }
+    .model-row .model-info { display: flex; gap: var(--space-3); align-items: center; flex: 1; min-width: 0; }
+
+    /* ── Toggle switch ── */
+    .toggle { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; }
+    .toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: var(--color-border); border-radius: 99px; transition: background var(--transition-fast); }
+    .toggle .slider::before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: transform var(--transition-fast); }
+    .toggle input:checked + .slider { background: var(--color-accent); }
+    .toggle input:checked + .slider::before { transform: translateX(18px); }
+
+    /* ── Add form ── */
+    .add-provider-form { margin-bottom: var(--space-6); }
+    .form-row { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: flex-end; margin-bottom: var(--space-3); }
+    .form-row .field { min-width: 140px; flex: 1; }
+
+    /* ── Default models ── */
+    .default-row { display: flex; gap: var(--space-3); align-items: flex-end; flex-wrap: wrap; margin-bottom: var(--space-4); }
+    .default-row .field { min-width: 200px; flex: 1; }
+
+    /* ── Misc ── */
+    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: var(--space-2); }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .empty-state { text-align: center; padding: var(--space-6); color: var(--color-text-muted); }
+    .section-title { margin-bottom: var(--space-3); }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <!-- Sidebar -->
+    <aside class="shell-sidebar">
+      <div class="sidebar-brand">AI Image Studio</div>
+      <nav class="sidebar-nav">
+        <a href="../admin/index.html">首页</a>
+        <a href="users.html">用户管理</a>
+        <a href="models.html" class="active">模型配置</a>
+        <a href="prompts.html">提示词配置</a>
+        <a href="./factory.html">提示词工厂</a>
+        <a href="redeem.html">兑换码</a>
+        <a href="logs.html">生成记录</a>
+      </nav>
+      <div class="sidebar-footer">
+        <span>B端管理台</span>
+      </div>
+    </aside>
+
+    <!-- Main -->
+    <div class="shell-main">
+      <header class="shell-topbar">
+        <h2 style="font-size:var(--font-size-lg);">模型配置</h2>
+        <div class="flex items-center gap-4">
+          <a href="../index.html" class="btn btn-ghost btn-sm">C端</a>
+        <span id="topbarUser" class="text-sm text-secondary"></span>
+          <button class="btn btn-ghost btn-sm" id="logoutBtn" type="button">退出</button>
+        </div>
+      </header>
+
+      <section class="shell-content">
+        <!-- Default model selection -->
+        <div class="card" style="margin-bottom:var(--space-6);">
+          <h3 class="section-title">默认模型</h3>
+          <div class="default-row">
+            <label class="field">
+              <span>默认图片模型</span>
+              <select class="input" id="defaultImageModel"></select>
+            </label>
+            <label class="field">
+              <span>默认视频模型</span>
+              <select class="input" id="defaultVideoModel"></select>
+            </label>
+          </div>
+          <button class="btn btn-primary" id="saveDefaultsBtn" type="button">保存默认模型</button>
+        </div>
+
+        <!-- Add provider -->
+        <div class="card add-provider-form">
+          <h3 class="section-title">添加模型供应商</h3>
+          <div class="form-row">
+            <label class="field">
+              <span>名称</span>
+              <input class="input" id="newProviderName" type="text" placeholder="如: OpenAI" />
+            </label>
+            <label class="field">
+              <span>类型</span>
+              <select class="input" id="newProviderType">
+                <option value="openai_image">OpenAI Compatible</option>
+                <option value="aokapi_gemini">AOKAPI / Gemini</option>
+                <option value="muskapis_image">Muskapis Image</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>Base URL</span>
+              <input class="input" id="newProviderUrl" type="text" placeholder="https://api.openai.com/v1" />
+            </label>
+            <button class="btn btn-primary" id="addProviderBtn" type="button" style="margin-bottom:1px;">添加</button>
+          </div>
+        </div>
+
+        <!-- Provider list -->
+        <div class="card">
+          <div class="flex items-center justify-between" style="margin-bottom:var(--space-4);">
+            <h3 class="section-title" style="margin:0;">模型供应商</h3>
+            <button class="btn btn-ghost btn-sm" id="refreshBtn" type="button">刷新</button>
+          </div>
+          <div id="providerList">
+            <div class="empty-state"><span class="spinner"></span>加载中…</div>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
+
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+  <script src="../shared/auth.js"></script>
+  <script src="../shared/api.js"></script>
+
+  <script>
+    "use strict";
+
+    /* ── Elements ── */
+    var topbarUser = document.getElementById("topbarUser");
+    var logoutBtn = document.getElementById("logoutBtn");
+    var toastEl = document.getElementById("toast");
+    var providerList = document.getElementById("providerList");
+    var defaultImageModel = document.getElementById("defaultImageModel");
+    var defaultVideoModel = document.getElementById("defaultVideoModel");
+    var saveDefaultsBtn = document.getElementById("saveDefaultsBtn");
+    var newProviderName = document.getElementById("newProviderName");
+    var newProviderType = document.getElementById("newProviderType");
+    var newProviderUrl = document.getElementById("newProviderUrl");
+    var addProviderBtn = document.getElementById("addProviderBtn");
+    var refreshBtn = document.getElementById("refreshBtn");
+
+    /* State */
+    var config = null; /* { modelProviders, defaultImageModelId, defaultVideoModelId } */
+
+    /* ── Toast ── */
+    function toast(msg, isError) {
+      toastEl.textContent = msg;
+      toastEl.classList.toggle("error", !!isError);
+      toastEl.classList.add("active");
+      clearTimeout(toastEl._t);
+      toastEl._t = setTimeout(function () { toastEl.classList.remove("active"); }, 3000);
+    }
+
+    function escapeHtml(s) {
+      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+    }
+
+    /* ── Load config ── */
+    async function loadConfig() {
+      providerList.innerHTML = '<div class="empty-state"><span class="spinner"></span>加载中…</div>';
+      try {
+        var data = await Api.admin("/admin/model-config");
+        config = data.modelConfig || {};
+        renderProviders(config.modelProviders || []);
+        populateDefaultSelects(config.modelProviders || [], config.defaultImageModelId || "", config.defaultVideoModelId || "");
+      } catch (e) {
+        if (!e.authFailure) {
+          providerList.innerHTML = '<div class="empty-state">加载失败: ' + escapeHtml(e.message) + '</div>';
+          toast(e.message, true);
+        }
+      }
+    }
+
+    function populateDefaultSelects(providers, defImageId, defVideoId) {
+      var allModels = [];
+      providers.forEach(function (p) {
+        (p.models || []).forEach(function (m) {
+          allModels.push({ id: m.id, name: (p.name || "") + " / " + (m.modelName || m.id), kind: m.modelKind || "image" });
+        });
+      });
+
+      var opts = '<option value="">-- 不设置 --</option>'
+        + allModels.map(function (m) {
+          return '<option value="' + m.id + '">' + escapeHtml(m.name) + ' (' + m.kind + ')</option>';
+        }).join("");
+
+      defaultImageModel.innerHTML = opts;
+      defaultVideoModel.innerHTML = opts;
+      defaultImageModel.value = defImageId || "";
+      defaultVideoModel.value = defVideoId || "";
+    }
+
+    function renderProviders(providers) {
+      if (!providers.length) {
+        providerList.innerHTML = '<div class="empty-state">暂无模型供应商</div>';
+        return;
+      }
+
+      providerList.innerHTML = providers.map(function (p) {
+        var enabled = p.enabled;
+        var typeLabel = p.providerTypeLabel || p.providerType || "";
+        var baseUrl = p.baseUrl || "";
+        var models = p.models || [];
+
+        var modelRows = models.map(function (m) {
+          var mEnabled = m.enabled;
+          var kindBadge = (m.modelKind === "video")
+            ? '<span class="badge badge-warning">视频</span>'
+            : '<span class="badge badge-neutral">图片</span>';
+
+          return '<div class="model-row">'
+            + '<div class="model-info">'
+            + '<span class="font-medium">' + escapeHtml(m.modelName || m.id) + '</span>'
+            + kindBadge
+            + '<span class="text-sm text-muted">优先级: ' + (m.priority || 100) + '</span>'
+            + '</div>'
+            + '<div class="flex items-center gap-3">'
+            + '<label class="toggle">'
+            + '<input type="checkbox" ' + (mEnabled ? 'checked' : '') + ' data-action="toggleModel" data-model-id="' + m.id + '" data-provider-id="' + p.id + '" />'
+            + '<span class="slider"></span>'
+            + '</label>'
+            + '<span class="text-sm text-muted" style="min-width:32px;">' + (mEnabled ? '启用' : '禁用') + '</span>'
+            + '</div>'
+            + '</div>';
+        }).join("");
+
+        return '<div class="provider-item' + (enabled ? '' : '') + '" data-provider-id="' + p.id + '">'
+          + '<div class="provider-header" data-action="toggle">'
+          + '<div class="provider-summary">'
+          + '<span class="font-semibold">' + escapeHtml(p.name || p.id) + '</span>'
+          + '<span class="badge badge-neutral">' + escapeHtml(typeLabel) + '</span>'
+          + '<span class="text-sm text-muted">' + escapeHtml(baseUrl) + '</span>'
+          + '<span class="text-sm text-muted">' + models.length + ' 模型</span>'
+          + '</div>'
+          + '<div class="flex items-center gap-3">'
+          + '<label class="toggle">'
+          + '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' data-action="toggleProvider" data-provider-id="' + p.id + '" />'
+          + '<span class="slider"></span>'
+          + '</label>'
+          + '<span class="text-sm text-muted">▶</span>'
+          + '</div>'
+          + '</div>'
+          + '<div class="provider-detail">'
+          + (modelRows || '<div class="empty-state">暂无模型</div>')
+          + '</div>'
+          + '</div>';
+      }).join("");
+    }
+
+    /* ── Toggle provider detail ── */
+    providerList.addEventListener("click", function (e) {
+      var header = e.target.closest(".provider-header");
+      if (header) {
+        var item = header.closest(".provider-item");
+        item.classList.toggle("open");
+      }
+
+      /* Toggle provider enabled */
+      var toggleInput = e.target.closest('input[data-action="toggleProvider"]');
+      if (toggleInput) {
+        e.stopPropagation();
+        var providerId = toggleInput.getAttribute("data-provider-id");
+        var enabled = toggleInput.checked;
+        updateProviderEnabled(providerId, enabled);
+      }
+
+      /* Toggle model enabled */
+      var modelToggle = e.target.closest('input[data-action="toggleModel"]');
+      if (modelToggle) {
+        e.stopPropagation();
+        var modelId = modelToggle.getAttribute("data-model-id");
+        var providerId = modelToggle.getAttribute("data-provider-id");
+        var enabled = modelToggle.checked;
+        updateModelEnabled(providerId, modelId, enabled);
+      }
+    });
+
+    function updateProviderEnabled(providerId, enabled) {
+      var provider = (config.modelProviders || []).find(function (p) { return p.id === providerId; });
+      if (!provider) return;
+      provider.enabled = enabled;
+      saveConfig();
+    }
+
+    function updateModelEnabled(providerId, modelId, enabled) {
+      var provider = (config.modelProviders || []).find(function (p) { return p.id === providerId; });
+      if (!provider) return;
+      var model = (provider.models || []).find(function (m) { return m.id === modelId; });
+      if (!model) return;
+      model.enabled = enabled;
+      saveConfig();
+    }
+
+    /* ── Add provider ── */
+    addProviderBtn.addEventListener("click", function () {
+      var name = newProviderName.value.trim();
+      var type = newProviderType.value;
+      var url = newProviderUrl.value.trim();
+
+      if (!name) { toast("请输入供应商名称", true); return; }
+      if (!url) { toast("请输入 Base URL", true); return; }
+
+      var newId = "prov_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
+      var newProvider = {
+        id: newId,
+        name: name,
+        providerType: type,
+        baseUrl: url,
+        enabled: true,
+        models: []
+      };
+
+      config.modelProviders = config.modelProviders || [];
+      config.modelProviders.push(newProvider);
+      saveConfig();
+      newProviderName.value = "";
+      newProviderUrl.value = "";
+    });
+
+    /* ── Save config ── */
+    async function saveConfig() {
+      try {
+        await Api.admin("/admin/model-config", {
+          method: "PUT",
+          body: {
+            modelProviders: config.modelProviders || [],
+            defaultImageModelId: defaultImageModel.value,
+            defaultVideoModelId: defaultVideoModel.value
+          }
+        });
+        toast("配置已保存");
+        loadConfig(); /* Reload to get fresh state */
+      } catch (e) {
+        toast(e.message, true);
+      }
+    }
+
+    saveDefaultsBtn.addEventListener("click", saveConfig);
+
+    /* ── Refresh ── */
+    refreshBtn.addEventListener("click", loadConfig);
+
+    /* ── Logout ── */
+    logoutBtn.addEventListener("click", function () {
+      Auth.logout();
+    });
+
+    /* ── Init ── */
+    async function init() {
+      try {
+        var user = await Auth.init("admin");
+        topbarUser.textContent = user.email || "";
+        loadConfig();
+      } catch (e) {
+        /* Auth.init handles redirect */
+      }
+    }
+
+    init();
+  </script>
+</body>
+</html>
