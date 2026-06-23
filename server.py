@@ -3259,7 +3259,19 @@ class Handler(SimpleHTTPRequestHandler):
                 """,
                 (user["id"], limit),
             ).fetchall()
-        self.json_response({"assets": [row_generated_asset(row) for row in rows]})
+            # Load display names
+            display_map = {}
+            for mrow in conn.execute("SELECT model_name, display_name FROM provider_models WHERE display_name<>''").fetchall():
+                if mrow["model_name"]:
+                    display_map[mrow["model_name"]] = mrow["display_name"]
+        assets = []
+        for row in rows:
+            asset = row_generated_asset(row)
+            dn = display_map.get(asset.get("model", ""))
+            if dn:
+                asset["model"] = dn
+            assets.append(asset)
+        self.json_response({"assets": assets})
 
     def handle_delete_generated_asset(self, asset_id: str) -> None:
         """DELETE /api/generated-assets/<id>"""

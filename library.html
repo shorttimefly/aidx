@@ -81,10 +81,12 @@
     e.preventDefault();
     if (!confirm("确定删除此素材？")) return;
     try {
-      await Api.fetch("/generated-assets/" + id, { method: "DELETE" });
-      var card = e.target.closest(".asset-card");
-      if (!card) card = document.querySelector('.asset-card [onclick*="' + id + '"]')?.closest(".asset-card");
-      if (card) { card.style.opacity = "0"; setTimeout(function() { card.remove(); }, 200); }
+      var resp = await fetch(appRoute("/api/generated-assets/" + id), { 
+        method: "DELETE",
+        headers: { "Authorization": "Bearer " + Auth.token }
+      });
+      if (!resp.ok) throw new Error("删除失败");
+      location.reload();
     } catch(err) { 
       alert("删除失败: " + err.message); 
     }
