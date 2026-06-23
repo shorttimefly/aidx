@@ -17,7 +17,7 @@
     .modal-overlay.open { display: flex; }
     .modal-box { background: var(--color-surface); border-radius: var(--radius-xl); width: 90%; max-width: 720px; max-height: 85vh; overflow-y: auto; padding: var(--space-6); }
     .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
-    .model-edit-row { display: grid; grid-template-columns: 1.5fr 1fr 0.8fr 0.6fr 40px; gap: var(--space-2); align-items: end; margin-bottom: var(--space-2); }
+    .model-edit-row { display: grid; grid-template-columns: 1.5fr 1.2fr 0.8fr 1fr 40px; gap: var(--space-2); align-items: end; margin-bottom: var(--space-2); }
     .model-edit-row .btn { padding: 0.25rem 0.5rem; font-size: var(--font-size-xs); }
   </style>
 </head>
@@ -68,8 +68,11 @@
           <div class="field-row" style="margin-bottom:var(--space-4)">
             <label class="field"><span>供应商名称</span><input class="input" id="provName" /></label>
             <label class="field"><span>Base URL</span><input class="input" id="provUrl" /></label>
-            <label class="field"><span>Token / API Key</span><input class="input" id="provKey" type="password" /></label>
-            <label class="field"><span>供应商类型</span><input class="input" id="provType" readonly /></label>
+            <label class="field" style="grid-column:span 2"><span>Token / API Key</span><input class="input" id="provKey" type="password" /></label>
+          </div>
+          <div class="field-row" style="margin-bottom:var(--space-4)">
+            <label class="field"><span>默认图片模型</span><select class="input" id="defaultImageModel"></select></label>
+            <label class="field"><span>默认视频模型</span><select class="input" id="defaultVideoModel"></select></label>
           </div>
 
           <div class="flex items-center justify-between" style="margin-bottom:var(--space-2)">
@@ -150,9 +153,18 @@ function openModal(providerId) {
   document.getElementById("provName").value = p.name||'';
   document.getElementById("provUrl").value = p.baseUrl||'';
   document.getElementById("provKey").value = p.apiKey||'';
-  document.getElementById("provType").value = p.providerTypeLabel||p.providerType||'';
+  document.getElementById("provKey").placeholder = p.apiKey ? ('sk-****' + (p.apiKey.length > 8 ? p.apiKey.slice(-4) : '')) : '输入 API Key';
   window._editModels = (p.models||[]).map(function(m){return JSON.parse(JSON.stringify(m));});
   renderModelRows();
+  // Populate default model selectors
+  var allModels = [];
+  (config.modelProviders||[]).forEach(function(pp) { (pp.models||[]).forEach(function(mm) { allModels.push({id:mm.id, name:mm.displayName||mm.modelName||mm.id, kind:mm.modelKind||'image'}); }); });
+  var imgOpts = allModels.filter(function(m){return m.kind!=='video';}).map(function(m){return '<option value="'+m.id+'">'+esc(m.name)+'</option>';}).join('');
+  var vidOpts = allModels.filter(function(m){return m.kind==='video';}).map(function(m){return '<option value="'+m.id+'">'+esc(m.name)+'</option>';}).join('');
+  document.getElementById("defaultImageModel").innerHTML = '<option value="">-- 默认 --</option>'+imgOpts;
+  document.getElementById("defaultVideoModel").innerHTML = '<option value="">-- 默认 --</option>'+vidOpts;
+  document.getElementById("defaultImageModel").value = config.defaultImageModelId||"";
+  document.getElementById("defaultVideoModel").value = config.defaultVideoModelId||"";
   document.getElementById("editModal").classList.add("open");
 }
 
@@ -162,7 +174,7 @@ function renderModelRows() {
       + '<input class="input" value="'+escAttr(m.modelName||'')+'" placeholder="模型原名" data-idx="'+i+'" data-field="modelName" />'
       + '<input class="input" value="'+escAttr(m.displayName||'')+'" placeholder="展示名" data-idx="'+i+'" data-field="displayName" />'
       + '<select class="input" data-idx="'+i+'" data-field="modelKind"><option value="image" '+(m.modelKind!=='video'?'selected':'')+'>图片</option><option value="video" '+(m.modelKind==='video'?'selected':'')+'>视频</option></select>'
-      + '<input class="input" type="number" value="'+(m.priority||100)+'" placeholder="优先级" data-idx="'+i+'" data-field="priority" style="width:60px" />'
+      + '<input class="input" type="number" value="'+(m.priority||100)+'" placeholder="优先级(数字越小越优先)" data-idx="'+i+'" data-field="priority" />'
       + '<button class="btn btn-ghost btn-sm" onclick="deleteModelRow('+i+')" style="color:var(--color-error)">✕</button>'
       + '</div>';
   }).join("");
@@ -195,6 +207,8 @@ async function saveModal() {
     if (window._editModels[i]) window._editModels[i][field] = field==='priority' ? parseInt(inp.value)||100 : inp.value;
   });
   p.models = window._editModels || [];
+  config.defaultImageModelId = document.getElementById("defaultImageModel").value;
+  config.defaultVideoModelId = document.getElementById("defaultVideoModel").value;
 
   await saveConfig();
   closeModal();
