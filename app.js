@@ -729,24 +729,32 @@ function rememberSingleScenarioSelection() {
 
 function renderTemplateFilterOptions() {
   if (!els.platformSelect || !els.categorySelect || !els.scenarioSelect) return;
-  const selection = syncSingleSelectionState({ preferRememberedScenario: true });
-  const platforms = singlePlatforms();
+  const matrix = singleMatrix();
+  const platforms = matrix.platforms || [];
   els.platformSelect.innerHTML = platforms
-    .map((platform) => `<option value="${escapeAttr(platform.id)}">${escapeHtml(platform.label)}</option>`)
+    .map((p) => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.label)}</option>`)
     .join("");
-  if (selection.platform) els.platformSelect.value = selection.platform.id;
 
-  const categories = selection.platform?.categories || [];
+  const selPlatform = platforms.find((p) => p.id === state.selectedPlatformId) || platforms[0] || null;
+  if (selPlatform) els.platformSelect.value = selPlatform.id;
+
+  const categories = selPlatform?.categories || [];
   els.categorySelect.innerHTML = categories
-    .map((category) => `<option value="${escapeAttr(category.id)}">${escapeHtml(category.label)}</option>`)
+    .map((c) => `<option value="${escapeAttr(c.id)}">${escapeHtml(c.label)}</option>`)
     .join("");
-  if (selection.category) els.categorySelect.value = selection.category.id;
+  if (categories.length) els.categorySelect.disabled = false;
 
-  const scenarios = selection.category?.scenarios || [];
+  const selCategory = categories.find((c) => c.id === state.selectedCategoryId) || categories[0] || null;
+  if (selCategory) els.categorySelect.value = selCategory.id;
+
+  const scenarios = selCategory?.scenarios || [];
   els.scenarioSelect.innerHTML = scenarios
-    .map((scenario) => `<option value="${escapeAttr(scenario.id)}">${escapeHtml(scenario.title)}</option>`)
+    .map((s) => `<option value="${escapeAttr(s.id)}">${escapeHtml(s.title)}</option>`)
     .join("");
-  if (selection.scenario) els.scenarioSelect.value = selection.scenario.id;
+  if (scenarios.length) els.scenarioSelect.disabled = false;
+
+  const selScenario = scenarios.find((s) => s.id === state.selectedScenarioId) || scenarios[0] || null;
+  if (selScenario) els.scenarioSelect.value = selScenario.id;
 }
 
 function renderSuiteSelectOptions() {
