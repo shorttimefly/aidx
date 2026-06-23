@@ -88,6 +88,7 @@
       aspect-ratio: 1; background: var(--color-bg); border-radius: var(--radius-md);
       animation: pulse 1.2s ease-in-out infinite;
     }
+    .generate-timer { text-align: center; padding: var(--space-12) var(--space-6); color: var(--color-text-muted); }
   </style>
 </head>
 <body>
@@ -479,7 +480,19 @@
     state.generating = true;
     els.generateBtn.disabled = true;
     els.generateBtn.textContent = "生成中…";
-    renderLoadingGrid(count);
+
+    // Timer display
+    var startTime = Date.now();
+    var timerEl = document.createElement("div");
+    timerEl.className = "generate-timer";
+    timerEl.innerHTML = '生图预计要2分钟左右，请耐心等待<br/><span style="font-size:var(--font-size-2xl);font-weight:var(--font-weight-bold);color:var(--color-accent)" id="genTimer">0</span><span class="text-muted"> 秒</span>';
+    els.resultGrid.innerHTML = "";
+    els.resultGrid.appendChild(timerEl);
+    var timerInterval = setInterval(function() {
+      var elapsed = Math.floor((Date.now() - startTime) / 1000);
+      var el = document.getElementById("genTimer");
+      if (el) el.textContent = elapsed;
+    }, 1000);
 
     try {
       const payload = await Api.post("/generate", {
@@ -496,8 +509,10 @@
       }
 
       const images = payload.images || [];
+      clearInterval(timerInterval);
       renderResults(images, templateId);
       showToast("已生成 " + images.length + " 张图片");
+      clearInterval(timerInterval);
     } catch (err) {
       if (err.status === 429) {
         // Credit insufficient
