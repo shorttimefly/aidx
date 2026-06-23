@@ -69,11 +69,25 @@
         + '<div class="flex gap-2" style="margin-top:4px">'
         + '<a class="btn btn-ghost btn-sm" href="#" onclick="downloadAsset(event,\'' + escAttr(url) + '\',\'' + escAttr(name) + '\')">下载</a>'
         + '<a class="btn btn-ghost btn-sm" href="./edit.html?url=' + encodeURIComponent(url) + '">编辑</a>'
+        + '<a class="btn btn-ghost btn-sm" href="#" onclick="deleteAsset(event,\'' + escAttr(a.id) + '\')" style="color:var(--color-error)">删除</a>'
         + '</div></div></div>';
     }).join("");
   } catch(e) {
     document.getElementById("empty").innerHTML = "加载失败: " + esc(e.message);
     document.getElementById("empty").style.display = "block";
+  }
+
+  async function deleteAsset(e, id) {
+    e.preventDefault();
+    if (!confirm("确定删除此素材？")) return;
+    try {
+      await Api.fetch("/generated-assets/" + id, { method: "DELETE" });
+      // Remove from DOM
+      var card = e.target.closest(".asset-card");
+      if (card) card.remove();
+    } catch(err) { 
+      alert("删除失败: " + err.message); 
+    }
   }
 
   function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }

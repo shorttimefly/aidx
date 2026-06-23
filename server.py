@@ -2552,6 +2552,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_generate()
             if path == "/api/generated-assets" and method == "GET":
                 return self.handle_generated_assets(parsed.query)
+            if path.startswith("/api/generated-assets/") and method == "DELETE":
+                asset_id = unquote(path.removeprefix("/api/generated-assets/"))
+                return self.handle_delete_generated_asset(asset_id)
             if path == "/api/generation-logs" and method == "POST":
                 return self.handle_create_generation_log()
             if path == "/api/image-feedback" and method == "POST":
@@ -3257,6 +3260,18 @@ class Handler(SimpleHTTPRequestHandler):
                 (user["id"], limit),
             ).fetchall()
         self.json_response({"assets": [row_generated_asset(row) for row in rows]})
+
+    def handle_delete_generated_asset(self, asset_id: str) -> None:
+        """DELETE /api/generated-assets/<id>"""
+        user = self.require_user()
+        with connect() as conn:
+            result = conn.execute(
+                "DELETE FROM generated_assets WHERE id=? AND user_id=?",
+                (asset_id, user["id"]),
+            )
+            if result.rowcount == 0:
+                raise AppError(HTTPStatus.NOT_FOUND, "资产不存在或无权删除")
+        self.json_response({"ok": True})
 
     def handle_create_generation_log(self) -> None:
         user = self.require_user()
