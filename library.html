@@ -79,6 +79,7 @@
 
   async function deleteAsset(e, id) {
     e.preventDefault();
+    alert("deleteAsset called, id=" + id);
     if (!confirm("确定删除此素材？")) return;
     try {
       var resp = await fetch(appRoute("/api/generated-assets/" + id), { 
