@@ -2585,6 +2585,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_admin_revoke_redeem_code(code_id)
             if path == "/api/admin/logs" and method == "GET":
                 return self.handle_admin_logs(parsed.query)
+            if path.startswith("/api/admin/logs/") and method == "GET":
+                log_id = unquote(path.removeprefix("/api/admin/logs/"))
+                return self.handle_admin_log_detail(log_id)
             if path == "/api/admin/feedback" and method == "GET":
                 return self.handle_admin_feedback(parsed.query)
             if path == "/api/admin/downvotes" and method == "GET":
@@ -3944,6 +3947,44 @@ class Handler(SimpleHTTPRequestHandler):
                 }
             )
         self.json_response({"logs": logs})
+
+    def handle_admin_log_detail(self, log_id: str) -> None:
+        """GET /api/admin/logs/<id>"""
+        self.require_admin()
+        with connect() as conn:
+            log = conn.execute(
+                "SELECT * FROM generation_logs WHERE id=?", (log_id,)
+            ).fetchone()
+            if not log:
+                raise AppError(HTTPStatus.NOT_FOUND, "记录不存在")
+            assets = conn.execute(
+                "SELECT * FROM generated_assets WHERE log_id=? ORDER BY created_at DESC", (log_id,)
+            ).fetchall()
+        self.json_response({
+            "log": {
+                "id": log["id"],
+                "model": log["model"],
+                "prompt": log["prompt"],
+                "size": log["size"],
+                "count": log["count"],
+                "imageCount": log["image_count"],
+                "status": log["status"],
+                "error": log["error"],
+                "requestBody": parse_json_field(log["request_json"]),
+                "durationMs": log["duration_ms"],
+                "createdAt": log["created_at"],
+            },
+            "assets": [
+                {
+                    "id": a["id"],
+                    "url": a["image_url"],
+                    "name": a["name"],
+                    "model": a["model"],
+                    "size": a["size"],
+                }
+                for a in assets
+            ]
+        })
 
     def handle_admin_feedback(self, query: str) -> None:
         self.require_admin()
