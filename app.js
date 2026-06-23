@@ -730,6 +730,7 @@ function rememberSingleScenarioSelection() {
 function renderTemplateFilterOptions() {
   if (!els.platformSelect || !els.categorySelect || !els.scenarioSelect) return;
   const matrix = singleMatrix();
+  console.log("[FILTER] matrix platforms:", (matrix.platforms || []).length);
   const platforms = matrix.platforms || [];
   els.platformSelect.innerHTML = platforms
     .map((p) => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.label)}</option>`)
@@ -739,6 +740,7 @@ function renderTemplateFilterOptions() {
   if (selPlatform) els.platformSelect.value = selPlatform.id;
 
   const categories = selPlatform?.categories || [];
+  console.log("[FILTER] categories for", selPlatform?.id, ":", categories.length, "sample:", categories[0]?.scenarios?.length || 0);
   els.categorySelect.innerHTML = categories
     .map((c) => `<option value="${escapeAttr(c.id)}">${escapeHtml(c.label)}</option>`)
     .join("");
@@ -748,6 +750,7 @@ function renderTemplateFilterOptions() {
   if (selCategory) els.categorySelect.value = selCategory.id;
 
   const scenarios = selCategory?.scenarios || [];
+  console.log("[FILTER] scenarios for", selCategory?.id, ":", scenarios.length);
   els.scenarioSelect.innerHTML = scenarios
     .map((s) => `<option value="${escapeAttr(s.id)}">${escapeHtml(s.title)}</option>`)
     .join("");
