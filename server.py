@@ -3277,7 +3277,7 @@ class Handler(SimpleHTTPRequestHandler):
         with connect() as conn:
             rows = conn.execute(
                 """
-                SELECT id, log_id, image_url, name, endpoint, model, prompt, size, source, request_json, created_at
+                SELECT id, log_id, image_url, name, endpoint, model, prompt, size, source, request_json, ref_thumbs_json, created_at
                 FROM generated_assets
                 WHERE user_id=?
                 ORDER BY created_at DESC
