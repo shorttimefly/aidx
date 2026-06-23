@@ -4170,7 +4170,7 @@ class Handler(SimpleHTTPRequestHandler):
             asset["chinesePrompt"] = row["chinese_prompt"]
             asset["englishPrompt"] = row["english_prompt"]
             asset["comparison"] = row["comparison"]
-            asset["assetKind"] = row.get("asset_kind") or row["asset_kind"]
+            asset["assetKind"] = row["asset_kind"]
             asset["providerModelId"] = row["provider_model_id"]
             asset["targetPlatformId"] = row["target_platform_id"]
             asset["targetCategoryId"] = row["target_category_id"]
