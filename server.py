@@ -3015,13 +3015,14 @@ class Handler(SimpleHTTPRequestHandler):
                 print(f"[CREDIT] OK uid={user['id'][:12]}... cost={credit_cost} remaining={credits_remaining}", flush=True)
                 cconn.commit()
             last_error = None
-            for attempt_index, option in enumerate(provider_models_to_try, start=1):
-                if not str(option.get("apiKey") or "").strip():
-                    raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置默认模型 Token")
-                model = option["modelName"]
-                provider_type = option["providerType"]
-                resolved_endpoint = resolve_provider_image_endpoint(option, model, references=references)
-                request_body, strategy = build_provider_image_request_body(
+            try:
+                for attempt_index, option in enumerate(provider_models_to_try, start=1):
+                    if not str(option.get("apiKey") or "").strip():
+                        raise AppError(HTTPStatus.FORBIDDEN, "请联系管理员配置默认模型 Token")
+                    model = option["modelName"]
+                    provider_type = option["providerType"]
+                    resolved_endpoint = resolve_provider_image_endpoint(option, model, references=references)
+                    request_body, strategy = build_provider_image_request_body(
                     prompt=prompt,
                     count=count,
                     size=size,
@@ -3135,11 +3136,17 @@ class Handler(SimpleHTTPRequestHandler):
                             refund_credits(rconn, user["id"], credit_cost)
                             rconn.commit()
                         raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {error.status}: {error.message}")
-            if last_error:
+                if last_error:
+                    with connect() as rconn:
+                        refund_credits(rconn, user["id"], credit_cost)
+                        rconn.commit()
+                    raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {last_error.status}: {last_error.message}")
+            except Exception:
+                traceback.print_exc()
                 with connect() as rconn:
                     refund_credits(rconn, user["id"], credit_cost)
                     rconn.commit()
-                raise AppError(HTTPStatus.BAD_GATEWAY, f"远端接口 {last_error.status}: {last_error.message}")
+                raise AppError(HTTPStatus.INTERNAL_SERVER_ERROR, "生成服务异常，积分已退回")
 
         api_key = str(row["api_key"] if row else "").strip()
         if not api_key:
