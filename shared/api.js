@@ -55,6 +55,6 @@ const Api = {
 
   /** B-end API calls (automatic redirect to admin login on auth failure) */
   async admin(path, options = {}) {
-    return this.fetch(path, { ...options, _admin: true });
+    return this.fetch(path.startsWith("/admin/") ? path : "/admin" + path, { ...options, _admin: true });
   }
 };
