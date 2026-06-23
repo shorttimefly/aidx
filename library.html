@@ -35,7 +35,6 @@
         <button class="btn btn-ghost btn-sm" onclick="Auth.logout()">退出</button>
       </div>
     </header>
-
     <main class="shell-content">
       <div id="grid" class="asset-grid"></div>
       <div class="empty" id="empty">暂无素材，去<a href="./index.html">生成图片</a></div>
@@ -47,39 +46,73 @@
 <script src="./shared/auth.js"></script>
 <script src="./shared/api.js"></script>
 <script>
-(async function() {
-  try { await Auth.init("user"); } catch { return; }
-  var u = Auth.user || {};
-  document.getElementById("topbarUser").textContent = u.email || u.name || "";
-  document.getElementById("sidebarCredits").textContent = (u.creditsRemaining || 0) + " 积分";
-  if (Auth.isAdmin) { var al = document.getElementById("adminLink"); if (al) al.style.display = ""; }
+(function() {
+  var grid = document.getElementById("grid");
+  var empty = document.getElementById("empty");
 
-  try {
-    var data = await Api.get("/generated-assets?limit=100");
-    var assets = data.assets || [];
-    if (!assets.length) { document.getElementById("empty").style.display = "block"; return; }
-    document.getElementById("empty").style.display = "none";
-    document.getElementById("grid").innerHTML = assets.map(function(a) {
-      var url = a.image_url || a.url || "";
-      var name = a.name || "未命名";
-      return '<div class="asset-card">'
-        + '<img src="' + escAttr(url) + '" alt="' + escAttr(name) + '" loading="lazy" />'
-        + '<div class="asset-meta"><span class="name">' + esc(name) + '</span>'
-        + (a.model ? '<span>' + esc(a.model) + ' · ' + esc(a.size || "") + (a.refCount ? ' · ' + a.refCount + '张参考图' : '') + '</span>' : '')
-        + '<div class="flex gap-2" style="margin-top:4px">'
-        + '<a class="btn btn-ghost btn-sm" href="#" onclick="downloadAsset(event,\'' + escAttr(url) + '\',\'' + escAttr(name) + '\')">下载</a>'
-        + '<a class="btn btn-ghost btn-sm" href="./edit.html?url=' + encodeURIComponent(url) + '">编辑</a>'
-        + '<a class="btn btn-ghost btn-sm" href="#" onclick="deleteAsset(event,\'' + escAttr(a.id) + '\')" style="color:var(--color-error)">删除</a>'
-        + '</div></div></div>';
-    }).join("");
-  } catch(e) {
-    document.getElementById("empty").innerHTML = "加载失败: " + esc(e.message);
-    document.getElementById("empty").style.display = "block";
+  function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+  function escAttr(s) { return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;"); }
+
+  async function init() {
+    try { await Auth.init("user"); } catch { return; }
+    var u = Auth.user || {};
+    document.getElementById("topbarUser").textContent = u.email || u.name || "";
+    document.getElementById("sidebarCredits").textContent = (u.creditsRemaining || 0) + " 积分";
+    if (Auth.isAdmin) { var al = document.getElementById("adminLink"); if (al) al.style.display = ""; }
+    await loadAssets();
   }
 
-  async function deleteAsset(e, id) {
-    e.preventDefault();
-    alert("deleteAsset called, id=" + id);
+  async function loadAssets() {
+    try {
+      var data = await Api.get("/generated-assets?limit=100");
+      var assets = data.assets || [];
+      if (!assets.length) { empty.style.display = "block"; return; }
+      empty.style.display = "none";
+      grid.innerHTML = assets.map(function(a) {
+        var url = a.image_url || a.url || "";
+        return '<div class="asset-card">'
+          + '<img src="' + escAttr(url) + '" alt="' + escAttr(a.name||"") + '" loading="lazy" />'
+          + '<div class="asset-meta"><span class="name">' + esc(a.name||"未命名") + '</span>'
+          + (a.model ? '<span>' + esc(a.model) + ' · ' + esc(a.size||"") + (a.refCount?" · "+a.refCount+"张参考图":"") + '</span>' : '')
+          + '<div class="flex gap-2" style="margin-top:4px">'
+          + '<button class="btn btn-ghost btn-sm" data-action="download" data-url="' + escAttr(url) + '" data-name="' + escAttr(a.name||"image") + '">下载</button>'
+          + '<a class="btn btn-ghost btn-sm" href="./edit.html?url=' + encodeURIComponent(url) + '">编辑</a>'
+          + '<button class="btn btn-ghost btn-sm" data-action="delete" data-id="' + escAttr(a.id) + '" style="color:var(--color-error)">删除</button>'
+          + '</div></div></div>';
+      }).join("");
+    } catch(e) {
+      empty.innerHTML = "加载失败: " + esc(e.message);
+      empty.style.display = "block";
+    }
+  }
+
+  grid.addEventListener("click", function(e) {
+    var btn = e.target.closest("[data-action]");
+    if (!btn) return;
+    var action = btn.getAttribute("data-action");
+    if (action === "download") {
+      e.preventDefault();
+      downloadAsset(btn.getAttribute("data-url"), btn.getAttribute("data-name"));
+    }
+    if (action === "delete") {
+      e.preventDefault();
+      deleteAsset(btn.getAttribute("data-id"));
+    }
+  });
+
+  async function downloadAsset(url, name) {
+    try {
+      var resp = await fetch(url);
+      if (!resp.ok) throw new Error("fail");
+      var blob = await resp.blob();
+      var blobUrl = URL.createObjectURL(blob);
+      var a = document.createElement("a"); a.href = blobUrl; a.download = (name||"image")+".png";
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function(){ URL.revokeObjectURL(blobUrl); }, 1000);
+    } catch(e) { window.open(url, "_blank"); }
+  }
+
+  async function deleteAsset(id) {
     if (!confirm("确定删除此素材？")) return;
     try {
       var resp = await fetch(appRoute("/api/generated-assets/" + id), { 
@@ -88,32 +121,10 @@
       });
       if (!resp.ok) throw new Error("删除失败");
       location.reload();
-    } catch(err) { 
-      alert("删除失败: " + err.message); 
-    }
+    } catch(e) { alert("删除失败: " + e.message); }
   }
 
-  function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
-  function escAttr(s) { return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;"); }
-
-  async function downloadAsset(e, url, name) {
-    e.preventDefault();
-    try {
-      var resp = await fetch(url);
-      if (!resp.ok) throw new Error("下载失败");
-      var blob = await resp.blob();
-      var blobUrl = URL.createObjectURL(blob);
-      var a = document.createElement("a");
-      a.href = blobUrl;
-      a.download = (name || "image") + ".png";
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      setTimeout(function() { URL.revokeObjectURL(blobUrl); }, 1000);
-    } catch(err) {
-      window.open(url, "_blank");
-    }
-  }
+  init();
 })();
 </script>
 </body>
