@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>二次编辑 - AI Image Studio</title>
+  <link rel="stylesheet" href="./shared/styles.css" />
+  <style>
+    .edit-layout { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-6); }
+    .preview-img { width: 100%; border-radius: var(--radius-lg); border: 1px solid var(--color-border); }
+    .prompt-box { background: var(--color-bg); padding: var(--space-3); border-radius: var(--radius-md); font-size: var(--font-size-sm); line-height: var(--line-height-relaxed); min-height: 60px; white-space: pre-wrap; }
+    .result-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr)); gap: var(--space-4); }
+    .result-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); overflow: hidden; }
+    .result-card img { width: 100%; aspect-ratio: 1; object-fit: cover; }
+    .result-meta { padding: var(--space-2) var(--space-3); font-size: var(--font-size-xs); color: var(--color-text-muted); }
+    @media (max-width: 768px) { .edit-layout { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <aside class="shell-sidebar">
+    <div class="sidebar-brand">AI Image Studio</div>
+    <nav class="sidebar-nav">
+      <a href="./index.html">生成图片</a>
+      <a href="./library.html">素材库</a>
+      <a href="./edit.html" class="active">二次编辑</a>
+    </nav>
+    <div class="sidebar-footer"><span id="sidebarCredits">—</span></div>
+  </aside>
+
+  <div class="shell-main">
+    <header class="shell-topbar">
+      <span class="text-sm text-muted">二次编辑</span>
+      <div class="flex items-center gap-4">
+        <a href="./admin/index.html" class="btn btn-ghost btn-sm" id="adminLink" style="display:none">B端</a>
+        <span id="topbarUser" class="text-sm">—</span>
+        <button class="btn btn-ghost btn-sm" onclick="Auth.logout()">退出</button>
+      </div>
+    </header>
+
+    <main class="shell-content" id="mainContent">
+      <!-- No image selected state -->
+      <div id="noSelection" class="card" style="text-align:center;padding:var(--space-12)">
+        <strong style="display:block;margin-bottom:var(--space-2)">选择一张图片开始编辑</strong>
+        <span class="text-muted">从素材库选择或粘贴图片URL</span>
+        <div style="margin-top:var(--space-4)">
+          <input class="input" id="urlInput" placeholder="粘贴图片URL..." style="max-width:400px;display:inline" />
+          <button class="btn btn-primary btn-sm" onclick="loadFromUrl()">加载</button>
+        </div>
+      </div>
+
+      <!-- Editor (hidden initially) -->
+      <div id="editor" hidden>
+        <div class="edit-layout">
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-3)">原图</h3>
+            <img id="baseImage" class="preview-img" alt="原图" />
+            <div class="text-sm text-muted" style="margin-top:var(--space-2)" id="baseInfo"></div>
+          </div>
+          <div class="card">
+            <h3 style="margin-bottom:var(--space-3)">编辑提示词</h3>
+            <div class="field" style="margin-bottom:var(--space-3)">
+              <span>编辑指令</span>
+              <textarea id="editPrompt" class="input" rows="4" placeholder="例如：把背景改成白色、增加光影效果..."></textarea>
+            </div>
+            <div class="field" style="margin-bottom:var(--space-3)">
+              <span>尺寸</span>
+              <select id="editSize" class="input">
+                <option value="1024x1024">1024x1024</option>
+                <option value="1536x1536">1536x1536</option>
+                <option value="1024x1536">1024x1536</option>
+                <option value="1536x1024">1536x1024</option>
+              </select>
+            </div>
+            <button class="btn btn-primary" id="editBtn" onclick="handleEdit()" style="width:100%">生成微调版本</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:var(--space-6)">
+          <h3 style="margin-bottom:var(--space-3)">生成结果</h3>
+          <div class="result-grid" id="resultGrid">
+            <div class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">点击生成微调版本</div>
+          </div>
+        </div>
+      </div>
+
+      <div id="toast" class="toast"></div>
+    </main>
+  </div>
+</div>
+
+<script src="./shared/auth.js"></script>
+<script src="./shared/api.js"></script>
+<script>
+var selectedImage = null;
+
+async function init() {
+  try { await Auth.init("user"); } catch { return; }
+  var u = Auth.user || {};
+  document.getElementById("topbarUser").textContent = u.email || u.name || "";
+  document.getElementById("sidebarCredits").textContent = (u.creditsRemaining || 0) + " 积分";
+  if (Auth.isAdmin) { var al = document.getElementById("adminLink"); if (al) al.style.display = ""; }
+
+  // Check for image URL from query param
+  var params = new URLSearchParams(window.location.search);
+  var url = params.get("url") || params.get("edit");
+  if (url) { loadImage(decodeURIComponent(url)); }
+}
+
+function loadFromUrl() {
+  var url = document.getElementById("urlInput").value.trim();
+  if (!url) { showToast("请输入图片URL"); return; }
+  loadImage(url);
+}
+
+function loadImage(url) {
+  selectedImage = { url: url, name: "外部图片", size: "1024x1024", prompt: "" };
+  document.getElementById("noSelection").hidden = true;
+  document.getElementById("editor").hidden = false;
+  document.getElementById("baseImage").src = url;
+  document.getElementById("baseInfo").textContent = "外部图片";
+  document.getElementById("editPrompt").value = "";
+  document.getElementById("resultGrid").innerHTML = '<div class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">点击生成微调版本</div>';
+}
+
+if (window.opener || (new URLSearchParams(window.location.search)).get("ref")) {
+  window.addEventListener("message", function(e) {
+    if (e.data && e.data.url) loadImage(e.data.url);
+  });
+}
+
+async function handleEdit() {
+  if (!selectedImage) { showToast("请先选择图片", true); return; }
+  var prompt = document.getElementById("editPrompt").value.trim();
+  if (!prompt) { showToast("请输入编辑指令", true); return; }
+  var credits = Auth.user ? (Auth.user.creditsRemaining || 0) : 0;
+  if (credits < 1) {
+    var modal = parent.document ? parent.showCreditsModal : null;
+    if (typeof showCreditsModal === "function") { showCreditsModal(1, credits); return; }
+    showToast("积分不足", true); return;
+  }
+  var btn = document.getElementById("editBtn");
+  btn.disabled = true; btn.textContent = "生成中...";
+  try {
+    var resp = await Api.post("/generate", {
+      count: 1,
+      size: document.getElementById("editSize").value,
+      prompt: prompt,
+      referenceImages: selectedImage.url ? [{ url: selectedImage.url, name: selectedImage.name || "基图", size: selectedImage.size || "1024x1024" }] : []
+    });
+    var images = resp.images || [];
+    if (!images.length) throw new Error("未返回图片");
+    renderResults(images);
+    showToast("微调版本已生成");
+  } catch(e) { showToast(e.message, true); }
+  finally { btn.disabled = false; btn.textContent = "生成微调版本"; }
+}
+
+function renderResults(images) {
+  document.getElementById("resultGrid").innerHTML = images.map(function(img) {
+    return '<div class="result-card"><img src="' + escAttr(img.url) + '" alt="result" loading="lazy" /><div class="result-meta">微调结果</div></div>';
+  }).join("");
+}
+
+function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function escAttr(s) { return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;"); }
+function showToast(msg, isErr) { var t=document.getElementById("toast"); t.textContent=msg; t.className="toast active"+(isErr?" error":""); clearTimeout(t._t); t._t=setTimeout(function(){t.classList.remove("active")},2600); }
+
+init();
+</script>
+</body>
+</html>

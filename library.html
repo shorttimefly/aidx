@@ -21,6 +21,7 @@
     <nav class="sidebar-nav">
       <a href="./index.html">生成图片</a>
       <a href="./library.html" class="active">素材库</a>
+      <a href="./edit.html">二次编辑</a>
     </nav>
     <div class="sidebar-footer"><span id="sidebarCredits">—</span></div>
   </aside>
@@ -65,7 +66,10 @@
         + '<img src="' + escAttr(url) + '" alt="' + escAttr(name) + '" loading="lazy" />'
         + '<div class="asset-meta"><span class="name">' + esc(name) + '</span>'
         + (a.model ? '<span>' + esc(a.model) + ' · ' + esc(a.size || "") + '</span>' : '')
-        + '</div></div>';
+        + '<div class="flex gap-2" style="margin-top:4px">'
+        + '<a class="btn btn-ghost btn-sm" href="' + escAttr(url) + '" download="' + escAttr(name) + '.png">下载</a>'
+        + '<a class="btn btn-ghost btn-sm" href="./edit.html?url=' + encodeURIComponent(url) + '">编辑</a>'
+        + '</div></div></div>';
     }).join("");
   } catch(e) {
     document.getElementById("empty").innerHTML = "加载失败: " + esc(e.message);
