@@ -172,8 +172,7 @@ function buildDefaultSinglePromptConfig() {
     label: platform.label,
     categories: platform.categories.map((categoryId) => ({
       id: categoryId,
-      label: SINGLE_CATEGORY_LABELS[categoryId] || categoryId,
-      scenarios: []
+      label: SINGLE_CATEGORY_LABELS[categoryId] || categoryId
     }))
   }));
   const defaults = {
