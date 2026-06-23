@@ -1,417 +1,218 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>模型配置 — AI 智能图片编辑器 · 后台管理</title>
+  <title>模型配置 - AI Image Studio B端</title>
   <link rel="stylesheet" href="../shared/styles.css?v=5" />
   <style>
-    /* ── Provider list ── */
-    .provider-item {
-      border: 1px solid var(--color-border); border-radius: var(--radius-md); margin-bottom: var(--space-3);
-    }
-    .provider-header {
-      padding: var(--space-3) var(--space-4); display: flex; align-items: center; justify-content: space-between;
-      cursor: pointer; user-select: none; transition: background var(--transition-fast);
-    }
-    .provider-header:hover { background: var(--color-bg); }
-    .provider-header .provider-summary { display: flex; gap: var(--space-3); align-items: center; flex-wrap: wrap; }
-    .provider-detail {
-      display: none; padding: 0 var(--space-4) var(--space-4); border-top: 1px solid var(--color-border);
-    }
-    .provider-item.open .provider-detail { display: block; }
-    .provider-item.open .provider-header { background: var(--color-bg); }
+    .provider-card { background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-lg); padding: var(--space-4); margin-bottom: var(--space-3); }
+    .provider-header { display: flex; align-items: center; justify-content: space-between; }
+    .provider-meta { font-size: var(--font-size-xs); color: var(--color-text-muted); margin-top: var(--space-1); }
+    .model-table { width: 100%; margin-top: var(--space-3); font-size: var(--font-size-xs); }
+    .model-table th, .model-table td { padding: var(--space-1) var(--space-2); text-align: left; border-bottom: 1px solid var(--color-border); }
+    .model-table th { color: var(--color-text-muted); font-weight: var(--font-weight-medium); }
 
-    /* ── Model row ── */
-    .model-row { display: flex; align-items: center; justify-content: space-between; padding: var(--space-2) 0; border-bottom: 1px solid var(--color-border); gap: var(--space-3); }
-    .model-row:last-child { border-bottom: none; }
-    .model-row .model-info { display: flex; gap: var(--space-3); align-items: center; flex: 1; min-width: 0; }
-
-    /* ── Toggle switch ── */
-    .toggle { position: relative; display: inline-block; width: 40px; height: 22px; flex-shrink: 0; }
-    .toggle input { opacity: 0; width: 0; height: 0; }
-    .toggle .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background: var(--color-border); border-radius: 99px; transition: background var(--transition-fast); }
-    .toggle .slider::before { content: ""; position: absolute; height: 16px; width: 16px; left: 3px; bottom: 3px; background: #fff; border-radius: 50%; transition: transform var(--transition-fast); }
-    .toggle input:checked + .slider { background: var(--color-accent); }
-    .toggle input:checked + .slider::before { transform: translateX(18px); }
-
-    /* ── Add form ── */
-    .add-provider-form { margin-bottom: var(--space-6); }
-    .form-row { display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: flex-end; margin-bottom: var(--space-3); }
-    .form-row .field { min-width: 140px; flex: 1; }
-
-    /* ── Default models ── */
-    .default-row { display: flex; gap: var(--space-3); align-items: flex-end; flex-wrap: wrap; margin-bottom: var(--space-4); }
-    .default-row .field { min-width: 200px; flex: 1; }
-
-    /* ── Misc ── */
-    .spinner { display: inline-block; width: 18px; height: 18px; border: 2px solid var(--color-border); border-top-color: var(--color-accent); border-radius: 50%; animation: spin 0.6s linear infinite; vertical-align: middle; margin-right: var(--space-2); }
-    @keyframes spin { to { transform: rotate(360deg); } }
-    .empty-state { text-align: center; padding: var(--space-6); color: var(--color-text-muted); }
-    .section-title { margin-bottom: var(--space-3); }
+    .modal-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 100; align-items: flex-start; justify-content: center; padding-top: 5vh; }
+    .modal-overlay.open { display: flex; }
+    .modal-box { background: var(--color-surface); border-radius: var(--radius-xl); width: 90%; max-width: 720px; max-height: 85vh; overflow-y: auto; padding: var(--space-6); }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--space-3); }
+    .model-edit-row { display: grid; grid-template-columns: 1.5fr 1fr 0.8fr 0.6fr 40px; gap: var(--space-2); align-items: end; margin-bottom: var(--space-2); }
+    .model-edit-row .btn { padding: 0.25rem 0.5rem; font-size: var(--font-size-xs); }
   </style>
 </head>
 <body>
-  <div class="shell">
-    <!-- Sidebar -->
-    <aside class="shell-sidebar">
-      <div class="sidebar-brand">AI Image Studio</div>
-      <nav class="sidebar-nav">
-          <a href="./index.html" >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> 首页
-          </a>
-          <a href="./users.html">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> 用户管理
-          </a>
-          <a href="./models.html" class="active">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg> 模型配置
-          </a>
-          <a href="./prompts.html">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/></svg> 提示词配置
-          </a>
-          <a href="./factory.html">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg> 提示词工厂
-          </a>
-          <a href="./redeem.html">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg> 兑换码
-          </a>
-          <a href="./logs.html">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> 生成记录
-          </a>
-        </nav>
-      <div class="sidebar-footer">
-        <span>B端管理台</span>
+<div class="shell">
+  <aside class="shell-sidebar">
+    <div class="sidebar-brand">AI Image Studio B端</div>
+    <nav class="sidebar-nav">
+      <a href="./index.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><polyline points="9 22 9 12 15 12 15 22"/></svg> 首页</a>
+      <a href="./users.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg> 用户管理</a>
+      <a href="./models.html" class="active"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 1v2M12 21v2M4.22 4.22l1.42 1.42M18.36 18.36l1.42 1.42M1 12h2M21 12h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/></svg> 模型配置</a>
+      <a href="./prompts.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/><line x1="12" y1="22" x2="12" y2="15.5"/><polyline points="22 8.5 12 15.5 2 8.5"/></svg> 提示词配置</a>
+      <a href="./factory.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2" ry="2"/><path d="M16 7V5a2 2 0 0 0-4 0v2"/></svg> 提示词工厂</a>
+      <a href="./redeem.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 12 20 22 4 22 4 12"/><rect x="2" y="7" width="20" height="5"/><line x1="12" y1="22" x2="12" y2="7"/><path d="M12 7H7.5a2.5 2.5 0 0 1 0-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 0 0 0-5C13 2 12 7 12 7z"/></svg> 兑换码</a>
+      <a href="./logs.html"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/></svg> 生成记录</a>
+    </nav>
+    <div class="sidebar-footer" id="sidebarUser"></div>
+  </aside>
+
+  <div class="shell-main">
+    <header class="shell-topbar">
+      <span class="font-medium">模型配置</span>
+      <div class="flex items-center gap-4">
+        <a href="../index.html" class="btn btn-ghost btn-sm">C端</a>
+        <span class="text-sm text-secondary" id="topbarUser"></span>
+        <button class="btn btn-ghost btn-sm" onclick="Auth.logout()">退出</button>
       </div>
-    </aside>
+    </header>
 
-    <!-- Main -->
-    <div class="shell-main">
-      <header class="shell-topbar">
-        <h2 style="font-size:var(--font-size-lg);">模型配置</h2>
-        <div class="flex items-center gap-4">
-          <a href="../index.html" class="btn btn-ghost btn-sm">C端</a>
-        <span id="topbarUser" class="text-sm text-secondary"></span>
-          <button class="btn btn-ghost btn-sm" id="logoutBtn" type="button">退出</button>
+    <main class="shell-content">
+      <div class="flex items-center justify-between" style="margin-bottom:var(--space-4)">
+        <h3>模型供应商</h3>
+        <div class="flex gap-2">
+          <button class="btn btn-primary btn-sm" id="addProviderBtn">添加供应商</button>
+          <button class="btn btn-ghost btn-sm" id="refreshBtn">刷新</button>
         </div>
-      </header>
+      </div>
 
-      <section class="shell-content">
-        <!-- Default model selection -->
-        <div class="card" style="margin-bottom:var(--space-6);">
-          <h3 class="section-title">默认模型</h3>
-          <div class="default-row">
-            <label class="field">
-              <span>默认图片模型</span>
-              <select class="input" id="defaultImageModel"></select>
-            </label>
-            <label class="field">
-              <span>默认视频模型</span>
-              <select class="input" id="defaultVideoModel"></select>
-            </label>
+      <div id="providerList"></div>
+
+      <!-- Edit Modal -->
+      <div class="modal-overlay" id="editModal">
+        <div class="modal-box">
+          <div class="flex items-center justify-between" style="margin-bottom:var(--space-4)">
+            <h3 id="modalTitle">编辑供应商</h3>
+            <button class="btn btn-ghost btn-sm" onclick="closeModal()">✕</button>
           </div>
-          <button class="btn btn-primary" id="saveDefaultsBtn" type="button">保存默认模型</button>
-        </div>
+          <div class="field-row" style="margin-bottom:var(--space-4)">
+            <label class="field"><span>供应商名称</span><input class="input" id="provName" /></label>
+            <label class="field"><span>Base URL</span><input class="input" id="provUrl" /></label>
+            <label class="field"><span>Token / API Key</span><input class="input" id="provKey" type="password" /></label>
+            <label class="field"><span>供应商类型</span><input class="input" id="provType" readonly /></label>
+          </div>
 
-        <!-- Add provider -->
-        <div class="card add-provider-form">
-          <h3 class="section-title">添加模型供应商</h3>
-          <div class="form-row">
-            <label class="field">
-              <span>名称</span>
-              <input class="input" id="newProviderName" type="text" placeholder="如: OpenAI" />
-            </label>
-            <label class="field">
-              <span>类型</span>
-              <select class="input" id="newProviderType">
-                <option value="openai_image">OpenAI Compatible</option>
-                <option value="aokapi_gemini">AOKAPI / Gemini</option>
-                <option value="muskapis_image">Muskapis Image</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>Base URL</span>
-              <input class="input" id="newProviderUrl" type="text" placeholder="https://api.openai.com/v1" />
-            </label>
-            <button class="btn btn-primary" id="addProviderBtn" type="button" style="margin-bottom:1px;">添加</button>
+          <div class="flex items-center justify-between" style="margin-bottom:var(--space-2)">
+            <h4 class="text-sm font-medium">模型列表</h4>
+            <button class="btn btn-secondary btn-sm" id="addModelBtn">+ 添加模型</button>
+          </div>
+          <div id="modelEditList"></div>
+
+          <div class="flex justify-between" style="margin-top:var(--space-4)">
+            <span class="text-sm text-muted" id="modalStatus"></span>
+            <div class="flex gap-2">
+              <button class="btn btn-ghost btn-sm" onclick="closeModal()">取消</button>
+              <button class="btn btn-primary btn-sm" id="saveModalBtn">保存</button>
+            </div>
           </div>
         </div>
+      </div>
 
-        <!-- Provider list -->
-        <div class="card">
-          <div class="flex items-center justify-between" style="margin-bottom:var(--space-4);">
-            <h3 class="section-title" style="margin:0;">模型供应商</h3>
-            <button class="btn btn-ghost btn-sm" id="refreshBtn" type="button">刷新</button>
-          </div>
-          <div id="providerList">
-            <div class="empty-state"><span class="spinner"></span>加载中…</div>
-          </div>
-        </div>
-      </section>
-    </div>
+      <div id="toast" class="toast"></div>
+    </main>
   </div>
+</div>
 
-  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="../shared/auth.js"></script>
+<script src="../shared/api.js?v=2"></script>
+<script>
+var config = {};
+var editProviderId = null;
 
-  <script src="../shared/auth.js"></script>
-  <script src="../shared/api.js?v=2"></script>
+async function init() {
+  try { await Auth.init("admin"); } catch { return; }
+  document.getElementById("topbarUser").textContent = Auth.user?.email || "";
+  document.getElementById("sidebarUser").textContent = Auth.user?.email || "";
+  document.getElementById("refreshBtn").addEventListener("click", loadConfig);
+  document.getElementById("addProviderBtn").addEventListener("click", function() { openModal(null); });
+  document.getElementById("addModelBtn").addEventListener("click", addModelRow);
+  document.getElementById("saveModalBtn").addEventListener("click", saveModal);
+  await loadConfig();
+}
 
-  <script>
-    "use strict";
+async function loadConfig() {
+  try {
+    var data = await Api.admin("/admin/model-config");
+    config = data.modelConfig || {};
+    renderProviders(config.modelProviders || []);
+  } catch(e) { document.getElementById("providerList").innerHTML = '<div class="empty-state">加载失败</div>'; }
+}
 
-    /* ── Elements ── */
-    var topbarUser = document.getElementById("topbarUser");
-    var logoutBtn = document.getElementById("logoutBtn");
-    var toastEl = document.getElementById("toast");
-    var providerList = document.getElementById("providerList");
-    var defaultImageModel = document.getElementById("defaultImageModel");
-    var defaultVideoModel = document.getElementById("defaultVideoModel");
-    var saveDefaultsBtn = document.getElementById("saveDefaultsBtn");
-    var newProviderName = document.getElementById("newProviderName");
-    var newProviderType = document.getElementById("newProviderType");
-    var newProviderUrl = document.getElementById("newProviderUrl");
-    var addProviderBtn = document.getElementById("addProviderBtn");
-    var refreshBtn = document.getElementById("refreshBtn");
+function renderProviders(providers) {
+  var list = document.getElementById("providerList");
+  if (!providers.length) { list.innerHTML = '<div class="empty-state">暂无模型供应商</div>'; return; }
+  list.innerHTML = providers.map(function(p) {
+    var models = p.models || [];
+    return '<div class="provider-card">'
+      + '<div class="provider-header">'
+      + '<div><strong>' + esc(p.name||p.id) + '</strong> <span class="badge badge-neutral">' + esc(p.providerTypeLabel||p.providerType||'') + '</span>'
+      + '<div class="provider-meta">' + esc(p.baseUrl||'') + ' · ' + models.length + ' 个模型</div></div>'
+      + '<div class="flex gap-2"><label class="field" style="flex-direction:row;align-items:center;gap:var(--space-1)"><input type="checkbox" ' + (p.enabled?'checked':'') + ' onchange="toggleProvider(\''+p.id+'\',this.checked)" /><span class="text-sm">启用</span></label>'
+      + '<button class="btn btn-ghost btn-sm" onclick="openModal(\''+p.id+'\')">编辑</button></div>'
+      + '</div>'
+      + (models.length ? '<table class="model-table"><thead><tr><th>模型原名</th><th>展示名</th><th>类别</th><th>优先级</th><th>状态</th></tr></thead><tbody>'
+        + models.map(function(m) {
+          return '<tr><td>' + esc(m.modelName||m.id) + '</td><td>' + esc(m.displayName||m.modelName||'') + '</td><td>' + (m.modelKind==='video'?'视频':'图片') + '</td><td>' + (m.priority||100) + '</td><td>' + (m.enabled?'启用':'禁用') + '</td></tr>';
+        }).join('') + '</tbody></table>' : '')
+      + '</div>';
+  }).join("");
+}
 
-    /* State */
-    var config = null; /* { modelProviders, defaultImageModelId, defaultVideoModelId } */
+function toggleProvider(id, on) {
+  var p = (config.modelProviders||[]).find(function(x){return x.id===id;});
+  if (p) { p.enabled = on; saveConfig(); }
+}
 
-    /* ── Toast ── */
-    function toast(msg, isError) {
-      toastEl.textContent = msg;
-      toastEl.classList.toggle("error", !!isError);
-      toastEl.classList.add("active");
-      clearTimeout(toastEl._t);
-      toastEl._t = setTimeout(function () { toastEl.classList.remove("active"); }, 3000);
-    }
+function openModal(providerId) {
+  editProviderId = providerId;
+  var p = providerId ? (config.modelProviders||[]).find(function(x){return x.id===providerId;}) : { id: 'provider_'+Date.now(), name:'', baseUrl:'', apiKey:'', providerType:'muskapis_image', providerTypeLabel:'Muskapis Image', enabled:true, models:[] };
+  document.getElementById("modalTitle").textContent = providerId ? '编辑供应商' : '添加供应商';
+  document.getElementById("provName").value = p.name||'';
+  document.getElementById("provUrl").value = p.baseUrl||'';
+  document.getElementById("provKey").value = p.apiKey||'';
+  document.getElementById("provType").value = p.providerTypeLabel||p.providerType||'';
+  window._editModels = (p.models||[]).map(function(m){return JSON.parse(JSON.stringify(m));});
+  renderModelRows();
+  document.getElementById("editModal").classList.add("open");
+}
 
-    function escapeHtml(s) {
-      return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-    }
-    var escapeAttr = escapeHtml;
+function renderModelRows() {
+  document.getElementById("modelEditList").innerHTML = (window._editModels||[]).map(function(m,i) {
+    return '<div class="model-edit-row">'
+      + '<input class="input" value="'+escAttr(m.modelName||'')+'" placeholder="模型原名" data-idx="'+i+'" data-field="modelName" />'
+      + '<input class="input" value="'+escAttr(m.displayName||'')+'" placeholder="展示名" data-idx="'+i+'" data-field="displayName" />'
+      + '<select class="input" data-idx="'+i+'" data-field="modelKind"><option value="image" '+(m.modelKind!=='video'?'selected':'')+'>图片</option><option value="video" '+(m.modelKind==='video'?'selected':'')+'>视频</option></select>'
+      + '<input class="input" type="number" value="'+(m.priority||100)+'" placeholder="优先级" data-idx="'+i+'" data-field="priority" style="width:60px" />'
+      + '<button class="btn btn-ghost btn-sm" onclick="deleteModelRow('+i+')" style="color:var(--color-error)">✕</button>'
+      + '</div>';
+  }).join("");
+}
 
-    /* ── Load config ── */
-    async function loadConfig() {
-      providerList.innerHTML = '<div class="empty-state"><span class="spinner"></span>加载中…</div>';
-      try {
-        var data = await Api.admin("/admin/model-config");
-        config = data.modelConfig || {};
-        renderProviders(config.modelProviders || []);
-        populateDefaultSelects(config.modelProviders || [], config.defaultImageModelId || "", config.defaultVideoModelId || "");
-      } catch (e) {
-        if (!e.authFailure) {
-          providerList.innerHTML = '<div class="empty-state">加载失败: ' + escapeHtml(e.message) + '</div>';
-          toast(e.message, true);
-        }
-      }
-    }
+function addModelRow() {
+  window._editModels = window._editModels || [];
+  window._editModels.push({ id: 'pmodel_'+Date.now(), modelName:'', displayName:'', modelKind:'image', priority:100, enabled:true });
+  renderModelRows();
+}
 
-    function populateDefaultSelects(providers, defImageId, defVideoId) {
-      var allModels = [];
-      providers.forEach(function (p) {
-        (p.models || []).forEach(function (m) {
-          allModels.push({ id: m.id, name: (p.name || "") + " / " + (m.modelName || m.id), kind: m.modelKind || "image" });
-        });
-      });
+function deleteModelRow(i) {
+  window._editModels.splice(i,1);
+  renderModelRows();
+}
 
-      var opts = '<option value="">-- 不设置 --</option>'
-        + allModels.map(function (m) {
-          return '<option value="' + m.id + '">' + escapeHtml(m.name) + ' (' + m.kind + ')</option>';
-        }).join("");
+function closeModal() { document.getElementById("editModal").classList.remove("open"); }
 
-      defaultImageModel.innerHTML = opts;
-      defaultVideoModel.innerHTML = opts;
-      defaultImageModel.value = defImageId || "";
-      defaultVideoModel.value = defVideoId || "";
-    }
+async function saveModal() {
+  var p = editProviderId ? (config.modelProviders||[]).find(function(x){return x.id===editProviderId;}) : null;
+  if (!p) { p = { id: 'provider_'+Date.now(), providerType:'muskapis_image', providerTypeLabel:'Muskapis Image', enabled:true }; if (!config.modelProviders) config.modelProviders = []; config.modelProviders.push(p); editProviderId = p.id; }
+  p.name = document.getElementById("provName").value.trim();
+  p.baseUrl = document.getElementById("provUrl").value.trim();
+  p.apiKey = document.getElementById("provKey").value.trim();
 
-    function renderProviders(providers) {
-      if (!providers.length) {
-        providerList.innerHTML = '<div class="empty-state">暂无模型供应商</div>';
-        return;
-      }
+  // Collect model edits from inputs
+  document.querySelectorAll("#modelEditList [data-idx]").forEach(function(inp){
+    var i = parseInt(inp.getAttribute("data-idx"));
+    var field = inp.getAttribute("data-field");
+    if (window._editModels[i]) window._editModels[i][field] = field==='priority' ? parseInt(inp.value)||100 : inp.value;
+  });
+  p.models = window._editModels || [];
 
-      providerList.innerHTML = providers.map(function (p) {
-        var enabled = p.enabled;
-        var typeLabel = p.providerTypeLabel || p.providerType || "";
-        var baseUrl = p.baseUrl || "";
-        var models = p.models || [];
+  await saveConfig();
+  closeModal();
+  loadConfig();
+  toast("已保存");
+}
 
-        var modelRows = models.map(function (m) {
-          var mEnabled = m.enabled;
-          var kindBadge = (m.modelKind === "video")
-            ? '<span class="badge badge-warning">视频</span>'
-            : '<span class="badge badge-neutral">图片</span>';
+async function saveConfig() {
+  try {
+    await Api.admin("/admin/model-config", { method:"PUT", body:{ modelProviders: config.modelProviders||[], defaultImageModelId: config.defaultImageModelId||"", defaultVideoModelId: config.defaultVideoModelId||"" } });
+  } catch(e){ toast(e.message, true); }
+}
 
-          return '<div class="model-row">'
-            + '<div class="model-info">'
-            + '<span class="font-medium">' + escapeHtml(m.displayName || m.modelName || m.id) + '</span>'
-            + '<input class="input" value="' + escapeAttr(m.displayName || "") + '" placeholder="展示名称 (' + escapeAttr(m.modelName || "") + ')" data-action="updateDisplayName" data-model-id="' + m.id + '" data-provider-id="' + p.id + '" style="width:160px;font-size:var(--font-size-xs);padding:2px 4px;margin-top:2px" />'
-            + '<div class="text-xs text-muted">实际模型: ' + escapeHtml(m.modelName || m.id) + '</div>'
-            + kindBadge
-            + '<span class="text-sm text-muted">优先级: ' + (m.priority || 100) + '</span>'
-            + '</div>'
-            + '<div class="flex items-center gap-3">'
-            + '<label class="toggle">'
-            + '<input type="checkbox" ' + (mEnabled ? 'checked' : '') + ' data-action="toggleModel" data-model-id="' + m.id + '" data-provider-id="' + p.id + '" />'
-            + '<span class="slider"></span>'
-            + '</label>'
-            + '<span class="text-sm text-muted" style="min-width:32px;">' + (mEnabled ? '启用' : '禁用') + '</span>'
-            + '</div>'
-            + '</div>';
-        }).join("");
+function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function escAttr(s) { return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;"); }
+function toast(msg, isErr) { var t=document.getElementById("toast"); t.textContent=msg; t.className="toast active"+(isErr?" error":""); clearTimeout(t._t); t._t=setTimeout(function(){t.classList.remove("active")},2600); }
 
-        return '<div class="provider-item' + (enabled ? '' : '') + '" data-provider-id="' + p.id + '">'
-          + '<div class="provider-header" data-action="toggle">'
-          + '<div class="provider-summary">'
-          + '<span class="font-semibold">' + escapeHtml(p.name || p.id) + '</span>'
-          + '<span class="badge badge-neutral">' + escapeHtml(typeLabel) + '</span>'
-          + '<span class="text-sm text-muted">' + escapeHtml(baseUrl) + '</span>'
-          + '<span class="text-sm text-muted">' + models.length + ' 模型</span>'
-          + '</div>'
-          + '<div class="flex items-center gap-3">'
-          + '<label class="toggle">'
-          + '<input type="checkbox" ' + (enabled ? 'checked' : '') + ' data-action="toggleProvider" data-provider-id="' + p.id + '" />'
-          + '<span class="slider"></span>'
-          + '</label>'
-          + '<span class="text-sm text-muted">▶</span>'
-          + '</div>'
-          + '</div>'
-          + '<div class="provider-detail">'
-          + (modelRows || '<div class="empty-state">暂无模型</div>')
-          + '</div>'
-          + '</div>';
-      }).join("");
-    }
-
-    /* ── Toggle provider detail ── */
-    providerList.addEventListener("click", function (e) {
-      var header = e.target.closest(".provider-header");
-      if (header) {
-        var item = header.closest(".provider-item");
-        item.classList.toggle("open");
-      }
-
-      /* Toggle provider enabled */
-      var toggleInput = e.target.closest('input[data-action="toggleProvider"]');
-      if (toggleInput) {
-        e.stopPropagation();
-        var providerId = toggleInput.getAttribute("data-provider-id");
-        var enabled = toggleInput.checked;
-        updateProviderEnabled(providerId, enabled);
-      }
-
-      /* Toggle model enabled */
-      var modelToggle = e.target.closest('input[data-action="toggleModel"]');
-      if (modelToggle) {
-        e.stopPropagation();
-        var modelId = modelToggle.getAttribute("data-model-id");
-        var providerId = modelToggle.getAttribute("data-provider-id");
-        var enabled = modelToggle.checked;
-        updateModelEnabled(providerId, modelId, enabled);
-      }
-    });
-
-    /* Auto-save displayName on blur */
-    providerList.addEventListener("blur", function (e) {
-      var inp = e.target.closest('input[data-action="updateDisplayName"]');
-      if (!inp) return;
-      inp.style.border = "none";
-      inp.style.background = "transparent";
-      inp.style.padding = "0";
-      inp.readOnly = true;
-      saveConfig();
-    }, true);
-
-    function updateProviderEnabled(providerId, enabled) {
-      var provider = (config.modelProviders || []).find(function (p) { return p.id === providerId; });
-      if (!provider) return;
-      provider.enabled = enabled;
-      saveConfig();
-    }
-
-    function updateModelEnabled(providerId, modelId, enabled) {
-      var provider = (config.modelProviders || []).find(function (p) { return p.id === providerId; });
-      if (!provider) return;
-      var model = (provider.models || []).find(function (m) { return m.id === modelId; });
-      if (!model) return;
-      model.enabled = enabled;
-      saveConfig();
-    }
-
-    /* ── Add provider ── */
-    addProviderBtn.addEventListener("click", function () {
-      var name = newProviderName.value.trim();
-      var type = newProviderType.value;
-      var url = newProviderUrl.value.trim();
-
-      if (!name) { toast("请输入供应商名称", true); return; }
-      if (!url) { toast("请输入 Base URL", true); return; }
-
-      var newId = "prov_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8);
-      var newProvider = {
-        id: newId,
-        name: name,
-        providerType: type,
-        baseUrl: url,
-        enabled: true,
-        models: []
-      };
-
-      config.modelProviders = config.modelProviders || [];
-      config.modelProviders.push(newProvider);
-      saveConfig();
-      newProviderName.value = "";
-      newProviderUrl.value = "";
-    });
-
-    /* ── Save config ── */
-    async function saveConfig() {
-      // Collect display names from inputs
-      document.querySelectorAll("input[data-action='updateDisplayName']").forEach(function(inp) {
-        var mid = inp.getAttribute("data-model-id");
-        var pid = inp.getAttribute("data-provider-id");
-        var p = (config.modelProviders || []).find(function(x) { return x.id === pid; });
-        var m = p && (p.models || []).find(function(x) { return x.id === mid; });
-        if (m) m.displayName = inp.value.trim();
-      });
-      try {
-        await Api.admin("/admin/model-config", {
-          method: "PUT",
-          body: {
-            modelProviders: config.modelProviders || [],
-            defaultImageModelId: defaultImageModel.value,
-            defaultVideoModelId: defaultVideoModel.value
-          }
-        });
-        toast("配置已保存");
-        loadConfig(); /* Reload to get fresh state */
-      } catch (e) {
-        toast(e.message, true);
-      }
-    }
-
-    saveDefaultsBtn.addEventListener("click", saveConfig);
-
-    /* ── Refresh ── */
-    refreshBtn.addEventListener("click", loadConfig);
-
-    /* ── Logout ── */
-    logoutBtn.addEventListener("click", function () {
-      Auth.logout();
-    });
-
-    /* ── Init ── */
-    async function init() {
-      try {
-        var user = await Auth.init("admin");
-        topbarUser.textContent = user.email || "";
-        loadConfig();
-      } catch (e) {
-        /* Auth.init handles redirect */
-      }
-    }
-
-    init();
-  </script>
+init();
+</script>
 </body>
 </html>
