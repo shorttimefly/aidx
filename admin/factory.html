@@ -116,11 +116,35 @@ function renderList() {
   var list = document.getElementById("assetList");
   var statusLabel = {draft:"草稿",generating:"生成中",generated:"已生成",published:"已发布",failed:"失败"};
   list.innerHTML = assets.map(function(a) {
-    return '<div class="asset-item' + (a.id === activeId ? ' active' : '') + '" onclick="selectAsset(\'' + a.id + '\')">'
-      + '<div>' + esc(a.title || "未命名") + '</div>'
+    return '<div class="asset-item' + (a.id === activeId ? ' active' : '') + '">'
+      + '<div style="display:flex;align-items:center;justify-content:space-between">'
+      + '<span class="asset-title" id="title-' + a.id + '">' + esc(a.title || "未命名") + '</span>'
+      + '<button class="btn btn-ghost btn-sm" style="font-size:10px;padding:0 4px" onclick="event.stopPropagation();startEditTitle(\'' + a.id + '\')">✎</button>'
+      + '</div>'
       + '<div class="meta">' + (statusLabel[a.status] || a.status) + '</div>'
       + '</div>';
   }).join("");
+}
+
+function startEditTitle(id) {
+  var el = document.getElementById("title-" + id);
+  if (!el) return;
+  var asset = assets.find(function(a) { return a.id === id; });
+  var oldTitle = asset ? asset.title : el.textContent;
+  el.innerHTML = '<input class="input" value="' + escAttr(oldTitle) + '" style="font-size:var(--font-size-sm);padding:2px 4px" onblur="saveTitle(\'' + id + '\',this.value)" onkeydown="if(event.key===\'Enter\')this.blur()" />';
+  el.querySelector("input").focus();
+  el.querySelector("input").select();
+}
+
+async function saveTitle(id, newTitle) {
+  newTitle = (newTitle || "").trim();
+  if (!newTitle) { renderList(); return; }
+  try {
+    await Api.admin("/admin/prompt-assets/" + id, { method: "PATCH", body: JSON.stringify({ title: newTitle }) });
+    var a = assets.find(function(x) { return x.id === id; });
+    if (a) a.title = newTitle;
+  } catch(e) { showToast(e.message, true); }
+  renderList();
 }
 
 async function selectAsset(id) {
