@@ -190,7 +190,7 @@ select { cursor: pointer; appearance: none; background-image: url("data:image/sv
   border-radius: var(--radius-md); color: rgba(255,255,255,0.70); font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium); transition: all var(--transition-fast); text-decoration: none;
 }
-.sidebar-nav a:hover, .sidebar-nav a.active { background: rgba(255,255,255,0.10); color: #fff; }
+.sidebar-nav a:hover, .sidebar-nav a.active { background: var(--color-accent); color: #fff; }
 .sidebar-footer { padding: var(--space-4); border-top: 1px solid rgba(255,255,255,0.1); font-size: var(--font-size-xs); }
 
 /* ── Responsive ── */
