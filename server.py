@@ -4083,6 +4083,24 @@ class Handler(SimpleHTTPRequestHandler):
         with connect() as conn:
             mark_stale_prompt_assets_failed(conn)
             assets = prompt_asset_rows(conn, status=status, limit=limit, offset=offset, asset_kind=asset_kind)
+            # Strip base64 from list view — keep only reference image names
+            for asset in assets:
+                refs = asset.get("referenceImages") or []
+                asset["referenceImages"] = [
+                    {"name": r.get("name", ""), "size": r.get("size", "")} for r in refs[:1]
+                ]
+                asset.pop("imageAUrl", None)
+                asset.pop("imageBUrl", None)
+                pi = asset.get("productImage") or {}
+                if pi.get("url", "").startswith("data:"):
+                    asset["productImage"] = {"name": pi.get("name", "")} if pi.get("name") else {}
+                asset.pop("referenceAnalysis", None)
+                asset.pop("chinesePrompt", None)
+                asset.pop("englishPrompt", None)
+                asset.pop("comparison", None)
+                asset.pop("request", None)
+                asset.pop("response", None)
+                asset.pop("suiteShots", None)
             model_options = [
                 {
                     "providerModelId": option["providerModelId"],
