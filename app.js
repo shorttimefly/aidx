@@ -1130,15 +1130,17 @@ function setButtonLabel(button, label) {
 }
 
 function applySuiteAccessState() {
-  els.suiteNavItem?.classList.remove("disabled");
-  els.suiteNavItem?.removeAttribute("disabled");
-  els.suiteNavItem?.setAttribute("aria-disabled", "false");
-  els.suiteView?.classList.remove("suite-disabled-view");
-  els.suiteView?.setAttribute("aria-disabled", "false");
+  const admin = isAdminUser();
+  els.suiteNavItem?.classList.toggle("disabled", !admin);
+  els.suiteNavItem?.toggleAttribute("disabled", !admin);
+  els.suiteNavItem?.setAttribute("aria-disabled", admin ? "false" : "true");
+  els.suiteView?.classList.toggle("suite-disabled-view", !admin);
+  els.suiteView?.setAttribute("aria-disabled", admin ? "false" : "true");
   if (els.generateSuiteBtn?.getAttribute("aria-busy") !== "true") {
-    els.generateSuiteBtn.disabled = false;
-    setButtonLabel(els.generateSuiteBtn, SUITE_ENABLED_LABEL);
+    els.generateSuiteBtn.disabled = !admin;
+    setButtonLabel(els.generateSuiteBtn, admin ? SUITE_ENABLED_LABEL : SUITE_DISABLED_LABEL);
   }
+  if (!admin && document.body.dataset.view === "suite") switchView("generate");
 }
 
 function openAdminEntry() {
