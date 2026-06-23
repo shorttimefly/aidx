@@ -56,6 +56,12 @@
         </div>
       </div>
 
+      <div class="card" style="margin-bottom:var(--space-4);display:flex;gap:var(--space-4);align-items:end">
+        <label class="field"><span>默认图片模型</span><select class="input" id="defaultImageModel" style="width:200px"></select></label>
+        <label class="field"><span>默认视频模型</span><select class="input" id="defaultVideoModel" style="width:200px"></select></label>
+        <button class="btn btn-primary btn-sm" id="saveDefaultsBtn">保存默认</button>
+      </div>
+
       <div id="providerList"></div>
 
       <!-- Edit Modal -->
@@ -69,10 +75,6 @@
             <label class="field"><span>供应商名称</span><input class="input" id="provName" /></label>
             <label class="field"><span>Base URL</span><input class="input" id="provUrl" /></label>
             <label class="field" style="grid-column:span 2"><span>Token / API Key</span><input class="input" id="provKey" type="password" /></label>
-          </div>
-          <div class="field-row" style="margin-bottom:var(--space-4)">
-            <label class="field"><span>默认图片模型</span><select class="input" id="defaultImageModel"></select></label>
-            <label class="field"><span>默认视频模型</span><select class="input" id="defaultVideoModel"></select></label>
           </div>
 
           <div class="flex items-center justify-between" style="margin-bottom:var(--space-2)">
@@ -110,6 +112,7 @@ async function init() {
   document.getElementById("addProviderBtn").addEventListener("click", function() { openModal(null); });
   document.getElementById("addModelBtn").addEventListener("click", addModelRow);
   document.getElementById("saveModalBtn").addEventListener("click", saveModal);
+  document.getElementById("saveDefaultsBtn").addEventListener("click", saveDefaults);
   await loadConfig();
 }
 
@@ -128,7 +131,7 @@ function renderProviders(providers) {
     var models = p.models || [];
     return '<div class="provider-card">'
       + '<div class="provider-header">'
-      + '<div><strong>' + esc(p.name||p.id) + '</strong> <span class="badge badge-neutral">' + esc(p.providerTypeLabel||p.providerType||'') + '</span>'
+      + '<div><strong>' + esc(p.name||p.id) + '</strong>'
       + '<div class="provider-meta">' + esc(p.baseUrl||'') + ' · ' + models.length + ' 个模型</div></div>'
       + '<div class="flex gap-2"><label class="field" style="flex-direction:row;align-items:center;gap:var(--space-1)"><input type="checkbox" ' + (p.enabled?'checked':'') + ' onchange="toggleProvider(\''+p.id+'\',this.checked)" /><span class="text-sm">启用</span></label>'
       + '<button class="btn btn-ghost btn-sm" onclick="openModal(\''+p.id+'\')">编辑</button></div>'
@@ -139,11 +142,30 @@ function renderProviders(providers) {
         }).join('') + '</tbody></table>' : '')
       + '</div>';
   }).join("");
+  populateDefaults();
 }
 
 function toggleProvider(id, on) {
   var p = (config.modelProviders||[]).find(function(x){return x.id===id;});
   if (p) { p.enabled = on; saveConfig(); }
+}
+
+function populateDefaults() {
+  var allModels = [];
+  (config.modelProviders||[]).forEach(function(pp) { (pp.models||[]).forEach(function(mm) { allModels.push({id:mm.id, name:mm.displayName||mm.modelName||mm.id, kind:mm.modelKind||'image'}); }); });
+  var imgOpts = allModels.filter(function(m){return m.kind!=='video';}).map(function(m){return '<option value="'+m.id+'">'+esc(m.name)+'</option>';}).join('');
+  var vidOpts = allModels.filter(function(m){return m.kind==='video';}).map(function(m){return '<option value="'+m.id+'">'+esc(m.name)+'</option>';}).join('');
+  document.getElementById("defaultImageModel").innerHTML = '<option value="">-- 默认 --</option>'+imgOpts;
+  document.getElementById("defaultVideoModel").innerHTML = '<option value="">-- 默认 --</option>'+vidOpts;
+  document.getElementById("defaultImageModel").value = config.defaultImageModelId||"";
+  document.getElementById("defaultVideoModel").value = config.defaultVideoModelId||"";
+}
+
+async function saveDefaults() {
+  config.defaultImageModelId = document.getElementById("defaultImageModel").value;
+  config.defaultVideoModelId = document.getElementById("defaultVideoModel").value;
+  await saveConfig();
+  toast("默认模型已保存");
 }
 
 function openModal(providerId) {
@@ -156,15 +178,6 @@ function openModal(providerId) {
   document.getElementById("provKey").placeholder = p.apiKey ? ('sk-****' + (p.apiKey.length > 8 ? p.apiKey.slice(-4) : '')) : '输入 API Key';
   window._editModels = (p.models||[]).map(function(m){return JSON.parse(JSON.stringify(m));});
   renderModelRows();
-  // Populate default model selectors
-  var allModels = [];
-  (config.modelProviders||[]).forEach(function(pp) { (pp.models||[]).forEach(function(mm) { allModels.push({id:mm.id, name:mm.displayName||mm.modelName||mm.id, kind:mm.modelKind||'image'}); }); });
-  var imgOpts = allModels.filter(function(m){return m.kind!=='video';}).map(function(m){return '<option value="'+m.id+'">'+esc(m.name)+'</option>';}).join('');
-  var vidOpts = allModels.filter(function(m){return m.kind==='video';}).map(function(m){return '<option value="'+m.id+'">'+esc(m.name)+'</option>';}).join('');
-  document.getElementById("defaultImageModel").innerHTML = '<option value="">-- 默认 --</option>'+imgOpts;
-  document.getElementById("defaultVideoModel").innerHTML = '<option value="">-- 默认 --</option>'+vidOpts;
-  document.getElementById("defaultImageModel").value = config.defaultImageModelId||"";
-  document.getElementById("defaultVideoModel").value = config.defaultVideoModelId||"";
   document.getElementById("editModal").classList.add("open");
 }
 
@@ -207,8 +220,6 @@ async function saveModal() {
     if (window._editModels[i]) window._editModels[i][field] = field==='priority' ? parseInt(inp.value)||100 : inp.value;
   });
   p.models = window._editModels || [];
-  config.defaultImageModelId = document.getElementById("defaultImageModel").value;
-  config.defaultVideoModelId = document.getElementById("defaultVideoModel").value;
 
   await saveConfig();
   closeModal();
