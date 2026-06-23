@@ -606,14 +606,20 @@ function mergePromptConfig(defaultValue, overrideValue) {
   }
   if (defaultValue && typeof defaultValue === "object") {
     const source = overrideValue && typeof overrideValue === "object" ? overrideValue : {};
-    return Object.fromEntries(
-      Object.entries(defaultValue).map(([key, value]) => [
-        key,
-        ["id", "category", "url", "templateId", "platform", "scenario"].includes(key)
-          ? value
-          : mergePromptConfig(value, source[key])
-      ])
-    );
+    const merged = {};
+    const seen = new Set();
+    for (const key of Object.keys(defaultValue)) {
+      seen.add(key);
+      merged[key] = ["id", "category", "url", "templateId", "platform", "scenario"].includes(key)
+        ? defaultValue[key]
+        : mergePromptConfig(defaultValue[key], source[key]);
+    }
+    for (const key of Object.keys(source)) {
+      if (!seen.has(key)) {
+        merged[key] = source[key];
+      }
+    }
+    return merged;
   }
   if (typeof defaultValue === "string") return typeof overrideValue === "string" ? overrideValue : defaultValue;
   if (typeof defaultValue === "number") return typeof overrideValue === "number" ? overrideValue : defaultValue;
