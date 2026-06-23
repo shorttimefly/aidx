@@ -787,12 +787,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
   bindEvents();
   loadAuthSession();
+  await loadPromptConfigDefaults();
   state.db = await openDb();
   await ensureDefaultFolder();
   await refreshLibrary();
   await bootstrapAuth();
   renderAuthState();
-  await loadPromptConfigDefaults();
   loadSettings();
   loadSingleSelectionMemory();
   loadUserTemplates();
