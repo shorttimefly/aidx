@@ -1179,20 +1179,26 @@ function collectUserSource() {
 }
 
 async function bootstrapAuth() {
+  console.log("[AUTH] bootstrapAuth token exists:", !!state.auth.token);
   if (!state.auth.token) {
+    console.log("[AUTH] bootstrapAuth NO TOKEN, redirecting to login");
     window.location.replace("./login.html");
     return;
   }
   try {
+    console.log("[AUTH] bootstrapAuth calling /api/me...");
     const payload = await apiFetch("/me");
     state.auth.user = payload.user;
+    console.log("[AUTH] bootstrapAuth user loaded:", state.auth.user.name, "credits:", state.auth.user.creditsRemaining);
     await loadAccountSettings();
     await syncRecoverableGeneratedAssets();
   } catch (error) {
+    console.error("[AUTH] bootstrapAuth FAILED:", error.message);
     clearAuthSession();
     window.location.replace("./login.html");
     return;
   } finally {
+    console.log("[AUTH] bootstrapAuth calling renderAuthState");
     renderAuthState();
   }
 }
@@ -1320,6 +1326,7 @@ function clearAuthSession() {
 
 function renderAuthState() {
   const user = state.auth.user;
+  console.log("[AUTH] renderAuthState user:", user ? user.name : "null", "credits:", user ? user.creditsRemaining : "n/a");
   els.accountTitle.textContent = user ? "当前账号" : "未登录";
   els.accountNameText.textContent = user ? user.name || "已登录账号" : "注册后使用工具";
   renderAccountKeyStatus();
