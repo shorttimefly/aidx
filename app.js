@@ -788,6 +788,9 @@ document.addEventListener("DOMContentLoaded", async () => {
   cacheElements();
   bindEvents();
   loadAuthSession();
+  state.db = await openDb();
+  await ensureDefaultFolder();
+  await refreshLibrary();
   await bootstrapAuth();
   renderAuthState();
   await loadPromptConfigDefaults();
@@ -804,9 +807,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderVideoReference();
   renderVideoScenes();
   updateVideoPlanButton();
-  state.db = await openDb();
-  await ensureDefaultFolder();
-  await refreshLibrary();
   updateConnectionState();
   setDefaultAutoSaveName();
 });
