@@ -2609,6 +2609,8 @@ class Handler(SimpleHTTPRequestHandler):
                     return self.handle_admin_publish_prompt_asset(asset_id)
             if path == "/prompt-config-defaults.json":
                 raise AppError(HTTPStatus.NOT_FOUND, "接口不存在")
+            if path.startswith("/api/generated-images/") and method == "GET":
+                return self.handle_generated_image(unquote(path.removeprefix("/api/generated-images/")))
             if path.startswith("/api/"):
                 raise AppError(HTTPStatus.NOT_FOUND, "接口不存在")
             return super().do_GET()
@@ -3315,6 +3317,28 @@ class Handler(SimpleHTTPRequestHandler):
                 ),
             )
         self.json_response({"ok": True})
+
+    def handle_generated_image(self, filename: str) -> None:
+        """GET /api/generated-images/<filename> — serve generated image file"""
+        safe = Path(filename).name  # prevent path traversal
+        filepath = GENERATED_DIR / safe
+        if not filepath.is_file():
+            raise AppError(HTTPStatus.NOT_FOUND, "图片不存在")
+        ext = filepath.suffix.lower()
+        mime = {
+            ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+            ".webp": "image/webp", ".gif": "image/gif"
+        }.get(ext, "application/octet-stream")
+        try:
+            data = filepath.read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", mime)
+            self.send_header("Content-Length", str(len(data)))
+            self.send_header("Cache-Control", "public, max-age=31536000, immutable")
+            self.end_headers()
+            self.wfile.write(data)
+        except OSError:
+            raise AppError(HTTPStatus.NOT_FOUND, "图片读取失败")
 
     def handle_redeem(self) -> None:
         """POST /api/redeem — user redeems a code for credits."""
@@ -5482,6 +5506,34 @@ def log_generation(
     return log_id
 
 
+GENERATED_DIR = STORAGE_DIR / "generated"
+
+def _save_image_to_disk(image_url: str, record_id: str) -> str:
+    """Save image to disk (decode base64 or keep URL). Returns stored path or original URL."""
+    url = str(image_url or "").strip()
+    if not url:
+        return url
+    GENERATED_DIR.mkdir(parents=True, exist_ok=True)
+    if url.startswith("data:image/"):
+        try:
+            header, b64 = url.split(",", 1)
+            ext = ".png"
+            if "jpeg" in header or "jpg" in header:
+                ext = ".jpg"
+            elif "webp" in header:
+                ext = ".webp"
+            elif "gif" in header:
+                ext = ".gif"
+            data = base64.b64decode(b64)
+            filename = f"{record_id}{ext}"
+            filepath = GENERATED_DIR / filename
+            filepath.write_bytes(data)
+            return f"/api/generated-images/{filename}"
+        except (ValueError, binascii.Error, OSError):
+            pass
+    return url
+
+
 def save_generated_assets(
     *,
     user_id: str,
@@ -5500,12 +5552,14 @@ def save_generated_assets(
         url = str(image.get("url") or "").strip()
         if not url:
             continue
+        record_id = make_id("asset")
+        stored_url = _save_image_to_disk(url, record_id)
         records.append(
             {
-                "id": make_id("asset"),
+                "id": record_id,
                 "user_id": user_id,
                 "log_id": log_id,
-                "image_url": url,
+                "image_url": stored_url,
                 "name": trim_text(str(image.get("name") or f"生成图 {name_stamp}-{index}"), 160),
                 "endpoint": trim_text(endpoint, 800),
                 "model": trim_text(model, 160),
