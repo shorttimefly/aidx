@@ -1295,10 +1295,7 @@ async function handleLogout() {
     // Local cleanup is enough when the server-side session is already gone.
   }
   clearAuthSession();
-  renderAuthState();
-  updateConnectionState();
-  openAuthModal({ locked: true });
-  showToast("已退出登录");
+  window.location.replace("./login.html");
 }
 
 function clearAuthSession() {
