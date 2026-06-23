@@ -82,7 +82,9 @@
     if (!confirm("确定删除此素材？")) return;
     try {
       await Api.fetch("/generated-assets/" + id, { method: "DELETE" });
-      location.reload();
+      var card = e.target.closest(".asset-card");
+      if (!card) card = document.querySelector('.asset-card [onclick*="' + id + '"]')?.closest(".asset-card");
+      if (card) { card.style.opacity = "0"; setTimeout(function() { card.remove(); }, 200); }
     } catch(err) { 
       alert("删除失败: " + err.message); 
     }
