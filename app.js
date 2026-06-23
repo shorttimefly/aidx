@@ -787,9 +787,11 @@ document.addEventListener("DOMContentLoaded", async () => {
   document.body.dataset.view = "generate";
   cacheElements();
   bindEvents();
+  loadAuthSession();
+  await bootstrapAuth();
+  renderAuthState();
   await loadPromptConfigDefaults();
   loadSettings();
-  loadAuthSession();
   loadSingleSelectionMemory();
   loadUserTemplates();
   renderSuitePlan();
@@ -805,8 +807,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   state.db = await openDb();
   await ensureDefaultFolder();
   await refreshLibrary();
-  await bootstrapAuth();
-  renderAuthState();
   updateConnectionState();
   setDefaultAutoSaveName();
 });
