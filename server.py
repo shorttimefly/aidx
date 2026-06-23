@@ -2591,6 +2591,9 @@ class Handler(SimpleHTTPRequestHandler):
                 return self.handle_admin_put_prompt_config()
             if path == "/api/admin/prompt-assets" and method == "GET":
                 return self.handle_admin_prompt_assets(parsed.query)
+            if path.startswith("/api/admin/prompt-assets/") and method == "GET" and not path.endswith("/generate") and not path.endswith("/publish") and not path.endswith("/suite-shots") and not "/suite-shots/" in path and not "/reference-image" in path:
+                asset_id = unquote(path.removeprefix("/api/admin/prompt-assets/"))
+                return self.handle_admin_get_prompt_asset(asset_id)
             if path == "/api/admin/prompt-assets" and method == "POST":
                 return self.handle_admin_create_prompt_assets()
             if path.startswith("/api/admin/prompt-assets/") and method == "PATCH":
@@ -4112,6 +4115,17 @@ class Handler(SimpleHTTPRequestHandler):
                 for option in prompt_factory_model_options(conn)
             ]
         self.json_response({"assets": assets, "modelOptions": model_options})
+
+    def handle_admin_get_prompt_asset(self, asset_id: str) -> None:
+        """GET /api/admin/prompt-assets/<id> — single asset with full detail"""
+        self.require_admin()
+        with connect() as conn:
+            rows = prompt_asset_rows(conn, limit=500, offset=0)
+            for row in rows:
+                if row.get("id") == asset_id:
+                    self.json_response(row)
+                    return
+        raise AppError(HTTPStatus.NOT_FOUND, "资产不存在")
 
     def handle_admin_create_prompt_assets(self) -> None:
         self.require_admin()
