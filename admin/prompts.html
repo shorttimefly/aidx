@@ -118,9 +118,11 @@
     function toast(msg, isError) {
       toastEl.textContent = msg;
       toastEl.classList.toggle("error", !!isError);
+      if (!isError) toastEl.style.background = "#22C55E";
+      else toastEl.style.background = "";
       toastEl.classList.add("active");
       clearTimeout(toastEl._t);
-      toastEl._t = setTimeout(function () { toastEl.classList.remove("active"); }, 3000);
+      toastEl._t = setTimeout(function () { toastEl.classList.remove("active"); toastEl.style.background = ""; }, 5000);
     }
 
     function escapeHtml(s) {
