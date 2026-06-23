@@ -65,7 +65,7 @@
       return '<div class="asset-card">'
         + '<img src="' + escAttr(url) + '" alt="' + escAttr(name) + '" loading="lazy" />'
         + '<div class="asset-meta"><span class="name">' + esc(name) + '</span>'
-        + (a.model ? '<span>' + esc(a.model) + ' · ' + esc(a.size || "") + '</span>' : '')
+        + (a.model ? '<span>' + esc(a.model) + ' · ' + esc(a.size || "") + (a.refCount ? ' · ' + a.refCount + '张参考图' : '') + '</span>' : '')
         + '<div class="flex gap-2" style="margin-top:4px">'
         + '<a class="btn btn-ghost btn-sm" href="#" onclick="downloadAsset(event,\'' + escAttr(url) + '\',\'' + escAttr(name) + '\')">下载</a>'
         + '<a class="btn btn-ghost btn-sm" href="./edit.html?url=' + encodeURIComponent(url) + '">编辑</a>'

@@ -5622,6 +5622,8 @@ def row_generated_asset(row: sqlite3.Row) -> dict:
     request_body = request.get("body") if isinstance(request, dict) and isinstance(request.get("body"), dict) else {}
     template_id = str(request_body.get("templateId") or "").strip()
     prompt = f"模板：{template_id}" if template_id else row["prompt"]
+    ref_images = request_body.get("referenceImages") if isinstance(request_body, dict) else None
+    ref_count = len(ref_images) if isinstance(ref_images, list) else 0
     return {
         "id": row["id"],
         "logId": row["log_id"],
@@ -5634,6 +5636,7 @@ def row_generated_asset(row: sqlite3.Row) -> dict:
         "source": row["source"],
         "request": request,
         "createdAt": row["created_at"],
+        "refCount": ref_count,
     }
 
 
