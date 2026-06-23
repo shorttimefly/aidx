@@ -135,20 +135,42 @@ async function selectAsset(id) {
   var refs = (asset.referenceImages || []).map(function(r) { return r.url || r; }).filter(Boolean);
   var productImg = (asset.productImage || {}).url || "";
   var statusLabel = {draft:"草稿",generating:"生成中",generated:"已生成",published:"已发布",failed:"失败"};
-  panel.innerHTML = '<div class="flex items-center justify-between">'
+
+  // Build images row: product + refs
+  var imgRow = '';
+  var imgs = [];
+  if (productImg) imgs.push({label:'商品原图', url:productImg});
+  (asset.referenceImages || []).forEach(function(r, i) {
+    if (r.url) imgs.push({label: r.name || ('参考图' + (i+1)), url: r.url});
+  });
+  if (imgs.length) {
+    imgRow = '<div style="margin-bottom:var(--space-4)"><h4 class="text-sm font-medium" style="margin-bottom:var(--space-2)">原图 & 参考图</h4><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--space-3)">'
+      + imgs.map(function(x){ return '<div><div class="text-xs text-muted" style="margin-bottom:2px">' + esc(x.label) + '</div><img src="' + escAttr(x.url) + '" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--color-border)" /></div>'; }).join('')
+      + '</div></div>';
+  }
+
+  // Verification images row
+  var verifyRow = '';
+  if (asset.imageAUrl || asset.imageBUrl) {
+    verifyRow = '<div style="margin-bottom:var(--space-4)"><h4 class="text-sm font-medium" style="margin-bottom:var(--space-2)">验证对比</h4><div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:var(--space-3)">'
+      + (asset.imageAUrl ? '<div><div class="text-xs text-muted" style="margin-bottom:2px">Image A (参考辅助)</div><img src="' + escAttr(asset.imageAUrl) + '" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--color-border)" /></div>' : '')
+      + (asset.imageBUrl ? '<div><div class="text-xs text-muted" style="margin-bottom:2px">Image B (Prompt + 原图)</div><img src="' + escAttr(asset.imageBUrl) + '" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:var(--radius-md);border:1px solid var(--color-border)" /></div>' : '')
+      + '</div></div>';
+  }
+
+  panel.innerHTML = '<div class="flex items-center justify-between" style="margin-bottom:var(--space-4)">'
     + '<h3>' + esc(asset.title || "未命名") + ' <span class="badge badge-neutral">' + (statusLabel[asset.status] || asset.status) + '</span></h3>'
     + '<div class="flex gap-2">'
     + (asset.status === 'draft' || asset.status === 'failed' ? '<button class="btn btn-primary btn-sm" onclick="generateAsset(\'' + id + '\')">生成</button>' : '')
     + (asset.status === 'generated' ? '<button class="btn btn-primary btn-sm" onclick="publishAsset(\'' + id + '\')">发布</button>' : '')
     + '<button class="btn btn-danger btn-sm" onclick="deleteAsset(\'' + id + '\')">删除</button>'
     + '</div></div>'
-    + (productImg ? '<div class="verify-card"><h4 class="text-sm font-medium">商品图</h4><img src="' + escAttr(productImg) + '" alt="商品图" /></div>' : '')
-    + (refs.length ? '<div><h4 class="text-sm font-medium">参考图</h4><div class="ref-grid">' + refs.map(function(r,i){ return '<div class="ref-thumb"><img src="' + escAttr(r) + '" /></div>'; }).join("") + '</div></div>' : '')
-    + (asset.referenceAnalysis ? '<div><h4 class="text-sm font-medium">分析</h4><div class="prompt-box">' + esc(asset.referenceAnalysis) + '</div></div>' : '')
-    + (asset.chinesePrompt ? '<div><h4 class="text-sm font-medium">中文提示词</h4><div class="prompt-box">' + esc(asset.chinesePrompt) + '</div></div>' : '')
-    + (asset.englishPrompt ? '<div><h4 class="text-sm font-medium">English Prompt</h4><div class="prompt-box">' + esc(asset.englishPrompt) + '</div></div>' : '')
-    + ((asset.imageAUrl || asset.imageBUrl) ? '<div><h4 class="text-sm font-medium">验证图</h4><div class="verify-grid">' + (asset.imageAUrl ? '<div class="verify-card"><img src="' + escAttr(asset.imageAUrl) + '" /></div>' : '') + (asset.imageBUrl ? '<div class="verify-card"><img src="' + escAttr(asset.imageBUrl) + '" /></div>' : '') + '</div></div>' : '')
-    + (asset.comparison ? '<div><h4 class="text-sm font-medium">对比</h4><div class="prompt-box">' + esc(asset.comparison) + '</div></div>' : '')
+    + imgRow
+    + verifyRow
+    + (asset.comparison ? '<div style="margin-bottom:var(--space-4)"><h4 class="text-sm font-medium">相似度对比</h4><div class="prompt-box">' + esc(asset.comparison) + '</div></div>' : '')
+    + (asset.referenceAnalysis ? '<div style="margin-bottom:var(--space-4)"><h4 class="text-sm font-medium">参考图分析</h4><div class="prompt-box">' + esc(asset.referenceAnalysis) + '</div></div>' : '')
+    + (asset.chinesePrompt ? '<div style="margin-bottom:var(--space-4)"><h4 class="text-sm font-medium">中文提示词</h4><div class="prompt-box">' + esc(asset.chinesePrompt) + '</div></div>' : '')
+    + (asset.englishPrompt ? '<div style="margin-bottom:var(--space-4)"><h4 class="text-sm font-medium">English Prompt</h4><div class="prompt-box">' + esc(asset.englishPrompt) + '</div></div>' : '')
     + (asset.error ? '<div class="badge badge-error">错误: ' + esc(asset.error) + '</div>' : '');
 }
 
