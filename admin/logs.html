@@ -133,7 +133,8 @@ async function showDetail(logId) {
     var assets = data.assets || [];
     var req = log.requestBody || {};
     var body = req.body || {};
-    var refs = body.referenceImages || [];
+    var userReq = log.userRequest || {};
+    var refs = userReq.referenceImages || body.referenceImages || [];
     var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4)">';
     html += '<div><h4 class="text-sm font-medium">模型 / 状态</h4><p class="text-sm">' + esc(log.model||"-") + ' · ' + esc(log.size||"") + ' · <span class="badge ' + (log.status==='completed'?'badge-success':'badge-error') + '">' + (log.status==='completed'?'成功':'失败') + '</span></p></div>';
     html += '<div><h4 class="text-sm font-medium">模板</h4><p class="text-sm">' + esc(body.templateId || "手动输入") + '</p></div>';

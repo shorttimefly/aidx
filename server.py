@@ -814,6 +814,7 @@ def init_db() -> None:
         ensure_column(conn, "prompt_assets", "suite_shots_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(conn, "generated_assets", "downloaded", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "generated_assets", "edited", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "generation_logs", "user_request_json", "TEXT NOT NULL DEFAULT ''")
         migrate_default_endpoint(conn)
         ensure_sessions_schema(conn)
         conn.execute("CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, role)")
@@ -3069,6 +3070,7 @@ class Handler(SimpleHTTPRequestHandler):
                         request_body=request_body,
                         response_body=payload,
                         duration_ms=duration_ms,
+                        user_request_body=body,
                     )
                     generated_assets = save_generated_assets(
                         user_id=user["id"],
@@ -3207,6 +3209,7 @@ class Handler(SimpleHTTPRequestHandler):
                 request_body=request_body,
                 response_body=payload,
                 duration_ms=duration_ms,
+                user_request_body=body,
             )
             generated_assets = save_generated_assets(
                 user_id=user["id"],
@@ -4018,6 +4021,7 @@ class Handler(SimpleHTTPRequestHandler):
                 "status": log["status"],
                 "error": log["error"],
                 "requestBody": parse_json_field(log["request_json"]),
+                "userRequest": parse_json_field(log["user_request_json"]),
                 "durationMs": log["duration_ms"],
                 "createdAt": log["created_at"],
             },
@@ -5647,16 +5651,24 @@ def log_generation(
     request_body,
     response_body,
     duration_ms: int,
+    user_request_body=None,
 ) -> str:
     usage = extract_token_usage(request_body, response_body)
+    # Strip base64 from reference images in user request
+    user_req = None
+    if user_request_body:
+        user_req = copy.deepcopy(user_request_body) if isinstance(user_request_body, dict) else {}
+        refs = user_req.get("referenceImages")
+        if isinstance(refs, list):
+            user_req["referenceImages"] = [{"name": r.get("name",""), "size": r.get("size","")} for r in refs if isinstance(r, dict)]
     log_id = make_id("log")
     with connect() as conn:
         conn.execute(
             """
             INSERT INTO generation_logs
               (id, user_id, endpoint, model, prompt, size, count, image_count, status, error,
-               request_json, response_json, input_tokens, output_tokens, total_tokens, duration_ms, created_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+               request_json, response_json, input_tokens, output_tokens, total_tokens, duration_ms, created_at, user_request_json)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 log_id,
@@ -5676,6 +5688,7 @@ def log_generation(
                 usage["total"],
                 duration_ms,
                 now_iso(),
+                trim_json(user_req) if user_req else "",
             ),
         )
     return log_id
