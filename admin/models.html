@@ -297,6 +297,17 @@
       }
     });
 
+    /* Auto-save displayName on blur */
+    providerList.addEventListener("blur", function (e) {
+      var inp = e.target.closest('input[data-action="updateDisplayName"]');
+      if (!inp) return;
+      inp.style.border = "none";
+      inp.style.background = "transparent";
+      inp.style.padding = "0";
+      inp.readOnly = true;
+      saveConfig();
+    }, true);
+
     function updateProviderEnabled(providerId, enabled) {
       var provider = (config.modelProviders || []).find(function (p) { return p.id === providerId; });
       if (!provider) return;

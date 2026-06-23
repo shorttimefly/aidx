@@ -133,19 +133,20 @@ function startEditTitle(id) {
   var asset = assets.find(function(a) { return a.id === id; });
   var oldTitle = asset ? asset.title : el.textContent;
   el.innerHTML = '<input class="input" value="' + escAttr(oldTitle) + '" style="font-size:var(--font-size-sm);padding:2px 4px" onblur="saveTitle(\'' + id + '\',this.value)" onkeydown="if(event.key===\'Enter\')this.blur()" />';
-  el.querySelector("input").focus();
-  el.querySelector("input").select();
+  var inp = el.querySelector("input");
+  inp.focus(); inp.select();
 }
 
 async function saveTitle(id, newTitle) {
   newTitle = (newTitle || "").trim();
-  if (!newTitle) { renderList(); return; }
+  var el = document.getElementById("title-" + id);
+  if (!newTitle) { if (el) el.textContent = assets.find(function(x){return x.id===id;})?.title || "未命名"; return; }
   try {
     await Api.admin("/admin/prompt-assets/" + id, { method: "PATCH", body: JSON.stringify({ title: newTitle }) });
     var a = assets.find(function(x) { return x.id === id; });
     if (a) a.title = newTitle;
-  } catch(e) { showToast(e.message, true); }
-  renderList();
+    if (el) el.textContent = newTitle;
+  } catch(e) { showToast(e.message, true); if (el) { var a2 = assets.find(function(x){return x.id===id;}); el.textContent = a2 ? a2.title : "未命名"; } }
 }
 
 async function selectAsset(id) {
