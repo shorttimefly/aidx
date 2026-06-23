@@ -217,7 +217,7 @@
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="creditsModalTitle">
       <h3 id="creditsModalTitle">积分不足</h3>
       <div class="credits-summary">
-        <p>本次需要 <strong id="creditsRequiredText">0</strong> 积分</p>
+        <p id="creditsRequiredRow">本次需要 <strong id="creditsRequiredText">0</strong> 积分</p>
         <p>当前剩余 <strong id="creditsRemainingModalText">0</strong> 积分</p>
       </div>
       <label class="field">
@@ -567,6 +567,7 @@
   function showCreditsModal(required, remaining) {
     const modal = els.creditsModal;
     $("creditsModalTitle").textContent = required > 0 ? "积分不足" : "兑换积分";
+    $("creditsRequiredRow").style.display = required > 0 ? "" : "none";
     $("creditsRequiredText").textContent = required || 0;
     $("creditsRemainingModalText").textContent =
       remaining != null ? remaining : (Auth.user ? (Auth.user.creditsRemaining || 0) : 0);
