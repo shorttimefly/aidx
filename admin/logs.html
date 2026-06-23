@@ -63,8 +63,8 @@
         </div>
         <div style="overflow-x:auto">
           <table class="log-table">
-            <thead><tr><th>时间</th><th>用户</th><th>模型</th><th>提示词</th><th>数量</th><th>状态</th><th>耗时</th></tr></thead>
-            <tbody id="logBody"><tr><td colspan="8" class="text-muted" style="text-align:center;padding:var(--space-8)">加载中...</td></tr></tbody>
+            <thead><tr><th>时间</th><th>用户</th><th>模型</th><th>提示词</th><th>数量</th><th>状态</th><th>下载</th><th>编辑</th><th>耗时</th><th>操作</th></tr></thead>
+            <tbody id="logBody"><tr><td colspan="10" class="text-muted" style="text-align:center;padding:var(--space-8)">加载中...</td></tr></tbody>
           </table>
         </div>
         <div class="load-more" id="loadMore"></div>
@@ -91,7 +91,7 @@ async function loadLogs() {
     const data = await Api.admin(`/logs?limit=${limit}`);
     const logs = data.logs || [];
     if (!logs.length && offset === 0) {
-      document.getElementById("logBody").innerHTML = '<tr><td colspan="8" class="text-muted" style="text-align:center;padding:var(--space-8)">暂无生成记录</td></tr>';
+      document.getElementById("logBody").innerHTML = '<tr><td colspan="10" class="text-muted" style="text-align:center;padding:var(--space-8)">暂无生成记录</td></tr>';
       return;
     }
     document.getElementById("logBody").innerHTML = logs.map(l => `
@@ -102,15 +102,17 @@ async function loadLogs() {
         <td class="prompt-cell" title="${escAttr(l.prompt || "")}">${esc((l.prompt || "").slice(0, 80))}</td>
         <td>${l.count || 0}</td>
         <td><span class="badge ${l.status === 'completed' ? 'badge-success' : 'badge-error'}">${l.status === 'completed' ? '成功' : '失败'}</span></td>
+        <td>${l.downloaded ? '✅' : '—'}</td>
+        <td>${l.edited ? '✅' : '—'}</td>
         <td>${l.durationMs ? (l.durationMs / 1000).toFixed(1) + 's' : '-'}</td>
         <td><button class="btn btn-ghost btn-sm" onclick="showDetail('${l.id}')">详情</button></td>
       </tr>
-    `).join("") || '<tr><td colspan="8" class="text-muted" style="text-align:center">暂无更多</td></tr>';
+    `).join("") || '<tr><td colspan="10" class="text-muted" style="text-align:center">暂无更多</td></tr>';
     document.getElementById("loadMore").innerHTML = logs.length === limit
       ? `<button class="btn btn-secondary btn-sm" onclick="offset+=limit;loadLogs()">加载更多</button>`
       : "";
   } catch(e) {
-    document.getElementById("logBody").innerHTML = `<tr><td colspan="8" class="text-muted" style="text-align:center">加载失败: ${esc(e.message)}</td></tr>`;
+    document.getElementById("logBody").innerHTML = `<tr><td colspan="10" class="text-muted" style="text-align:center">加载失败: ${esc(e.message)}</td></tr>`;
   }
 }
 
@@ -135,9 +137,9 @@ async function showDetail(logId) {
     var html = '<div style="display:grid;grid-template-columns:1fr 1fr;gap:var(--space-4)">';
     html += '<div><h4 class="text-sm font-medium">模型 / 状态</h4><p class="text-sm">' + esc(log.model||"-") + ' · ' + esc(log.size||"") + ' · <span class="badge ' + (log.status==='completed'?'badge-success':'badge-error') + '">' + (log.status==='completed'?'成功':'失败') + '</span></p></div>';
     html += '<div><h4 class="text-sm font-medium">模板</h4><p class="text-sm">' + esc(body.templateId || "手动输入") + '</p></div>';
-    if (refs.length) html += '<div><h4 class="text-sm font-medium">参考图 (' + refs.length + ')</h4><div style="display:flex;gap:4px;flex-wrap:wrap">' + refs.map(function(r){ return '<img src="' + escAttr(r.url||r.dataUrl||'') + '" style="width:80px;height:80px;object-fit:cover;border-radius:4px;border:1px solid var(--color-border)" />'; }).join("") + '</div></div>';
+    if (refs.length) html += '<div><h4 class="text-sm font-medium">参考图 (' + refs.length + ')</h4><div style="display:flex;gap:4px;flex-wrap:wrap">' + refs.map(function(r){ return '<img src="' + escAttr(fixImageUrl(r.url||r.dataUrl||'')) + '" style="width:80px;height:80px;object-fit:cover;border-radius:4px;border:1px solid var(--color-border)" />'; }).join("") + '</div></div>';
     html += '<div><h4 class="text-sm font-medium">提示词</h4><div style="max-height:120px;overflow-y:auto;font-size:var(--font-size-xs);line-height:1.6;white-space:pre-wrap;background:var(--color-bg);padding:var(--space-2);border-radius:var(--radius-md)">' + esc(log.prompt||"-") + '</div></div>';
-    if (assets.length) html += '<div><h4 class="text-sm font-medium">生成结果 (' + assets.length + ')</h4><div style="display:flex;gap:4px;flex-wrap:wrap">' + assets.map(function(a){ return '<img src="' + escAttr(a.url) + '" style="width:120px;height:120px;object-fit:cover;border-radius:4px;border:1px solid var(--color-border)" title="' + escAttr(a.name||'') + '" />'; }).join("") + '</div></div>';
+    if (assets.length) html += '<div><h4 class="text-sm font-medium">生成结果 (' + assets.length + ')</h4><div style="display:flex;gap:4px;flex-wrap:wrap">' + assets.map(function(a){ return '<img src="' + escAttr(fixImageUrl(a.url)) + '" style="width:120px;height:120px;object-fit:cover;border-radius:4px;border:1px solid var(--color-border)" title="' + escAttr(a.name||'') + '" />'; }).join("") + '</div></div>';
     if (log.error) html += '<div style="grid-column:1/-1"><h4 class="text-sm font-medium">错误信息</h4><p class="text-sm" style="color:var(--color-error)">' + esc(log.error) + '</p></div>';
     html += '</div>';
     document.getElementById("detailContent").innerHTML = html;

@@ -3951,6 +3951,20 @@ class Handler(SimpleHTTPRequestHandler):
                 """,
                 (limit,),
             ).fetchall()
+            # Get download/edit stats per log
+            stats_rows = conn.execute(
+                """
+                SELECT log_id,
+                       SUM(downloaded) AS dl, SUM(edited) AS ed
+                FROM generated_assets
+                WHERE log_id IN (SELECT id FROM generation_logs ORDER BY created_at DESC LIMIT ?)
+                GROUP BY log_id
+                """,
+                (limit,),
+            ).fetchall()
+            stats = {}
+            for sr in stats_rows:
+                stats[sr["log_id"]] = {"downloaded": sr["dl"] or 0, "edited": sr["ed"] or 0}
         logs = []
         for row in rows:
             logs.append(
@@ -3975,6 +3989,8 @@ class Handler(SimpleHTTPRequestHandler):
                     "totalTokens": row["total_tokens"],
                     "durationMs": row["duration_ms"],
                     "createdAt": row["created_at"],
+                    "downloaded": stats.get(row["id"], {}).get("downloaded", 0),
+                    "edited": stats.get(row["id"], {}).get("edited", 0),
                 }
             )
         self.json_response({"logs": logs})
