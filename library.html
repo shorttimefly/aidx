@@ -70,6 +70,8 @@
       empty.style.display = "none";
       grid.innerHTML = assets.map(function(a) {
         var url = a.image_url || a.url || "";
+        // Prepend APP_BASE if URL is a relative server path
+        if (url.startsWith("/api/generated-images/")) url = APP_BASE + url;
         return '<div class="asset-card">'
           + '<img src="' + escAttr(url) + '" alt="' + escAttr(a.name||"") + '" loading="lazy" />'
           + '<div class="asset-meta"><span class="name">' + esc(a.name||"未命名") + '</span>'
