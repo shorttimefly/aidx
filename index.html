@@ -114,6 +114,7 @@
         <div class="sidebar-credits">
           <span class="text-muted">剩余积分</span>
           <strong id="sidebarCredits">—</strong>
+          <button class="btn btn-ghost btn-sm" id="openRedeemBtn" style="font-size:10px;margin-top:4px">增加积分</button>
         </div>
       </div>
     </aside>
@@ -225,6 +226,9 @@
       <div class="modal-actions">
         <button class="btn btn-ghost" id="closeCreditsModalBtn" type="button">取消</button>
         <button class="btn btn-primary" id="submitRedeemBtn" type="button">兑换</button>
+      </div>
+      <div style="text-align:center;margin-top:var(--space-2)">
+        <a href="https://item.taobao.com/item.htm?id=1059575526082&spm=a213gs.v2success.0.0.28eb48315dWcFz" target="_blank" rel="noopener" style="font-size:12px;color:var(--color-accent)">获取兑换码 →</a>
       </div>
     </div>
   </div>
@@ -630,6 +634,7 @@
     // Modal events
     $("closeCreditsModalBtn").addEventListener("click", closeCreditsModal);
     $("submitRedeemBtn").addEventListener("click", handleSubmitRedeem);
+    $("openRedeemBtn").addEventListener("click", () => showCreditsModal(0));
     els.creditsModal.addEventListener("click", (e) => {
       if (e.target === els.creditsModal) closeCreditsModal();
     });

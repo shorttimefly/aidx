@@ -814,6 +814,7 @@ def init_db() -> None:
         ensure_column(conn, "prompt_assets", "suite_shots_json", "TEXT NOT NULL DEFAULT '[]'")
         ensure_column(conn, "generated_assets", "downloaded", "INTEGER NOT NULL DEFAULT 0")
         ensure_column(conn, "generated_assets", "edited", "INTEGER NOT NULL DEFAULT 0")
+        ensure_column(conn, "generated_assets", "ref_thumbs_json", "TEXT NOT NULL DEFAULT ''")
         ensure_column(conn, "generation_logs", "user_request_json", "TEXT NOT NULL DEFAULT ''")
         migrate_default_endpoint(conn)
         ensure_sessions_schema(conn)
@@ -3081,6 +3082,7 @@ class Handler(SimpleHTTPRequestHandler):
                         size=size,
                         images=images,
                         request_snapshot=request_snapshot,
+                        reference_images=body.get("referenceImages", []),
                     )
                     # refund excess if fewer images generated than requested
                     actual_count = len(images)
@@ -3220,6 +3222,7 @@ class Handler(SimpleHTTPRequestHandler):
                 size=size,
                 images=images,
                 request_snapshot=request_snapshot,
+                reference_images=body.get("referenceImages", []),
             )
             actual_count = len(images)
             if actual_count < count:
@@ -5723,6 +5726,25 @@ def _generate_thumbnail(data: bytes, record_id: str, ext: str) -> str:
     except Exception:
         return ""
 
+def _save_ref_thumb(base64_url: str) -> str:
+    """Save a single reference image as 120x120 thumbnail. Returns path or empty string."""
+    if not base64_url or not base64_url.startswith("data:image/"):
+        return ""
+    try:
+        import io
+        from PIL import Image
+        header, b64 = base64_url.split(",", 1)
+        data = base64.b64decode(b64)
+        img = Image.open(io.BytesIO(data))
+        img.thumbnail((120, 120), Image.LANCZOS)
+        thumb_data = io.BytesIO()
+        img.convert("RGB").save(thumb_data, format="JPEG", quality=60)
+        filename = f"ref_{secrets.token_hex(8)}.jpg"
+        (GENERATED_DIR / filename).write_bytes(thumb_data.getvalue())
+        return f"/api/generated-images/{filename}"
+    except Exception:
+        return ""
+
 GENERATED_DIR = STORAGE_DIR / "generated"
 
 def _save_image_to_disk(image_url: str, record_id: str) -> str:
@@ -5783,9 +5805,19 @@ def save_generated_assets(
     size: str,
     images: list[dict],
     request_snapshot: dict,
+    reference_images: list | None = None,
 ) -> list[dict]:
     created_at = now_iso()
     name_stamp = created_at.replace("-", "").replace(":", "").replace("T", "-").replace("Z", "")
+    # Save reference image thumbnails
+    ref_thumbs = []
+    if reference_images:
+        for ref in reference_images:
+            url = str(ref.get("url") or ref.get("dataUrl") or "").strip() if isinstance(ref, dict) else ""
+            thumb = _save_ref_thumb(url)
+            if thumb:
+                ref_thumbs.append(thumb)
+    ref_thumbs_json = json.dumps(ref_thumbs) if ref_thumbs else ""
     records = []
     for index, image in enumerate(images, start=1):
         url = str(image.get("url") or "").strip()
@@ -5806,6 +5838,7 @@ def save_generated_assets(
                 "size": trim_text(size, 80),
                 "source": trim_text(str(image.get("source") or "generation"), 80),
                 "request_json": trim_json(request_snapshot),
+                "ref_thumbs_json": ref_thumbs_json,
                 "created_at": created_at,
             }
         )
@@ -5815,9 +5848,9 @@ def save_generated_assets(
         conn.executemany(
             """
             INSERT INTO generated_assets
-              (id, user_id, log_id, image_url, name, endpoint, model, prompt, size, source, request_json, created_at)
+              (id, user_id, log_id, image_url, name, endpoint, model, prompt, size, source, request_json, ref_thumbs_json, created_at)
             VALUES
-              (:id, :user_id, :log_id, :image_url, :name, :endpoint, :model, :prompt, :size, :source, :request_json, :created_at)
+              (:id, :user_id, :log_id, :image_url, :name, :endpoint, :model, :prompt, :size, :source, :request_json, :ref_thumbs_json, :created_at)
             """,
             records,
         )
@@ -5844,6 +5877,7 @@ def row_generated_asset(row: sqlite3.Row) -> dict:
         "request": request,
         "createdAt": row["created_at"],
         "refCount": ref_count,
+        "refThumbs": parse_json_field(row["ref_thumbs_json"]) if row["ref_thumbs_json"] else [],
     }
 
 
