@@ -158,7 +158,7 @@
         html += '<div class="tree-node level-platform" data-node="platform" data-platform-id="' + platform.id + '">';
         html += '<div class="tree-node-header">';
         html += '<span class="arrow">▶</span>';
-        html += '<span class="font-semibold">' + escapeHtml(platform.label || platform.id) + '</span>';
+        html += '<input class="input label-input" data-label-path="platform.' + platform.id + '" value="' + escapeAttr(platform.label || "") + '" placeholder="平台名称" />';
         html += '<span class="badge badge-neutral">平台</span>';
         html += '<span class="text-sm text-muted">' + categories.length + ' 分类</span>';
         html += '</div>';
@@ -169,7 +169,7 @@
           html += '<div class="tree-node level-category" data-node="category" data-platform-id="' + platform.id + '" data-category-id="' + category.id + '">';
           html += '<div class="tree-node-header">';
           html += '<span class="arrow">▶</span>';
-          html += '<span class="font-medium">' + escapeHtml(category.label || category.id) + '</span>';
+          html += '<input class="input label-input" data-label-path="category.' + platform.id + '.' + category.id + '" value="' + escapeAttr(category.label || "") + '" placeholder="分类名称" />';
           html += '<span class="badge badge-neutral">分类</span>';
           html += '<span class="text-sm text-muted">' + scenarios.length + ' 场景</span>';
           html += '</div>';
@@ -178,8 +178,7 @@
           scenarios.forEach(function (scenario) {
             html += '<div class="scenario-card level-scenario">';
             html += '<div class="scenario-header">';
-            html += '<span class="font-semibold">' + escapeHtml(scenario.title || scenario.id || "未命名场景") + '</span>';
-            html += '<span class="text-sm text-muted">场景</span>';
+            html += '<input class="input label-input" data-label-path="scenario.' + platform.id + '.' + category.id + '.' + (scenario.id || "") + '" value="' + escapeAttr(scenario.title || "") + '" placeholder="场景名称" style="margin-bottom:var(--space-2)" />';
             html += '</div>';
             html += '<label class="field">';
             html += '<span class="text-sm text-secondary">提示词 (Prompt)</span>';
@@ -225,7 +224,7 @@
       var matrix = cfg.single && cfg.single.matrix;
       if (!matrix) return cfg;
 
-      treeContainer.querySelectorAll("textarea[data-prompt-path]").forEach(function (ta) {
+      treeContainer.querySelectorAll("textarea[data-prompt-path]"), treeContainer.querySelectorAll("input[data-label-path]").forEach(function (ta) {
         var path = ta.getAttribute("data-prompt-path");
         var parts = path.split(".");
         if (parts.length < 3) return;

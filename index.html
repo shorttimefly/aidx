@@ -438,7 +438,6 @@
   // ── Dropzone events ──────────────────────────────────────────────────────
   function initDropzone() {
     const dz = els.dropzone;
-    dz.addEventListener("click", () => els.refInput.click());
     dz.addEventListener("dragover", (e) => { e.preventDefault(); dz.classList.add("drag-over"); });
     dz.addEventListener("dragleave", () => dz.classList.remove("drag-over"));
     dz.addEventListener("drop", (e) => {
