@@ -5595,6 +5595,26 @@ def _save_image_to_disk(image_url: str, record_id: str) -> str:
             return f"/api/generated-images/{filename}"
         except (ValueError, binascii.Error, OSError):
             pass
+        return url
+    if url.startswith("http://") or url.startswith("https://"):
+        try:
+            ext = ".png"
+            lower = url.lower()
+            if ".jpg" in lower or ".jpeg" in lower:
+                ext = ".jpg"
+            elif ".webp" in lower:
+                ext = ".webp"
+            elif ".gif" in lower:
+                ext = ".gif"
+            req = urllib.request.Request(url, headers={"User-Agent": "AI-Image-Studio/1.0"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                data = resp.read()
+            filename = f"{record_id}{ext}"
+            filepath = GENERATED_DIR / filename
+            filepath.write_bytes(data)
+            return f"/api/generated-images/{filename}"
+        except Exception:
+            pass
     return url
 
 
