@@ -4158,11 +4158,28 @@ class Handler(SimpleHTTPRequestHandler):
             if not row:
                 raise AppError(HTTPStatus.NOT_FOUND, "资产不存在")
             asset = dict(row)
+            # Map snake_case DB columns to camelCase for frontend
             asset["referenceImages"] = parse_json_field(row["reference_images_json"])
             asset["productImage"] = parse_json_field(row["product_image_json"])
             asset["suiteShots"] = parse_json_field(row["suite_shots_json"])
             asset["request"] = parse_json_field(row["request_json"])
             asset["response"] = parse_json_field(row["response_json"])
+            asset["imageAUrl"] = row["image_a_url"]
+            asset["imageBUrl"] = row["image_b_url"]
+            asset["referenceAnalysis"] = row["reference_analysis"]
+            asset["chinesePrompt"] = row["chinese_prompt"]
+            asset["englishPrompt"] = row["english_prompt"]
+            asset["comparison"] = row["comparison"]
+            asset["assetKind"] = row.get("asset_kind") or row["asset_kind"]
+            asset["providerModelId"] = row["provider_model_id"]
+            asset["targetPlatformId"] = row["target_platform_id"]
+            asset["targetCategoryId"] = row["target_category_id"]
+            asset["targetScenarioId"] = row["target_scenario_id"]
+            asset["publishMode"] = row["publish_mode"]
+            asset["publishedTemplateId"] = row["published_template_id"]
+            asset["createdAt"] = row["created_at"]
+            asset["updatedAt"] = row["updated_at"]
+            asset["publishedAt"] = row["published_at"]
         self.json_response(asset)
 
     def handle_admin_create_prompt_assets(self) -> None:
