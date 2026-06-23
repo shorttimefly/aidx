@@ -173,6 +173,7 @@
           + (disabled
             ? '<button class="btn btn-secondary btn-sm" data-action="enable" data-id="' + u.id + '">启用</button>'
             : '<button class="btn btn-danger btn-sm" data-action="disable" data-id="' + u.id + '">禁用</button>')
+          + '<button class="btn btn-secondary btn-sm" data-action="models" data-id="' + u.id + '" style="margin-left:4px">选择模型</button>'
           + '</div></td>';
 
         return '<tr>'
@@ -189,6 +190,7 @@
     function escapeHtml(s) {
       return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
     }
+    var esc = escapeHtml;
 
     /* ── Load data ── */
     async function loadUsers() {
@@ -226,6 +228,7 @@
       var action = btn.getAttribute("data-action");
       if (action === "disable") toggleUser(userId, true);
       else if (action === "enable") toggleUser(userId, false);
+      else if (action === "models") openModelModal(userId);
     });
 
     refreshBtn.addEventListener("click", loadUsers);
@@ -233,6 +236,64 @@
     logoutBtn.addEventListener("click", function () {
       Auth.logout();
     });
+
+    /* ── Model Selection ── */
+    var curModelUserId = null, curModelTab = "image", allModels = [], selModelIds = [];
+
+    async function loadAllModels() {
+      var data = await Api.admin("/admin/model-config");
+      var providers = (data.modelConfig && data.modelConfig.modelProviders) || [];
+      allModels = [];
+      providers.forEach(function(p) {
+        (p.models || []).forEach(function(m) {
+          allModels.push({ id: m.id || m.providerModelId, name: m.modelName, kind: m.modelKind || "image", provider: p.name });
+        });
+      });
+    }
+
+    function switchModelTab(tab) {
+      curModelTab = tab;
+      document.getElementById("tabImage").className = tab === "image" ? "btn btn-secondary btn-sm" : "btn btn-ghost btn-sm";
+      document.getElementById("tabVideo").className = tab === "video" ? "btn btn-secondary btn-sm" : "btn btn-ghost btn-sm";
+      renderModelList();
+    }
+
+    function renderModelList() {
+      var filtered = allModels.filter(function(m) { return m.kind === curModelTab; });
+      var list = document.getElementById("modelList");
+      list.innerHTML = filtered.length ? filtered.map(function(m) {
+        return '<label class="flex items-center gap-2" style="padding:var(--space-1) 0;cursor:pointer">'
+          + '<input type="checkbox" value="' + m.id + '" ' + (selModelIds.indexOf(m.id) >= 0 ? 'checked' : '') + ' onchange="toggleModel(\'' + m.id + '\',this.checked)" />'
+          + '<span class="text-sm">' + esc(m.name) + '</span><span class="badge badge-neutral">' + esc(m.provider) + '</span></label>';
+      }).join("") : '<div class="text-muted text-sm" style="text-align:center;padding:var(--space-4)">无可用模型</div>';
+      document.getElementById("modelInfo").textContent = "已选 " + selModelIds.length + " 个";
+    }
+
+    function toggleModel(id, checked) {
+      if (checked) { if (selModelIds.indexOf(id) < 0) selModelIds.push(id); }
+      else { selModelIds = selModelIds.filter(function(x) { return x !== id; }); }
+    }
+
+    async function openModelModal(userId) {
+      curModelUserId = userId;
+      selModelIds = [];
+      document.getElementById("modelUserId").textContent = userId.substring(0, 12) + "...";
+      await loadAllModels();
+      switchModelTab("image");
+      document.getElementById("modelModal").style.display = "flex";
+    }
+
+    function closeModelModal() { document.getElementById("modelModal").style.display = "none"; }
+
+    async function saveModels() {
+      try {
+        await Api.admin("/admin/users/" + curModelUserId, {
+          method: "PATCH",
+          body: JSON.stringify({ allowedImageModelIds: curModelTab === "image" ? selModelIds : undefined, allowedVideoModelIds: curModelTab === "video" ? selModelIds : undefined })
+        });
+        toast("模型已更新"); closeModelModal(); loadUsers();
+      } catch(e) { toast(e.message, true); }
+    }
 
     /* ── Init ── */
     async function init() {
@@ -247,5 +308,23 @@
 
     init();
   </script>
+  <!-- Model Selection Modal -->
+  <div id="modelModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:100;display:none;align-items:center;justify-content:center">
+    <div class="card" style="width:90%;max-width:600px;max-height:80vh;overflow-y:auto">
+      <div class="flex items-center justify-between" style="margin-bottom:var(--space-4)">
+        <h3>选择模型 - <span id="modelUserId"></span></h3>
+        <button class="btn btn-ghost btn-sm" onclick="closeModelModal()">✕</button>
+      </div>
+      <div class="flex gap-2" style="margin-bottom:var(--space-4)">
+        <button class="btn btn-secondary btn-sm" id="tabImage" onclick="switchModelTab('image')">图片模型</button>
+        <button class="btn btn-ghost btn-sm" id="tabVideo" onclick="switchModelTab('video')">视频模型</button>
+      </div>
+      <div id="modelList" style="max-height:400px;overflow-y:auto"></div>
+      <div class="flex justify-between" style="margin-top:var(--space-4)">
+        <span class="text-sm text-muted" id="modelInfo"></span>
+        <button class="btn btn-primary btn-sm" onclick="saveModels()">保存</button>
+      </div>
+    </div>
+  </div>
 </body>
 </html>
