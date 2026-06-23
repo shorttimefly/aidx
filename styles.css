@@ -872,8 +872,9 @@ input[readonly] {
 }
 
 .template-head select {
-  width: 120px;
-  font-size: 12px;
+  max-width: 110px;
+  font-size: 11px;
+  padding: 2px 4px;
 }
 
 .template-tools {
@@ -883,8 +884,10 @@ input[readonly] {
 }
 
 .template-tools select {
-  min-width: 100px;
-  font-size: 12px;
+  min-width: 90px;
+  max-width: 110px;
+  font-size: 11px;
+  padding: 2px 4px;
 }
 
 .template-selection-hint {
