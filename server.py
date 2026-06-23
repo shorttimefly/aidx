@@ -4152,12 +4152,18 @@ class Handler(SimpleHTTPRequestHandler):
         """GET /api/admin/prompt-assets/<id> — single asset with full detail"""
         self.require_admin()
         with connect() as conn:
-            rows = prompt_asset_rows(conn, limit=500, offset=0)
-            for row in rows:
-                if row.get("id") == asset_id:
-                    self.json_response(row)
-                    return
-        raise AppError(HTTPStatus.NOT_FOUND, "资产不存在")
+            row = conn.execute(
+                "SELECT * FROM prompt_assets WHERE id=? LIMIT 1", (asset_id,)
+            ).fetchone()
+            if not row:
+                raise AppError(HTTPStatus.NOT_FOUND, "资产不存在")
+            asset = dict(row)
+            asset["referenceImages"] = parse_json_field(row["reference_images_json"])
+            asset["productImage"] = parse_json_field(row["product_image_json"])
+            asset["suiteShots"] = parse_json_field(row["suite_shots_json"])
+            asset["request"] = parse_json_field(row["request_json"])
+            asset["response"] = parse_json_field(row["response_json"])
+        self.json_response(asset)
 
     def handle_admin_create_prompt_assets(self) -> None:
         self.require_admin()
