@@ -14,9 +14,9 @@
     .asset-item .meta { font-size: var(--font-size-xs); opacity: 0.7; }
     .detail-panel { display: flex; flex-direction: column; gap: var(--space-4); }
     .ref-grid { display: flex; gap: var(--space-2); flex-wrap: wrap; }
-    .ref-thumb { width: 100px; height: 100px; border: 1.5px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; cursor: pointer; }
+    .ref-thumb { width: 100px; height: 100px; border: 1.5px solid var(--color-border); border-radius: var(--radius-md); overflow: hidden; }
     .ref-thumb img { width: 100%; height: 100%; object-fit: cover; }
-    .prompt-box { background: var(--color-bg); padding: var(--space-3); border-radius: var(--radius-md); font-size: var(--font-size-sm); line-height: var(--line-height-relaxed); min-height: 60px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
+    .prompt-box { background: var(--color-bg); padding: var(--space-3); border-radius: var(--radius-md); font-size: var(--font-size-sm); line-height: var(--line-height-relaxed); min-height: 40px; white-space: pre-wrap; max-height: 200px; overflow-y: auto; }
     .verify-grid { display: flex; gap: var(--space-4); flex-wrap: wrap; }
     .verify-card { flex: 1; min-width: 200px; }
     .verify-card img { width: 100%; border-radius: var(--radius-md); border: 1px solid var(--color-border); }
@@ -53,16 +53,9 @@
     <main class="shell-content">
       <div class="flex items-center justify-between" style="margin-bottom:var(--space-4)">
         <div class="filter-row">
-          <select id="kindFilter" class="input" style="width:auto" onchange="loadAssets()">
+          <select class="input" style="width:auto" id="kindFilter" onchange="loadAssets()">
             <option value="single">单图</option>
             <option value="suite">套图</option>
-          </select>
-          <select id="statusFilter" class="input" style="width:auto" onchange="loadAssets()">
-            <option value="">全部状态</option>
-            <option value="draft">草稿</option>
-            <option value="generated">已生成</option>
-            <option value="published">已发布</option>
-            <option value="failed">失败</option>
           </select>
           <button class="btn btn-ghost btn-sm" onclick="loadAssets()">刷新</button>
         </div>
@@ -71,11 +64,9 @@
 
       <div class="factory-layout">
         <div class="card" style="padding:var(--space-3)">
-          <div class="asset-list" id="assetList">
-            <div class="text-muted text-sm" style="text-align:center;padding:var(--space-4)">加载中...</div>
-          </div>
+          <div class="asset-list" id="assetList"></div>
+          <div style="text-align:center;margin-top:var(--space-2)" id="loadMore"></div>
         </div>
-
         <div class="card detail-panel" id="detailPanel">
           <div class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">选择左侧资产或新建</div>
         </div>
@@ -89,121 +80,97 @@
 <script src="../shared/auth.js"></script>
 <script src="../shared/api.js"></script>
 <script>
-let assets = [], activeId = null;
+var assets = [], activeId = null, page = 0, pageSize = 20;
 
 async function init() {
   try { await Auth.init("admin"); } catch { return; }
   document.getElementById("topbarUser").textContent = Auth.user?.email || "";
   document.getElementById("sidebarUser").textContent = Auth.user?.email || "";
   await loadAssets();
+  // auto-load first detail
+  if (assets.length && !activeId) selectAsset(assets[0].id);
 }
 
 async function loadAssets() {
-  const kind = document.getElementById("kindFilter").value;
-  const status = document.getElementById("statusFilter").value;
-  let url = `/prompt-assets?limit=100&assetKind=${kind}`;
-  if (status) url += `&status=${status}`;
+  var kind = document.getElementById("kindFilter").value;
+  page = 0; assets = []; activeId = null;
+  await loadPage();
+}
+
+async function loadPage() {
+  var kind = document.getElementById("kindFilter").value;
+  var offset = page * pageSize;
   try {
-    const data = await Api.admin(url);
-    assets = data.promptAssets || data.assets || [];
+    var data = await Api.admin("/admin/prompt-assets?limit=" + pageSize + "&offset=" + offset + "&assetKind=" + kind);
+    var list = data.promptAssets || data.assets || [];
+    if (list.length) { assets = assets.concat(list); page++; }
     renderList();
+    var moreBtn = document.getElementById("loadMore");
+    moreBtn.innerHTML = list.length === pageSize
+      ? '<button class="btn btn-ghost btn-sm" onclick="loadPage()">加载更多</button>'
+      : (assets.length ? '' : '<div class="text-muted text-sm">暂无资产</div>');
   } catch(e) {
-    document.getElementById("assetList").innerHTML = `<div class="text-muted text-sm" style="text-align:center;padding:var(--space-4)">加载失败</div>`;
+    document.getElementById("assetList").innerHTML = '<div class="text-muted text-sm" style="text-align:center;padding:var(--space-4)">加载失败</div>';
   }
 }
 
 function renderList() {
-  const list = document.getElementById("assetList");
-  if (!assets.length) {
-    list.innerHTML = `<div class="text-muted text-sm" style="text-align:center;padding:var(--space-4)">暂无资产</div>`;
-    return;
-  }
-  const statusLabel = {draft:"草稿",generating:"生成中",generated:"已生成",published:"已发布",failed:"失败"};
-  list.innerHTML = assets.map(a => `
-    <div class="asset-item ${a.id === activeId ? 'active' : ''}" onclick="selectAsset('${a.id}')">
-      <div>${esc(a.title || "未命名")}</div>
-      <div class="meta">${statusLabel[a.status] || a.status} · ${fmtTime(a.updatedAt || a.createdAt)}</div>
-    </div>
-  `).join("");
+  var list = document.getElementById("assetList");
+  var statusLabel = {draft:"草稿",generating:"生成中",generated:"已生成",published:"已发布",failed:"失败"};
+  list.innerHTML = assets.map(function(a) {
+    return '<div class="asset-item' + (a.id === activeId ? ' active' : '') + '" onclick="selectAsset(\'' + a.id + '\')">'
+      + '<div>' + esc(a.title || "未命名") + '</div>'
+      + '<div class="meta">' + (statusLabel[a.status] || a.status) + '</div>'
+      + '</div>';
+  }).join("");
 }
 
 async function selectAsset(id) {
-  activeId = id;
-  renderList();
-  const asset = assets.find(a => a.id === id) || await Api.admin(`/prompt-assets/${id}`);
-  if (!asset) return;
-  const panel = document.getElementById("detailPanel");
-  const refs = (asset.referenceImages || []).map(r => r.url || r).filter(Boolean);
-  const productImg = asset.productImage?.url || "";
-  panel.innerHTML = `
-    <div class="flex items-center justify-between">
-      <h3>${esc(asset.title || "未命名")} <span class="badge badge-neutral">${asset.status || ""}</span></h3>
-      <div class="flex gap-2">
-        ${asset.status === 'draft' || asset.status === 'failed' ? `<button class="btn btn-primary btn-sm" onclick="generateAsset('${id}')">生成</button>` : ''}
-        ${asset.status === 'generated' ? `<button class="btn btn-primary btn-sm" onclick="publishAsset('${id}')">发布</button>` : ''}
-        <button class="btn btn-danger btn-sm" onclick="deleteAsset('${id}')">删除</button>
-      </div>
-    </div>
-    ${productImg ? `<div class="verify-card"><h4 class="text-sm font-medium">商品图</h4><img src="${escAttr(productImg)}" alt="商品图" /></div>` : ''}
-    ${refs.length ? `<div><h4 class="text-sm font-medium" style="margin-bottom:var(--space-2)">参考图 (${refs.length})</h4><div class="ref-grid">${refs.map((r,i) => `<div class="ref-thumb"><img src="${escAttr(r)}" alt="参考${i+1}" /></div>`).join("")}</div></div>` : ''}
-    ${asset.referenceAnalysis ? `<div><h4 class="text-sm font-medium">参考图分析</h4><div class="prompt-box">${esc(asset.referenceAnalysis)}</div></div>` : ''}
-    ${asset.chinesePrompt ? `<div><h4 class="text-sm font-medium">中文提示词</h4><div class="prompt-box">${esc(asset.chinesePrompt)}</div></div>` : ''}
-    ${asset.englishPrompt ? `<div><h4 class="text-sm font-medium">English Prompt</h4><div class="prompt-box">${esc(asset.englishPrompt)}</div></div>` : ''}
-    ${asset.imageAUrl || asset.imageBUrl ? `<div><h4 class="text-sm font-medium">验证图</h4><div class="verify-grid">${asset.imageAUrl ? `<div class="verify-card"><div class="text-xs text-muted">Image A (参考辅助)</div><img src="${escAttr(asset.imageAUrl)}" /></div>` : ''}${asset.imageBUrl ? `<div class="verify-card"><div class="text-xs text-muted">Image B (Prompt + 原图)</div><img src="${escAttr(asset.imageBUrl)}" /></div>` : ''}</div></div>` : ''}
-    ${asset.comparison ? `<div><h4 class="text-sm font-medium">对比审核</h4><div class="prompt-box">${esc(asset.comparison)}</div></div>` : ''}
-    ${asset.error ? `<div class="badge badge-error">错误: ${esc(asset.error)}</div>` : ''}
-  `;
+  activeId = id; renderList();
+  var asset = assets.find(function(a) { return a.id === id; });
+  if (!asset) {
+    try { asset = await Api.admin("/admin/prompt-assets/" + id); } catch(e) { return; }
+  }
+  var panel = document.getElementById("detailPanel");
+  var refs = (asset.referenceImages || []).map(function(r) { return r.url || r; }).filter(Boolean);
+  var productImg = (asset.productImage || {}).url || "";
+  var statusLabel = {draft:"草稿",generating:"生成中",generated:"已生成",published:"已发布",failed:"失败"};
+  panel.innerHTML = '<div class="flex items-center justify-between">'
+    + '<h3>' + esc(asset.title || "未命名") + ' <span class="badge badge-neutral">' + (statusLabel[asset.status] || asset.status) + '</span></h3>'
+    + '<div class="flex gap-2">'
+    + (asset.status === 'draft' || asset.status === 'failed' ? '<button class="btn btn-primary btn-sm" onclick="generateAsset(\'' + id + '\')">生成</button>' : '')
+    + (asset.status === 'generated' ? '<button class="btn btn-primary btn-sm" onclick="publishAsset(\'' + id + '\')">发布</button>' : '')
+    + '<button class="btn btn-danger btn-sm" onclick="deleteAsset(\'' + id + '\')">删除</button>'
+    + '</div></div>'
+    + (productImg ? '<div class="verify-card"><h4 class="text-sm font-medium">商品图</h4><img src="' + escAttr(productImg) + '" alt="商品图" /></div>' : '')
+    + (refs.length ? '<div><h4 class="text-sm font-medium">参考图</h4><div class="ref-grid">' + refs.map(function(r,i){ return '<div class="ref-thumb"><img src="' + escAttr(r) + '" /></div>'; }).join("") + '</div></div>' : '')
+    + (asset.referenceAnalysis ? '<div><h4 class="text-sm font-medium">分析</h4><div class="prompt-box">' + esc(asset.referenceAnalysis) + '</div></div>' : '')
+    + (asset.chinesePrompt ? '<div><h4 class="text-sm font-medium">中文提示词</h4><div class="prompt-box">' + esc(asset.chinesePrompt) + '</div></div>' : '')
+    + (asset.englishPrompt ? '<div><h4 class="text-sm font-medium">English Prompt</h4><div class="prompt-box">' + esc(asset.englishPrompt) + '</div></div>' : '')
+    + ((asset.imageAUrl || asset.imageBUrl) ? '<div><h4 class="text-sm font-medium">验证图</h4><div class="verify-grid">' + (asset.imageAUrl ? '<div class="verify-card"><img src="' + escAttr(asset.imageAUrl) + '" /></div>' : '') + (asset.imageBUrl ? '<div class="verify-card"><img src="' + escAttr(asset.imageBUrl) + '" /></div>' : '') + '</div></div>' : '')
+    + (asset.comparison ? '<div><h4 class="text-sm font-medium">对比</h4><div class="prompt-box">' + esc(asset.comparison) + '</div></div>' : '')
+    + (asset.error ? '<div class="badge badge-error">错误: ' + esc(asset.error) + '</div>' : '');
 }
 
 async function createAsset() {
-  const title = prompt("资产名称（可选）:", "Factory " + new Date().toISOString().slice(0,16).replace("T"," "));
-  const kind = document.getElementById("kindFilter").value;
+  var title = prompt("资产名称:", "Factory " + new Date().toISOString().slice(0,16).replace("T"," "));
+  if (!title) return;
+  var kind = document.getElementById("kindFilter").value;
   try {
-    const resp = await Api.admin("/prompt-assets", {
-      method: "POST",
-      body: JSON.stringify({ assetKind: kind, title: title || "未命名" })
-    });
+    var resp = await Api.admin("/admin/prompt-assets", { method: "POST", body: JSON.stringify({ assetKind: kind, title: title }) });
     showToast("已创建");
     await loadAssets();
     selectAsset(resp.id);
   } catch(e) { showToast(e.message, true); }
 }
 
-async function generateAsset(id) {
-  showToast("生成中，约需 30-60 秒...");
-  try {
-    await Api.admin(`/prompt-assets/${id}/generate`, { method: "POST" });
-    showToast("生成完成");
-    await loadAssets();
-    selectAsset(id);
-  } catch(e) { showToast(e.message, true); }
-}
+async function generateAsset(id) { showToast("生成中..."); try { await Api.admin("/admin/prompt-assets/" + id + "/generate", { method: "POST" }); showToast("完成"); loadAssets(); selectAsset(id); } catch(e) { showToast(e.message, true); } }
+async function publishAsset(id) { if (!confirm("发布？")) return; try { await Api.admin("/admin/prompt-assets/" + id + "/publish", { method: "POST" }); showToast("已发布"); loadAssets(); } catch(e) { showToast(e.message, true); } }
+async function deleteAsset(id) { if (!confirm("删除？")) return; try { await Api.admin("/admin/prompt-assets/" + id, { method: "DELETE" }); showToast("已删除"); activeId = null; loadAssets(); document.getElementById("detailPanel").innerHTML = '<div class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">选择左侧资产或新建</div>'; } catch(e) { showToast(e.message, true); } }
 
-async function publishAsset(id) {
-  if (!confirm("发布到提示词配置？")) return;
-  try {
-    await Api.admin(`/prompt-assets/${id}/publish`, { method: "POST" });
-    showToast("已发布");
-    await loadAssets();
-    selectAsset(id);
-  } catch(e) { showToast(e.message, true); }
-}
-
-async function deleteAsset(id) {
-  if (!confirm("确定删除？")) return;
-  try {
-    await Api.admin(`/prompt-assets/${id}`, { method: "DELETE" });
-    showToast("已删除");
-    activeId = null;
-    await loadAssets();
-    document.getElementById("detailPanel").innerHTML = `<div class="text-muted text-sm" style="text-align:center;padding:var(--space-8)">选择左侧资产或新建</div>`;
-  } catch(e) { showToast(e.message, true); }
-}
-
-function fmtTime(iso) { if(!iso) return "-"; return new Date(iso).toLocaleString("zh-CN", {month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}); }
 function esc(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 function escAttr(s) { return String(s||"").replace(/&/g,"&amp;").replace(/"/g,"&quot;"); }
-function showToast(msg, isErr) { const t=document.getElementById("toast"); t.textContent=msg; t.className="toast active"+(isErr?" error":""); clearTimeout(t._t); t._t=setTimeout(()=>t.classList.remove("active"),2600); }
+function showToast(msg, isErr) { var t=document.getElementById("toast"); t.textContent=msg; t.className="toast active"+(isErr?" error":""); clearTimeout(t._t); t._t=setTimeout(function(){t.classList.remove("active")},2600); }
 
 init();
 </script>

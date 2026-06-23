@@ -216,31 +216,42 @@
       treeContainer.querySelectorAll(".tree-node").forEach(function (n) { n.classList.remove("open"); });
     });
 
-    /* ── Collect changes from textareas ── */
+    /* ── Collect changes ── */
     function collectConfig() {
-      /* Deep clone the current config */
       var cfg = JSON.parse(JSON.stringify(promptConfig));
-
       var matrix = cfg.single && cfg.single.matrix;
       if (!matrix) return cfg;
 
-      treeContainer.querySelectorAll("textarea[data-prompt-path]"), treeContainer.querySelectorAll("input[data-label-path]").forEach(function (ta) {
-        var path = ta.getAttribute("data-prompt-path");
-        var parts = path.split(".");
+      // collect prompt textareas
+      treeContainer.querySelectorAll("textarea[data-prompt-path]").forEach(function (ta) {
+        var parts = ta.getAttribute("data-prompt-path").split(".");
         if (parts.length < 3) return;
+        var plat = (matrix.platforms || []).find(function (p) { return p.id === parts[0]; });
+        if (!plat) return;
+        var cat = (plat.categories || []).find(function (c) { return c.id === parts[1]; });
+        if (!cat) return;
+        var sc = (cat.scenarios || []).find(function (s) { return s.id === parts.slice(2).join("."); });
+        if (!sc) return;
+        sc.prompt = ta.value;
+      });
 
-        var platformId = parts[0];
-        var categoryId = parts[1];
-        var scenarioId = parts.slice(2).join("."); /* handles dots in scenario id */
-
-        var platform = (matrix.platforms || []).find(function (p) { return p.id === platformId; });
-        if (!platform) return;
-        var category = (platform.categories || []).find(function (c) { return c.id === categoryId; });
-        if (!category) return;
-        var scenario = (category.scenarios || []).find(function (s) { return s.id === scenarioId; });
-        if (!scenario) return;
-
-        scenario.prompt = ta.value;
+      // collect label inputs (platform/category/scenario titles)
+      treeContainer.querySelectorAll("input[data-label-path]").forEach(function (inp) {
+        var parts = inp.getAttribute("data-label-path").split(".");
+        var type = parts[0];
+        if (type === "platform") {
+          var p = (matrix.platforms || []).find(function (x) { return x.id === parts[1]; });
+          if (p) p.label = inp.value;
+        } else if (type === "category") {
+          var pl = (matrix.platforms || []).find(function (x) { return x.id === parts[1]; });
+          var ct = pl && (pl.categories || []).find(function (x) { return x.id === parts[2]; });
+          if (ct) ct.label = inp.value;
+        } else if (type === "scenario") {
+          var pl2 = (matrix.platforms || []).find(function (x) { return x.id === parts[1]; });
+          var ct2 = pl2 && (pl2.categories || []).find(function (x) { return x.id === parts[2]; });
+          var sc2 = ct2 && (ct2.scenarios || []).find(function (x) { return x.id === parts.slice(3).join("."); });
+          if (sc2) sc2.title = inp.value;
+        }
       });
 
       return cfg;
